@@ -1,0 +1,47 @@
+== raw: G 867 x 18648, nnz 1075970; d (867,); min entry 41.57, max 1e+20
+== cleaning step 1: 14 penalty rows contain entries > 1e+10 (values [1.e+20]; original rows [793, 795, 796, 797, 798, 799, 801, 802, 803, 804, 805, 806, 807, 808]); they apply to 405 parameters.
+   removing those rows from G and d and those parameters from G: 853 x 18243
+== cleaning step 2: 407 all-zero rows and 0 all-zero columns remain
+   2 rows were empty in the raw matrix (original rows [794, 800], d = [1.0, 1.0])
+   405 rows (original 388-792) held only entries [10000.] on removed parameters, d = [0.]: a second zero-forcing penalty
+   all-zero rows add a constant chi^2 = 2.0 that no model can change; they are removed (default)
+   cleaned G: 446 x 18243, nnz 1073690 (density 0.132); negative entries 0
+   magnitude-bin rows detected automatically: original rows 809-826 (18 rows), labelled 'MFD'
+   slip-rate rows detected automatically: original rows 0-387 (388 rows), ending before the first zero-forcing penalty row (original 388), labelled 'S'
+   slip-rate rows: 388 rows (original 0-387) in 62 runs of identical values; each row involves a median of 852 ruptures; each rupture appears in a median of 52 rows (range 2-118)
+   row block B2:var    original rows 827-866 :  40 rows, d in [1.52, 10.7], ||d||^2 = 717
+   row block MFD       original rows 809-826 :  18 rows, d in [6.48, 10.2], ||d||^2 = 1375
+   row block S         original rows 0-387   : 388 rows, d in [0.6, 31.6], ||d||^2 = 9237
+== slip-rate sections ('auto'): 388 rows in 68 sections (runs of subsections holding copies of one slip rate: 68 with 2-21 subsections, median 5; 0 single subsections); each section's rows are divided by sqrt(k), so its measurement counts once; single subsections are unchanged
+   note: 32 sections share their target with another section; some may be one section split in two, or neighbouring sections whose slip rates happen to be equal; a mapping file (--slip-sections FILE) settles it
+   note: 6 pairs of neighbouring rows with identical targets share no rupture, so they could not be confirmed as copies and count separately
+   fit check: if the uncertainties are right, the chi^2 of a draw should be near 126 +- 16 (68 slip-rate measurements, one per section, and 58 other rows; assuming each section's slip rate is uniform along it)
+== MFD uncertainty ('as-given'): the inputs give the 18 magnitude bins (original rows 809-826, 6.80-6.90 to 8.50-8.60) relative uncertainties of 10.0% at 7.00-7.10 (from 9.8% at the highest-rate bin, 6.90-7.00, to 15.4% at the lowest-rate bin, 8.50-8.60), growing as R_j^-0.250 towards the rarer bins (exactly)
+   every bin counts as its own measurement (the inputs as given): the bin rows alone pin the bins' total rate to +-2.8% and their slope to +-0.024 in b
+   saved cleaned problem -> cru_clean.npz   (2.1s)
+== scales (sigma = 1, box [0, 1])
+   ||G_i||: min 4.88e+03, 5% 6e+03, median 1.58e+04, 95% 3.13e+04, max 3.76e+04
+   conditional sd s_i = sigma/||G_i||: min 2.66e-05, 5% 3.2e-05, median 6.31e-05, 95% 0.000167, max 0.000205
+   rho_i = (hi-lo)||G_i||/sigma: min 4.88e+03, 5% 6e+03, median 1.58e+04, 95% 3.13e+04, max 3.76e+04
+   nonzeros per column: min 3, 5% 8, median 61, 95% 109, max 137
+   collective negligibility: with every rupture at the same rate, no prediction moves by more than 0.1 sigma below 1.8e-09 (0.01 sigma below 1.8e-10; busiest row: original row 156); the floor 1e-10 is below this scale
+   data cap (d_j + 3 sigma)/G_ji (G >= 0 so m_i cannot exceed this): min 0.00016, 5% 0.000613, median 0.000923, 95% 0.00209, max 0.0027
+   -> upper bound hi = 1 binds for 0 parameters
+   even-share rate: min_j d_j / sum_k G_jk: min 1.35e-07, 5% 1.35e-07, median 1.35e-07, 95% 7.67e-07, max 1.11e-05
+   even-share rate / conditional sd: min 0.000659, 5% 0.00122, median 0.00304, 95% 0.00677, max 0.0643
+== spectrum: singular values s_1 = 1.887e+06, s_413 = 80.4, numerical rank 413 of 446 rows (446 non-empty)
+   s_k at k = 1, 10, 50, 100, 200, 300, 400: 1.89e+06, 2.82e+05, 5.34e+04, 1.84e+04, 4.16e+03, 1.44e+03, 247
+   resolution diagonal R_ii: min 0.00228, 5% 0.00539, median 0.0133, 95% 0.0622, max 1;  sum = 413.0 (= rank)
+   cosine-Gram eigenvalues (diag(G^T G)-scaled): top [5286.8 1812.5 1387.7  905.3]; omega_max = 72.7 for HMC with mass diag(G^T G)/sigma^2
+== near-duplicate columns (cosine similarity; 3.8s)
+   cos>0.99  :  338177 pairs,  17453 columns in  1042 groups, largest group 1656
+   cos>0.999 :   22474 pairs,  12149 columns in  2121 groups, largest group 76
+   cos>0.9999:    1080 pairs,   1473 columns in   401 groups, largest group 12
+   exactly proportional pairs (cos > 1 - 1e-12): 0
+== best fit (Lawson-Hanson NNLS, 210 outer iterations, 1.5s)
+   chi^2_min = 31.25 for N = 446 rows, 446 non-empty (chi^2/N = 0.070); nonzeros 111; max m = 0.0015 (hi = 1 does not bind); sum m = 0.02195
+   block B2:var   : chi^2 =   13.10 over  40 rows, max |r|/sigma = 1.95
+   block MFD      : chi^2 =    1.11 over  18 rows, max |r|/sigma = 0.34
+   block S        : chi^2 =   17.04 over 388 rows, max |r|/sigma = 0.81
+   KKT: min gradient on zero set = -4.89e-05 (>= 0 required, to within the stopping tolerance 0.0013), max |gradient| on support = 8.9e-10
+   magnitude bins in the best fit: totals +1.0% to +4.9% of their targets (median +2.7%), within 0.34 of their uncertainties; total 0.02195 against 0.02143 (+2.4%)
