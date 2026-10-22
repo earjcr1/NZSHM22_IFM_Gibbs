@@ -16,8 +16,11 @@ the alternative, per-bin log-uniform boxes whose depths put no pressure on the b
 the rest.
 
 Backends: a C kernel compiled on first use with $CC (default 'cc') and loaded through ctypes; chains run in
-parallel threads (ctypes releases the GIL).  Falls back to a vectorised NumPy kernel (~100x slower) if no
-compiler is available, or on request with --backend numpy.
+parallel threads (ctypes releases the GIL).  Each thread moves its chains through the ruptures together, reading each
+column once for up to four of them, but every chain's arithmetic and random numbers are those it would have alone, so
+the output does not depend on the number of threads.  Where the log-box prior is flat, the slice sampler's stepping out
+takes the steps a bound shows would all pass without evaluating them, landing on the same slice.  Falls back to a
+vectorised NumPy kernel (~100x slower) if no compiler is available, or on request with --backend numpy.
 """
 import argparse
 import ctypes
@@ -31,7 +34,7 @@ import time
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path
+from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path, report_to
 import scipy.sparse as _sparse
 sp_csc = _sparse.csc_matrix
 
@@ -98,13 +101,48 @@ static inline double lb_ld(const lbctx *c, double z) {
     double m = exp(z);
     return -(m - c->m0) * (m + c->m0 - 2.0 * c->mu) * c->inv2s2 + p - c->lp0;
 }
-/* univariate slice sampler (Neal 2003): stepping out with width w (at most 64 steps), then shrinkage */
+/* A lower bound on lb_ld(c, z) over a stretch [za, zb] of the box (zlo <= z <= zhi and zmin <= z <= zmax, where the
+   log-box prior is 0), or less.  There lb_ld is the likelihood term, a concave quadratic in m = e^z, less lp0, so it is
+   at least its smaller value at the two ends of the range of m.  The range is widened by 1e-12 (relative) and 1e-300
+   (absolute), far more than any rounding of exp, and the bound lowered by 1e-9 of the terms' size, far more than the
+   rounding of lb_ld itself (about 1e-15 of it): wherever the bound exceeds y, so does every evaluation of lb_ld. */
+static double lb_floor(const lbctx *c, double za, double zb) {
+    const double ma = fmax(exp(za) * (1.0 - 1e-12) - 1e-300, 0.0), mb = exp(zb) * (1.0 + 1e-12) + 1e-300;
+    const double fa = -(ma - c->m0) * (ma + c->m0 - 2.0 * c->mu) * c->inv2s2;
+    const double fb = -(mb - c->m0) * (mb + c->m0 - 2.0 * c->mu) * c->inv2s2;
+    const double size = (mb + fabs(c->m0)) * (mb + fabs(c->m0) + 2.0 * fabs(c->mu)) * c->inv2s2 + fabs(c->lp0);
+    return fmin(fa, fb) - c->lp0 - 1e-9 * (size + 1.0);
+}
+/* univariate slice sampler (Neal 2003): stepping out with width w (at most 64 steps), then shrinkage.  Under the
+   log-box prior, once an end is inside the box, its steps over the stretch of the box it can still reach are taken
+   without evaluating the density if lb_floor shows that every evaluation there would pass; each step is still the
+   same subtraction or addition of w, so the slice is exactly the one evaluating every step gives. */
 static double lb_slice(uint64_t *s, const lbctx *c, double z0, double w) {
     const double y = log(unif(s));
     double L = z0 - w * unif(s), R = L + w;
     int64_t J = (int64_t)(64.0 * unif(s)), Kk = 63 - J;
-    while (J-- > 0 && lb_ld(c, L) > y) L -= w;
-    while (Kk-- > 0 && lb_ld(c, R) > y) R += w;
+    const double a = fmax(c->zlo, c->zmin), b = fmin(c->zhi, c->zmax);
+    /* quick: 0 not tried yet; 1 the steps within [lim, start] (left) or [start, lim] (right) pass; -1 evaluate each.
+       The stretch is the part of the box this walk can still reach (its remaining steps, plus two widths of slack). */
+    int quick = c->pk == 1 ? 0 : -1;
+    double lim = 0.0;
+    while (J-- > 0) {
+        if (quick == 0 && L >= a && L <= b) {
+            lim = fmax(a, L - (double)(J + 2) * w);
+            quick = lb_floor(c, lim, L) > y ? 1 : -1;
+        }
+        if (quick == 1 && L >= lim) { L -= w; continue; }
+        if (lb_ld(c, L) > y) L -= w; else break;
+    }
+    quick = c->pk == 1 ? 0 : -1;
+    while (Kk-- > 0) {
+        if (quick == 0 && R >= a && R <= b) {
+            lim = fmin(b, R + (double)(Kk + 2) * w);
+            quick = lb_floor(c, R, lim) > y ? 1 : -1;
+        }
+        if (quick == 1 && R <= lim) { R += w; continue; }
+        if (lb_ld(c, R) > y) R += w; else break;
+    }
     for (;;) {
         double z1 = L + (R - L) * unif(s);
         if (lb_ld(c, z1) > y) return z1;
@@ -113,47 +151,102 @@ static double lb_slice(uint64_t *s, const lbctx *c, double z0, double w) {
 }
 
 /* Exact draw (in z = log m) from the spike-and-slab's slab, the pseudo-prior of an "off" rupture: flat on [zlo, zhi]
-   (hard floor), with a Gaussian shoulder above zhi of sd 1/sqrt(2 ku) up to zmax (ku > 0), or a hard top (ku = 0). */
-static double slab_draw(uint64_t *s, const lbctx *c) {
+   (hard floor), with a Gaussian shoulder above zhi of sd 1/sqrt(2 ku) up to zmax (ku > 0), or a hard top (ku = 0).
+   Its constants q = (wp, wt, sdt, lim) depend only on the rupture: kernel_consts computes them once per run. */
+static void slab_consts(const lbctx *c, double *q) {
     const double zt = fmin(c->zhi, c->zmax), wp = zt - c->zlo;
     double wt = 0.0, sdt = 0.0, lim = 0.0;
     if (c->ku > 0.0 && c->zmax > c->zhi) {
         sdt = 1.0 / sqrt(2.0 * c->ku); lim = c->zmax - c->zhi;
         wt = sdt * 1.2533141373155003 * erf(lim / (sdt * 1.4142135623730951));   /* sdt sqrt(pi/2) erf(...) */
     }
+    q[0] = wp; q[1] = wt; q[2] = sdt; q[3] = lim;
+}
+static double slab_draw(uint64_t *s, const lbctx *c, const double *q) {
+    const double wp = q[0], wt = q[1], sdt = q[2], lim = q[3];
     if (unif(s) * (wp + wt) < wp) return c->zlo + wp * unif(s);
     for (;;) { const double t = fabs(stdnorm(s)) * sdt; if (t <= lim) return c->zhi + t; }
 }
 
+/* Per-rupture constants of gibbs_run, computed once per run by the expressions the sweeps used to evaluate for every
+   rupture, chain and sweep (so with the same values): log lo (or -inf), log hi, and the slab's constants (4 per rupture;
+   used by spike-and-slab only, whose upper-edge width defaults to 0 without KU). */
+void kernel_consts(int64_t n, const double *lo, const double *hi, double zlo, double zhi, const double *ZLO,
+                   const double *KU, double *LLO, double *LHI, double *SC)
+{
+    for (int64_t i = 0; i < n; i++) {
+        LLO[i] = lo[i] > 0.0 ? log(lo[i]) : -INFINITY;
+        LHI[i] = log(hi[i]);
+        lbctx c;
+        c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.ku = KU ? KU[i] : 0.0; c.zmax = LHI[i];
+        slab_consts(&c, SC + 4 * i);
+    }
+}
+
+/* G_i.r for up to four chains at once (r: their residuals), each summed in the column's order, exactly as for one chain
+   alone: the sums are independent, so the processor overlaps them, and the column is read once for all of them */
+static inline void col_dots(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1,
+                            double *const *r, double *dt) {
+    double d0 = 0.0, d1 = 0.0, d2 = 0.0, d3 = 0.0;
+    const double *r0 = r[0], *r1 = r[1], *r2 = r[2], *r3 = r[3];
+    if (kg >= 4)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * r0[j]; d1 += g * r1[j]; d2 += g * r2[j]; d3 += g * r3[j];
+        }
+    else if (kg == 3)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * r0[j]; d1 += g * r1[j]; d2 += g * r2[j];
+        }
+    else if (kg == 2)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * r0[j]; d1 += g * r1[j];
+        }
+    else
+        for (int64_t p = p0; p < p1; p++) d0 += data[p] * r0[indices[p]];
+    dt[0] = d0; dt[1] = d1; dt[2] = d2; dt[3] = d3;
+}
+
 /* K chains, chain-major: X[k*n + i], R[k*N + j] (R = G X - d, kept current), rng[4k..4k+3]; Gaussian likelihood.
    pkind 0: prior exp(-beta.m) on [lo, hi] (beta = 0: flat).  pkind 1: log-box prior (beta ignored), drawn by slice
-   sampling z = log m. */
+   sampling z = log m.  The chains move through the ruptures together, but each is updated exactly as if it ran alone
+   (its own residual, random numbers and order of operations), so the output does not depend on how chains are grouped.
+   LLO, LHI, SC: per-rupture constants from kernel_consts. */
 void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices,
                const double *data, const double *inv_csq, const double *lo, const double *hi,
                const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t nsweeps,
                int64_t pkind, double zlo, double zhi, double kedge, double slw,
-               const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD)
+               const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
+               const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT)
 {
     const double s2 = sigma * sigma;
-    for (int64_t k = 0; k < K; k++) {
-        double *x = X + k * n, *r = R + k * N;
-        uint64_t *s = rng + 4 * k;
-        for (int64_t sw = 0; sw < nsweeps; sw++) {
-            for (int64_t i = 0; i < n; i++) {
-                const int64_t p0 = indptr[i], p1 = indptr[i + 1];
-                const int empty = (p1 == p0 || inv_csq[i] <= 0.0);
-                const double xi = x[i];
-                double xn, dot = 0.0, aa = 0.0;
-                if (!empty) {
-                    for (int64_t p = p0; p < p1; p++) dot += data[p] * r[indices[p]];
-                    aa = 1.0 / inv_csq[i];
-                }
+    for (int64_t sw = 0; sw < nsweeps; sw++) {
+      for (int64_t i = 0; i < n; i++) {
+        const int64_t p0 = indptr[i], p1 = indptr[i + 1];
+        const int empty = (p1 == p0 || inv_csq[i] <= 0.0);
+        const double aa = empty ? 0.0 : 1.0 / inv_csq[i];
+        for (int64_t k0 = 0; k0 < K; k0 += 4) {
+            const int64_t kg = K - k0 < 4 ? K - k0 : 4;
+            double dt[4] = {0.0, 0.0, 0.0, 0.0};
+            if (!empty) {
+                double *rg[4];
+                for (int64_t q = 0; q < 4; q++) rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
+                col_dots(kg, data, indices, p0, p1, rg, dt);
+            }
+            for (int64_t q = 0; q < kg; q++) {
+                const int64_t k = k0 + q;
+                double *x = X + k * n, *r = R + k * N;
+                uint64_t *s = rng + 4 * k;
+                const double xi = x[i], dot = dt[q];
+                double xn;
                 if (pkind == 3) {             /* spike-and-slab: x_i is 0 (off) or its slab value (on) */
                     lbctx c;
                     c.pk = 1; c.muz = 0.0; c.kz = 0.0;
                     c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0;
-                    c.zmin = lo[i] > 0.0 ? log(lo[i]) : -INFINITY;
-                    c.zmax = log(hi[i]);
+                    c.zmin = LLO[i];
+                    c.zmax = LHI[i];
                     c.mu = 0.0; c.inv2s2 = 0.0;
                     double m;
                     if (xi > 0.0) {           /* on: exact slice update of the slab value under likelihood x slab */
@@ -162,11 +255,11 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
                         m = exp(lb_slice(s, &c, z0, slw));
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
-                        m = exp(slab_draw(s, &c));
+                        m = exp(slab_draw(s, &c, SC + 4 * i));
                     }
                     /* on or off given m: log odds = log(pi/(1-pi)) + log L(m) - log L(0); with the rupture switched off
                        the residual is r0 = r - x_i G_i, so G_i.r0 = dot - x_i ||G_i||^2 */
-                    double lr = LOD[k * n + i];
+                    double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's bin */
                     if (!empty) { const double d0 = dot - xi * aa; lr -= (2.0 * m * d0 + m * m * aa) / (2.0 * s2); }
                     const double pon = lr >= 0.0 ? 1.0 / (1.0 + exp(-lr)) : exp(lr) / (1.0 + exp(lr));
                     xn = (unif(s) < pon) ? m : 0.0;
@@ -176,8 +269,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     c.pk = (int)pkind; c.muz = 0.0; c.kz = 0.0;
                     if (pkind == 2) { c.muz = MUZ[k * n + i]; c.kz = KZ[k]; }
                     c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = kedge; c.ku = KU ? KU[i] : kedge;
-                    c.zmin = lo[i] > 0.0 ? log(lo[i]) : -INFINITY;
-                    c.zmax = log(hi[i]);
+                    c.zmin = LLO[i];
+                    c.zmax = LHI[i];
                     const double z0 = log(xi > DBL_MIN ? xi : DBL_MIN);
                     c.m0 = exp(z0); c.lp0 = lb_prior(&c, z0);
                     c.mu = 0.0; c.inv2s2 = 0.0;
@@ -203,7 +296,15 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 x[i] = xn;
             }
         }
+      }
     }
+    if (pkind == 3 && CNT)                         /* each chain's ruptures switched on, per bin, for the fractions on */
+        for (int64_t k = 0; k < K; k++) {
+            int64_t *cn = CNT + k * SB;
+            const double *x = X + k * n;
+            for (int64_t b = 0; b < SB; b++) cn[b] = 0;
+            for (int64_t i = 0; i < n; i++) if (x[i] > 0.0) cn[SBIN[i]]++;
+        }
 }
 
 /* Swap moves: for each listed pair (i, j), propose exchanging m_i and m_j (an involution, so the Metropolis ratio
@@ -361,8 +462,10 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P]
     L.gibbs_run.restype = None
+    L.kernel_consts.argtypes = [I, P, P, D, D, P, P, P, P, P]
+    L.kernel_consts.restype = None
     L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 4
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
@@ -429,18 +532,36 @@ class Target:
         return np.ascontiguousarray(X)
 
     def residual(self, X):
-        return np.ascontiguousarray((self.G @ X.T).T - self.d)
+        if np.count_nonzero(X) > 0.05 * X.size:
+            return np.ascontiguousarray((self.G @ X.T).T - self.d)
+        R = np.empty((X.shape[0], self.N))               # mostly zeros (rates off or underflowed): each chain's nonzero
+        for k, x in enumerate(X):                        # columns only, the same sums in the same order without the
+            c = np.flatnonzero(x)                        # zero terms
+            R[k] = self.G[:, c] @ x[c] - self.d
+        return R
 
 
 def _ptr(a):
     return a.ctypes.data_as(ctypes.c_void_p)
 
 
-def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, LOD=None):
+def kernel_consts(lib, T):
+    """The C kernel's per-rupture constants (log lo, log hi, the slab's), once per run, by the kernel's own code."""
+    LLO, LHI, SC = np.empty(T.n), np.empty(T.n), np.empty(4 * T.n)
+    lib.kernel_consts(T.n, _ptr(T.lo), _ptr(T.hi), T.zlo, T.zhi, None if T.zlo_vec is None else _ptr(T.zlo_vec),
+                      None if T.ku_vec is None else _ptr(T.ku_vec), _ptr(LLO), _ptr(LHI), _ptr(SC))
+    return LLO, LHI, SC
+
+
+def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, LOD=None, KC=None, CNT=None):
+    if KC is None:
+        KC = kernel_consts(lib, T)
     if MUZ is None:
         MUZ, KZ = np.zeros(X.shape), np.zeros(X.shape[0])
     if SM is None:
-        SM, LOD = np.zeros(X.shape), np.zeros(X.shape)
+        SM, LOD = np.zeros(X.shape), np.zeros((X.shape[0], 1))
+    SB = LOD.shape[1]                                    # spike-and-slab: log odds per chain and bin
+    sbin = None if T.ss is None else np.ascontiguousarray(T.ss['bins'], np.int64)
     K = X.shape[0]
     groups = np.array_split(np.arange(K), max(1, min(threads, K)))
 
@@ -455,7 +576,9 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       T.pkind, T.zlo, T.zhi, T.kedge, T.slw,
                       ctypes.c_void_p(MUZ.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(KZ.ctypes.data + k0 * 8),
                       None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
-                      ctypes.c_void_p(SM.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(LOD.ctypes.data + k0 * T.n * 8))
+                      ctypes.c_void_p(SM.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
+                      None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
+                      None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -646,7 +769,7 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
             m = np.exp(_lb_slice_py(g, c, np.log(xi), T.slw))
         else:
             m = np.exp(_slab_draw_py(g, c))
-        lr = LOD[k, i]
+        lr = LOD[k, T.ss['bins'][i]]
         if not empty:
             lr -= (2.0 * m * (dot - xi * aa) + m * m * aa) / (2.0 * s2)
         pon = 1.0 / (1.0 + np.exp(-lr)) if lr >= 0 else np.exp(lr) / (1.0 + np.exp(lr))
@@ -861,7 +984,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         hmu, htau = H.init(np.log(X))
         MUZ, KZ = np.ascontiguousarray(hmu[:, H.bins]), 0.5 / htau ** 2
     SS = T.ss if T.pkind == 3 else None
-    SM, LOD = np.zeros((K, T.n)), np.zeros((K, T.n))
+    SM, LOD = np.zeros((K, T.n)), np.zeros((K, SS['B'] if SS is not None else 1))   # LOD: log odds per chain and bin
     if SS is not None:
         SM = np.ascontiguousarray(np.where(X > 0, X, np.exp(T.zhi)))
     R = T.residual(X)
@@ -870,15 +993,17 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     if SS is not None:                                   # per-bin inclusion probabilities: exact Beta updates
         pib = np.empty((K, SS['B']))
 
-        def update_pi():
+        CNT = np.zeros((K, SS['B']), np.int64) if backend == 'c' else None   # the kernel's counts of ruptures on per bin
+
+        def update_pi(counted=False):
             for k in range(K):
                 if SS.get('pi') is not None:
                     pib[k] = SS['pi']
                 else:
-                    on = np.bincount(SS['bins'], weights=(X[k] > 0).astype(float), minlength=SS['B'])
+                    on = CNT[k] if counted else np.bincount(SS['bins'][X[k] > 0], minlength=SS['B'])
                     pib[k] = g.beta(SS['a'] + on, SS['b'] + SS['nb'] - on)
             p = np.clip(pib, 1e-300, 1.0 - 1e-16)
-            LOD[:] = (np.log(p) - np.log1p(-p))[:, SS['bins']]
+            LOD[:] = np.log(p) - np.log1p(-p)
         update_pi()
     n_rec = sweeps // thin
     n_burn = burn // thin
@@ -896,9 +1021,12 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                   hist=np.zeros((stream['hist_nb'], T.n), np.int32), hcnt=np.zeros(1),
                   n5=np.zeros((K, n_keep), np.int32), n4=np.zeros((K, n_keep), np.int32),
                   n90=np.zeros((K, n_keep), np.int32), n99=np.zeros((K, n_keep), np.int32))
+        INC = {}                                         # incidence matrices by column, for each chain's nonzero rates
         for key in ('inc_s', 'inc_b'):
             if stream.get(key) is not None:
                 ST['tot_' + key[-1]] = np.zeros((K, n_keep, stream[key].shape[0]), np.float32)
+                INC[key[-1]] = sp.csc_matrix(stream[key])
+        hist_flat = ST['hist'].reshape(-1)               # a view, for scattered increments
     if keep_samples and n_keep > 0:
         samp = (np.lib.format.open_memmap(f'{out}_samples.npy', 'w+', np.float32, (K, n_keep, T.n)) if out
                 else np.zeros((K, n_keep, T.n), np.float32))
@@ -914,6 +1042,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             KD['at'].setdefault(t, []).append((k, row))
         KD['X'] = (np.lib.format.open_memmap(f'{out}_kept.npy', 'w+', np.float32, (len(order), T.n)) if out
                    else np.zeros((len(order), T.n), np.float32))
+    KC = kernel_consts(lib, T) if backend == 'c' else None   # the kernel's per-rupture constants, once per run
     t0 = time.time()
     he = thin if ((H is None and SS is None) or not hyper_every) else max(1, min(int(hyper_every), thin))
     for rec in range(n_rec):
@@ -921,12 +1050,12 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         while done < thin:                                   # hierarchical prior: hyperparameters every `he` sweeps
             ns = min(he, thin - done)
             if backend == 'c':
-                sweeps_c(lib, T, X, R, rng, ns, threads, MUZ, KZ, SM, LOD)
+                sweeps_c(lib, T, X, R, rng, ns, threads, MUZ, KZ, SM, LOD, KC, CNT if SS is not None else None)
             else:
                 sweeps_numpy(T, X, R, g, ns, MUZ, KZ, SM, LOD)
             done += ns
             if SS is not None:
-                update_pi()
+                update_pi(counted=backend == 'c')
             if H is not None:
                 for k in range(K):
                     zk, hmu[k], htau[k] = H.update(g, T, np.log(X[k]), hmu[k].copy(), htau[k])
@@ -979,18 +1108,32 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                 ST['usum'] += np.where(Xm < stream['det'], Xm, 0.0).sum(0)
                 ST['n5'][:, t] = (Xm > 1e-5).sum(1)
                 ST['n4'][:, t] = (Xm > 1e-4).sum(1)
-                cum = np.cumsum(-np.sort(-Xm, axis=1), 1)      # each chain's rates, largest first, accumulated
-                ST['n90'][:, t] = np.argmax(cum >= 0.9 * cum[:, -1:], 1) + 1     # fewest ruptures carrying 90% / 99%
-                ST['n99'][:, t] = np.argmax(cum >= 0.99 * cum[:, -1:], 1) + 1    # of the draw's total rate
-                if t % stream.get('hist_every', 1) == 0:              # log-rate histogram; bin 0 holds everything below hist_lo
-                    Lh = np.log10(np.maximum(Xm, 1e-300))
-                    idx = np.clip(np.floor((Lh - stream['hist_lo']) / stream['hist_w']).astype(np.int64) + 1, 0, stream['hist_nb'] - 1)
-                    np.add.at(ST['hist'], (idx.ravel(), np.tile(np.arange(T.n), K)), 1)
+                sparse = np.count_nonzero(Xm) <= 0.05 * Xm.size     # mostly zeros: each chain's nonzero rates only
+                hist_now = t % stream.get('hist_every', 1) == 0
+                above = np.zeros(T.n, np.int32)                      # chains whose rate is in a histogram bin above 0
+                for k in range(K):
+                    x = Xm[k]
+                    # fewest ruptures carrying 90% / 99% of the draw's total rate: its rates, largest first, accumulated.
+                    # Rates below 2^-60 of the total are under half the last bit of the running sum, so adding them
+                    # changes nothing: only the rest are sorted
+                    cum = np.cumsum(-np.sort(-x[x >= x.sum() * 2.0 ** -60]))
+                    ST['n90'][k, t] = np.argmax(cum >= 0.9 * cum[-1]) + 1
+                    ST['n99'][k, t] = np.argmax(cum >= 0.99 * cum[-1]) + 1
+                    j = np.flatnonzero(x)
+                    if hist_now:                                     # log-rate histogram; bin 0 holds everything below
+                        b = np.clip(np.floor((np.log10(np.maximum(x[j], 1e-300)) - stream['hist_lo']) / stream['hist_w'])
+                                    .astype(np.int64) + 1, 0, stream['hist_nb'] - 1)          # hist_lo, every 0 among them
+                        hist_flat[b[b > 0] * T.n + j[b > 0]] += 1    # one entry per rupture in a chain: no repeats
+                        above[j[b > 0]] += 1
+                    if sparse:                                       # subsection and bin totals: the same sums in the
+                        for key, A in INC.items():                   # same order, without the zero terms
+                            ST['tot_' + key][k, t] = A[:, j] @ x[j]
+                if hist_now:
+                    ST['hist'][0] += K - above
                     ST['hcnt'][0] += K
-                if 'tot_s' in ST:
-                    ST['tot_s'][:, t] = (stream['inc_s'] @ Xm.T).T
-                if 'tot_b' in ST:
-                    ST['tot_b'][:, t] = (stream['inc_b'] @ Xm.T).T
+                if not sparse:
+                    for key in INC:
+                        ST['tot_' + key][:, t] = (stream['inc_' + key] @ Xm.T).T
         if verbose and (rec % max(1, n_rec // 20) == 0 or rec == n_rec - 1):
             el = time.time() - t0
             print(f'[gibbs:{backend}] sweep {(rec + 1) * thin:6d}/{sweeps}  chi2 per chain {np.round(tr["chi2"][:, rec], 0)}  '
@@ -1047,6 +1190,18 @@ def report(tr, burn, thin, names=None):
 
 
 # ---------------------------------------------------------------- self-test against exact answers
+def lb_grid(G, d, s2, se, a=-3.0):
+    """E[log10 m] of two rates under a log-box prior on [a, 0] (edge sd se decades) and a 2-row Gaussian likelihood, by
+    grid integration (the self-tests' reference)."""
+    u = np.linspace(a - 6 * se if se > 0 else a, 0.0, 2001)
+    U1, U2 = np.meshgrid(u, u, indexing='ij')
+    f = lambda x: np.where(x < a, np.exp(-(x - a) ** 2 / (2 * se ** 2)) if se > 0 else 0.0, 1.0)
+    M1, M2 = 10 ** U1, 10 ** U2
+    P = np.exp(-((G[0, 0] * M1 + G[0, 1] * M2 - d[0]) ** 2 + (G[1, 0] * M1 + G[1, 1] * M2 - d[1]) ** 2) / (2 * s2)) * f(U1) * f(U2)
+    P /= P.sum()
+    return [np.sum(P * U1), np.sum(P * U2)]
+
+
 def selftest(backends=('c', 'numpy')):
     from scipy.stats import truncnorm
     ok = True
@@ -1080,15 +1235,6 @@ def selftest(backends=('c', 'numpy')):
                   f'z = ({zs[0]:+.2f}, {zs[1]:+.2f});  sd1 {x[..., 0].std():.4f} exact {ex[2]:.4f}')
     G = np.array([[1.0, 0.8], [0.6, 1.0]])
     d = np.array([0.3, -0.1])
-
-    def lb_grid(G, d, s2, se, a=-3.0):
-        u = np.linspace(a - 6 * se if se > 0 else a, 0.0, 2001)
-        U1, U2 = np.meshgrid(u, u, indexing='ij')
-        f = lambda x: np.where(x < a, np.exp(-(x - a) ** 2 / (2 * se ** 2)) if se > 0 else 0.0, 1.0)
-        M1, M2 = 10 ** U1, 10 ** U2
-        P = np.exp(-((G[0, 0] * M1 + G[0, 1] * M2 - d[0]) ** 2 + (G[1, 0] * M1 + G[1, 1] * M2 - d[1]) ** 2) / (2 * s2)) * f(U1) * f(U2)
-        P /= P.sum()
-        return [np.sum(P * U1), np.sum(P * U2)]
 
     def check(T, X0, ex, transform, label, n_c=40000, n_np=8000, swaps=False):
         nonlocal ok
@@ -1276,6 +1422,27 @@ def selftest_spikeslab(backends=('c', 'numpy')):
     return ok
 
 
+def selftest_swaps(backends=('c', 'numpy')):
+    """Swap moves between two near-duplicate columns under a log-box prior, as spike-and-slab and theta use them, against
+    a grid integral: the main suite's 'log-box prior + swaps' check on its own (same problem, lengths and seed)."""
+    print('swap moves between two near-duplicate columns, log-box prior: E[log10 m] vs grid integral')
+    G2, d2 = np.array([[1.0, 0.98], [0.5, 0.53]]), np.array([0.4, 0.2])
+    pairs = (np.array([0]), np.array([1]), np.array([G2[:, 0] @ G2[:, 1]]))
+    ex = lb_grid(G2, d2, 0.09, 0.5)
+    ok = True
+    for be in backends:
+        T = Target(G2, d2, 0.3, 0.0, 1.0, logbox=(-3, 0, 0.5), pairs=pairs)
+        tr = sample(T, np.tile([0.4, 1e-3], (4, 1)), 40000 if be == 'c' else 8000, 1000, 1, backend=be, monitor=[0, 1],
+                    verbose=False, keep_samples=False, swaps=True)
+        x = np.log10(tr['mon'][:, 1000:])
+        zs = [(x[..., j].mean() - ex[j]) / (x[..., j].std() / np.sqrt(ess(x[..., j]))) for j in (0, 1)]
+        ok &= all(abs(z) < 4 for z in zs)
+        print(f'   {be:6s} ({x[..., 0].mean():+.4f}, {x[..., 1].mean():+.4f}) exact ({ex[0]:+.4f}, {ex[1]:+.4f}) '
+              f'z = ({zs[0]:+.2f}, {zs[1]:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+    print('SELFTEST (swap moves)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
 def selftest_hier(backends=('c', 'numpy')):
     """Hierarchical lognormal prior: (1) rate updates with fixed hyperparameters vs a grid in log rate;
     (2) with the likelihood switched off, the full sampler must reproduce the hyperpriors."""
@@ -1345,7 +1512,7 @@ def main():
     ap.add_argument('--sweeps', type=int, default=4000)
     ap.add_argument('--burn', type=int, default=1000)
     ap.add_argument('--thin', type=int, default=4)
-    ap.add_argument('--init', default='nnls', help="'nnls' (from prelim_results.npz), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
+    ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz; not after preliminaries.py --no-nnls), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
                          "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
@@ -1390,8 +1557,17 @@ def main():
     ap.add_argument('--slip-block', default='S', help='row block of slip-rate rows (subsection totals in the running summaries)')
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
-    ap.add_argument('--selftest', action='store_true')
+    ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
+                    help="exact tests: 'all' (the default) after any change to the sampler, five verdicts; 'current' only "
+                         "what spike-and-slab and theta use (per-rupture lower edges, the soft top, spike-and-slab and swap "
+                         "moves), four verdicts")
     a = ap.parse_args()
+    if a.selftest == 'current':
+        ok = selftest_zlo()
+        ok &= selftest_edges()
+        ok &= selftest_spikeslab()
+        ok &= selftest_swaps()
+        sys.exit(0 if ok else 1)
     if a.selftest:
         ok = selftest()
         ok &= selftest_hier()
@@ -1403,6 +1579,7 @@ def main():
     if kept < 4:
         raise SystemExit(f'only {max(kept, 0)} recorded draw(s) per chain after burn-in ((sweeps - burn) / thin = '
                          f'({a.sweeps} - {a.burn}) / {a.thin}); R-hat and effective draws need at least 4')
+    report_to(a.out + '_log.txt')                        # everything printed below is also kept with the run
     P = load_problem(a.problem)
     n = P['G'].shape[1]
     logbox, beta, lognormal, scale, zlo_vec, bins, ku_vec, hi_u = None, None, None, None, None, None, None, 1.0
@@ -1528,7 +1705,10 @@ def main():
             T.pkind = 3
             T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
     if a.init == 'nnls':
-        X0 = np.tile(np.load(fprelim)['m_nnls'], (a.chains, 1))
+        with np.load(fprelim) as pr0:
+            if 'm_nnls' not in pr0.files:
+                raise SystemExit(f'--init nnls: {fprelim} holds no best fit (cleaning ran with --no-nnls); use --init zero')
+            X0 = np.tile(pr0['m_nnls'], (a.chains, 1))
     elif a.init == 'zero':
         X0 = np.zeros((a.chains, n))
     else:
@@ -1537,7 +1717,7 @@ def main():
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)
-        mon = [int(np.argmax(pr['m_nnls'])), int(np.argmin(pr['cn'])), int(np.argmax(pr['cn']))]
+        mon = ([int(np.argmax(pr['m_nnls']))] if 'm_nnls' in pr.files else []) + [int(np.argmin(pr['cn'])), int(np.argmax(pr['cn']))]
         if len(pr['dup_cos']):
             k = int(np.argmax(pr['dup_cos']))
             mon += [int(pr['dup_i'][k]), int(pr['dup_j'][k])]

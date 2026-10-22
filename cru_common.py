@@ -512,6 +512,25 @@ def prelim_path(problem):
     return os.path.join(os.path.dirname(stem), 'prelim_results.npz' if base == 'cru_clean' else base + '_prelim_results.npz')
 
 
+def find_rupture_set(folder, search=True):
+    """The OpenSHA rupture set (a folder holding indices.csv, properties.csv, ...) at folder: the folder itself, its
+    ruptures/ if it is an OpenSHA solution folder, or, with search, the ruptures/ of the one OpenSHA solution folder
+    inside it (NZSHM22_InversionSolution-211k/ in a data folder, say). None if there is none; an error if there are
+    several, which have to be told apart by name."""
+    folder = os.path.abspath(os.path.expanduser(str(folder)))
+    for cand in (folder, os.path.join(folder, 'ruptures')):
+        if os.path.isfile(os.path.join(cand, 'indices.csv')):
+            return cand
+    if not search or not os.path.isdir(folder):
+        return None
+    found = sorted(os.path.join(folder, d, 'ruptures') for d in os.listdir(folder)
+                   if os.path.isfile(os.path.join(folder, d, 'ruptures', 'indices.csv')))
+    if len(found) > 1:
+        raise ValueError(f'{len(found)} OpenSHA solution folders in {folder} '
+                         f'({", ".join(os.path.basename(os.path.dirname(f)) for f in found)}): name the one to use')
+    return found[0] if found else None
+
+
 # --------------------------------------------------------------------------- row groups: magnitude bins and slip rates
 def detect_bin_rows(G, d, rtol=1e-6):
     """Find the magnitude-bin rows without being told: rows whose nonzero coefficients are all equal and whose
@@ -683,6 +702,14 @@ def start_log(path, header=''):
     return path
 
 
+def report_to(path):
+    """For a script: from now on, copy everything it prints to the text file at path as well (overwritten each run),
+    its report next to its outputs. Returns path."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    sys.stdout = _Tee(sys.stdout, open(path, 'w', encoding='utf-8', buffering=1))
+    return path
+
+
 def log_only(text):
     """Write a line of text to the log only (e.g. which figure was shown), if a log is open."""
     if _LOG['file'] is not None and not _LOG['file'].closed:
@@ -690,8 +717,11 @@ def log_only(text):
 
 
 # ---- the running summaries gibbs.py writes (<run>_stream.npz) ------------------------------------------------------
-def load_stream(name):
-    return dict(np.load(name + '_stream.npz'))
+def load_stream(name, keys=None):
+    """A run's running summaries (<name>_stream.npz): every array, or those named in `keys` that the file has (each
+    array is decompressed when read, and at 2e5 ruptures the per-draw totals and the histogram run to gigabytes)."""
+    with np.load(name + '_stream.npz') as z:
+        return {k: z[k] for k in z.files if keys is None or k in keys}
 
 
 def stream_rhat(z):
@@ -721,19 +751,22 @@ def stream_ess(z):
     return np.clip(np.where(np.isfinite(e), e, K * tot), 1.0, K * tot)
 
 
-def stream_quantiles(z, qs):
-    """Quantiles of each rate from the running log-rate histogram (bin 0 holds rates below 1e-16, reported as 0)."""
-    h = z['hist'].astype(np.float64)
-    tot = h.sum(0)
-    c = np.cumsum(h, 0) / tot
-    out = []
-    for q in qs:
-        k = np.argmax(c >= q, axis=0)
+def stream_quantiles(z, qs, chunk=20000):
+    """Quantiles of each rate from the running log-rate histogram (bin 0 holds rates below 1e-16, reported as 0); in
+    blocks of `chunk` rates, so the float copies stay small whatever the number of ruptures."""
+    n = z['hist'].shape[1]
+    out = [np.empty(n) for _ in qs]
+    for c0 in range(0, n, chunk):
+        h = z['hist'][:, c0:c0 + chunk].astype(np.float64)
+        tot = h.sum(0)
+        c = np.cumsum(h, 0) / tot
         cols = np.arange(h.shape[1])
-        prev = np.where(k > 0, c[np.maximum(k - 1, 0), cols], 0.0)
-        frac = np.clip((q - prev) / np.maximum(h[k, cols] / tot, 1e-300), 0, 1)
-        lo = float(z['hist_lo']) + (k - 1) * float(z['hist_w'])
-        out.append(np.where(k == 0, 0.0, 10.0 ** (lo + frac * float(z['hist_w']))))
+        for o, q in zip(out, qs):
+            k = np.argmax(c >= q, axis=0)
+            prev = np.where(k > 0, c[np.maximum(k - 1, 0), cols], 0.0)
+            frac = np.clip((q - prev) / np.maximum(h[k, cols] / tot, 1e-300), 0, 1)
+            lo = float(z['hist_lo']) + (k - 1) * float(z['hist_w'])
+            o[c0:c0 + chunk] = np.where(k == 0, 0.0, 10.0 ** (lo + frac * float(z['hist_w'])))
     return out
 
 

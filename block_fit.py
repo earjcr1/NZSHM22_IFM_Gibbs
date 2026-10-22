@@ -28,7 +28,7 @@ import tempfile
 
 import numpy as np
 
-from cru_common import block_labels, block_measurements, ess, load_problem, split_rhat
+from cru_common import block_labels, block_measurements, ess, load_problem, split_rhat, report_to
 
 
 def run_file(r):
@@ -140,12 +140,15 @@ def main():
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem the runs sampled (default cru_clean.npz)')
     ap.add_argument('--slip-block', default='S', help='the slip-rate rows (default S), for the labels')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin rows (default MFD), for the labels')
+    ap.add_argument('--out', default=None, help='also write the report to this text file')
     ap.add_argument('--selftest', action='store_true', help='check the arithmetic and the MFD helpers on synthetic problems')
     a = ap.parse_args()
     if a.selftest:
         return selftest()
     if not a.runs:
         ap.error('give at least one run')
+    if a.out:
+        report_to(a.out)
     P = load_problem(a.problem)
     labels = block_labels(P['block_names'], a.slip_block, a.bins_block)
     stats, tot, shapes = block_stats(P, a.runs, (a.slip_block, a.bins_block))

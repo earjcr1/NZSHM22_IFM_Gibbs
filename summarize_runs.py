@@ -81,7 +81,7 @@ def from_draws(run):
 
 def from_summaries(run):
     """The same statistics from the running summaries: every recorded draw, rates resolved to the histogram's bins."""
-    st = load_stream(run)
+    st = load_stream(run, ('chains', 'n_keep', 'hist_lo', 'hist_w', 'hist', 'hcnt', 'tot_s', 'n90', 'n99'))
     K, D = int(st['chains']), int(st['n_keep'])
     lo, w = float(st['hist_lo']), float(st['hist_w'])
     if abs(lo - HIST_LO) > 1e-9:
@@ -129,7 +129,7 @@ for run, lab in runs:
     y = z['y'].reshape(-1, len(d))
     mfd_ratio = np.median(y[:, mfd] / d[mfd], 0) if len(mfd) else np.array([np.nan])
     if has_st:
-        st_ = load_stream(run)
+        st_ = load_stream(run, ('cnt', 's1', 's2', 'clip'))
         rh = f'worst split R-hat of log rate {np.nanmax(stream_rhat(st_)):.4f} (rates below {float(st_["clip"]):.0e} counted as equal)'
     else:
         rh = f'worst split R-hat {np.nanmax(z["post_rhat"]):.4f}' if 'post_rhat' in z else 'R-hat not available'

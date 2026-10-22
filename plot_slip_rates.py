@@ -6,8 +6,10 @@
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
 .npz). The mean model is their `mean` column, each rupture's posterior mean rate; since predictions are linear in the
-rates, its prediction for a row is also the posterior mean of that row's prediction. Several result sets give one row
-of panels each (to compare priors, say). LABEL names a result set; by default it is the rate vectors' folder.
+rates, its prediction for a row is also the posterior mean of that row's prediction. VECTORS may also be a single
+model's, such as the best fit that preliminaries.py writes (nnls_vectors.npz); when every result set is one, the labels
+speak of the model rather than the mean model. Several result sets give one row of panels each (to compare priors,
+say). LABEL names a result set; by default it is the rate vectors' folder.
 
 Sections: a fault section's slip rate is one measurement, copied in the inputs to each of its subsections. The cleaned
 problem records each slip-rate row's section (preliminaries.py --slip-sections; for problems cleaned before that, runs
@@ -105,7 +107,9 @@ def main():
         data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s,
                          chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(rs) <= 1)), in2=float(np.mean(np.abs(rs) <= 2)),
                          in1r=float(np.mean(np.abs(r) <= 1)), in2r=float(np.mean(np.abs(r) <= 2)),
-                         groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)])))
+                         groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]),
+                         model=str(z['model']) if 'model' in z.files else ''))
+    mm = 'model' if all(D['model'] for D in data) else 'mean model'   # single models (a best fit): no mean
 
     def rows_span(s):
         o = sorted(int(orig[k]) for k in mem[s])
@@ -121,7 +125,7 @@ def main():
     lines = list(head)
     for D in data:
         q = np.nanpercentile(D['ratio_s'], [5, 50, 95])
-        lines += ['', f'{D["label"]} ({D["path"]}): the mean model\'s chi2 over the slip-rate rows, as the likelihood weights them, '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them, '
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
                   f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); furthest from their targets: '
@@ -209,9 +213,9 @@ def main():
                             arrowprops=dict(arrowstyle='-', color=MUTED, lw=0.5, shrinkA=2, shrinkB=3))
             ax.set_xlabel('target slip rate (in units of its measurement uncertainty)', color=INK2, fontsize=9)
             if j == 0:
-                ax.set_ylabel('mean model prediction (same units)', color=INK2, fontsize=9)
+                ax.set_ylabel(f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'mean model: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
+        sub = (f'{mm}: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
                f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
         axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
                            va='bottom', color=INK, fontsize=11.5, fontweight='bold')
@@ -225,7 +229,7 @@ def main():
         handles.append(Line2D([], [], ls='none', marker='v', ms=5, mfc=BLUE, mec=BLUE, alpha=0.8,
                               label=f'below {show_min:.2g} (on the log axis\'s edge)'))
     h_in = fig.get_size_inches()[1]
-    fig.suptitle('Slip-rate targets against the mean model\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
+    fig.suptitle(f'Slip-rate targets against the {mm}\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
     fig.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=8.5, labelcolor=INK2,
                bbox_to_anchor=(0.5, (0.36 + extra) / h_in), handletextpad=0.5, columnspacing=1.6)

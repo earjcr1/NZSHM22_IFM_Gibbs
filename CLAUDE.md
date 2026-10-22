@@ -3,15 +3,25 @@
 Design notes: @docs/sampler-design.md (section 0 records what the 2e4 data showed and overrides the rest)
 Findings, numbers and run commands: @docs/REPORT.md
 What to test and check before routine use: @docs/TESTING.md
-Workflow notebook: cru_workflow.ipynb (drives the scripts below end to end).
-Code: preliminaries.py (clean + diagnostics + NNLS), gibbs.py (production sampler; Gaussian
-likelihood), block_fit.py (each row block's fit from a run's recorded predictions),
+Workflow notebook: cru_workflow.ipynb (the configuration, then one call per step: it drives the scripts below end to
+end and computes nothing itself).
+Code: preliminaries.py (clean, with soft zero-forcing rows forcing their ruptures to 0 like the penalty rows; diagnostics;
+NNLS, skipped with --no-nnls or BEST_FIT = False; the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
+nnls_vectors.npz, which the notebook draws with the three fit-figure scripts below, and nnls_vectors.csv, a table with
+rate_vectors.csv's rows), make_solution.py (a rate vector as an OpenSHA fault system solution, solution/rates.csv and
+modules.json, after checking that the model's OpenSHA rupture set describes the same ruptures; the notebook writes the
+best fit's, nnls/solution/, when DATA_DIR holds the model's OpenSHA solution folder, which RUPTURE_SET = 'auto'
+finds), gibbs.py (production sampler; Gaussian
+likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
+and effective draws in convergence.npz), make_tables.py (the posterior tables and rate vectors, pooled over the
+replicates), block_fit.py (each row block's fit from a run's recorded predictions),
 compare_runs.py (rate-by-rate agreement of two runs, with a figure), summarize_runs.py (log-space summaries of
 replicates or priors, from the running summaries or stored draws), cru_common.py (shared I/O and diagnostics), compare_priors.py (tables comparing runs under different priors),
 select_draws.py (weighted representative draws for hazard), plot_rate_magnitude.py (each rupture's posterior mean
-rate against its magnitude bin, from the rate vectors), plot_slip_rates.py (slip-rate targets against the mean model's
-predictions, linear and log, from the rate vectors), plot_paleo_rates.py (paleo-rate targets against the model's
-predictions, log-log, with each prediction's posterior 16-84% range from the runs' recorded predictions).
+rate against its magnitude bin, from the rate vectors, with each bin's ruptures counted by decade of mean rate),
+plot_slip_rates.py (slip-rate targets against the mean model's predictions, linear and log, from the rate vectors),
+plot_paleo_rates.py (paleo-rate targets against the model's predictions, log-log, with each prediction's posterior
+16-84% range from the runs' recorded predictions).
 rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
 moves, single box only) are set aside in cru_retired_scripts.zip; restore them only if that work resumes.
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform
@@ -27,8 +37,8 @@ aside with it.
 
 ## Working agreements
 - Every gibbs.py run writes <out>_stream.npz (running summaries); --no-samples skips the large draws file, and the
-  notebook's OUTPUT_DRAWS = False uses the running summaries for its checks and tables. The notebook always writes
-  rate_vectors.csv/.npz (mean, median, mode, 2.275/15.865/84.135/97.725% per rupture, original column indexing),
+  notebook's OUTPUT_DRAWS = False (the default) uses the running summaries for its checks and tables. make_tables.py
+  (run by the notebook) always writes rate_vectors.csv/.npz (mean, median, mode, 2.275/15.865/84.135/97.725% per rupture, original column indexing),
   from the running summaries' 0.01-decade log-rate histogram (gibbs.py --hist-width), or for older runs from their
   stored draws, binned the same way. With REPRESENTATIVES > 0 (20 by default) each run also keeps 1,000 whole draws
   (gibbs.py --keep-draws: <out>_kept.npy and _kept_index.npy; recording only, the chains are unchanged) and
@@ -36,6 +46,10 @@ aside with it.
   and select_report.txt; the mean column stays the source for mean hazard. The notebook also writes
   <PRIOR_KIND>/workflow_log_<date>-<time>.txt, a copy of
   everything it prints, with each cell's start time and duration and any traceback (cru_common.start_log).
+- Each step's code lives in a script, and each script keeps what it prints in a report next to its outputs
+  (cru_common.report_to): prelim_summary.txt, <run>_log.txt, convergence_report.txt, block_fit_report.txt,
+  tables_report.txt, select_report.txt and each figure's .txt. Keep it that way: a new step is a script with its own
+  report, and the notebook only sets the configuration and calls it.
 - Magnitudes: a rupture's magnitude is known only to its bin row. plot_rate_magnitude.py counts the bin rows up from
   6.80-6.90 in 0.1 steps in their original row order (--lowest-bin, --bin-width; in the corrected 2e4 inputs the 16
   rows just below them, 793-808, are the penalty and empty rows, and appear to be the bins 5.20-6.80) and checks that
@@ -67,12 +81,12 @@ aside with it.
   shows targets and predictions in units of each section's measurement uncertainty (undoing the sqrt(k)), section means
   against their targets with the subsections behind them (the 1:1 line and the one-uncertainty band are exact; mm/yr
   would need the uncertainties). plot_paleo_rates.py shows the paleo rows (every row in neither the slip-rate nor the
-  bin group, unless --paleo-block names them) the same way, log-log: there the units only move a point along the 1:1
+  bin group whose target is positive, unless --paleo-block names them) the same way, log-log: there the units only move a point along the 1:1
   line, so its distance from the line is the ratio of prediction to target.
 - Code, data and outputs may be in separate folders. Scripts take input paths as arguments, find prelim_results.npz
   next to --problem (or via --prelim), and write where --out points; the notebook uses DATA_DIR (read only) and RUN_DIR,
   relative to its own folder; each prior's runs go into RUN_DIR/<prior kind>/ (spikeslab, theta; binbox if run), with
-  the shared cleaned problem and diagnostics at the top of RUN_DIR. One prior per notebook run (no comparison runs); a second
+  the shared cleaned problem and diagnostics at the top of RUN_DIR and the best fit's outputs in RUN_DIR/nnls/. One prior per notebook run (no comparison runs); a second
   setting of the same prior needs its own RUN_DIR. Never write into the data folder.
 - Before routine use, work through docs/TESTING.md. The slip-rate and magnitude-bin rows are detected
   automatically during cleaning (preliminaries.py), and any group named in --blocks (original row numbers, which
@@ -85,13 +99,20 @@ aside with it.
   per-bin boxes, if run, take it as their floor (-12 reproduces their earlier default).
   preliminaries.py reports the collective negligibility scale; on new inputs (5e5 especially), check that FLOOR lies
   below it.
-- The notebook's convergence verdict (PASS/CHECK) checks the targets in docs/TESTING.md. Ruptures with R-hat > 1.01 (or above
+- The convergence verdict (PASS/CHECK, check_convergence.py) checks the targets in docs/TESTING.md. Ruptures with R-hat > 1.01 (or above
   the noise baseline, if higher: the slow-mixing minority under spike-and-slab and theta) are reported separately, with their share of the total rate, and
   flagged in ruptures_posterior.csv (rhat_log_rate, ess_log_rate, slow_mixing).
 - Run `python gibbs.py --selftest` after any change to the sampler, and `python block_fit.py --selftest` after any
   change to the row-block fit report or the problem helpers in cru_common.py (the MFD uncertainty among them); both
   must pass. Any sampler change must also keep the rate-by-rate agreement in compare_runs.py
-  (z-scores ~ N(0,1), |z| > 3 near 0.27%).
+  (z-scores ~ N(0,1), |z| > 3 near 0.27%). The notebook's RUN_SELFTESTS runs only `--selftest current`, the cases
+  spike-and-slab and theta use. A change meant only to speed things up must leave a fixed-seed run's output arrays
+  bit-identical if it is in the sampler (gibbs.py's per-draw bookkeeping works on each chain's nonzero rates, and its
+  kernel moves a thread's chains through the ruptures together, for instance). In cleaning (preliminaries.py), where a faster method can only sum in another order (the best fit, the
+  near-duplicate search, the resolution diagonal), its results must be identical up to rounding (the cleaned problem
+  itself exactly; the same near-duplicate pairs and groups; the best fit's chi2_min and predictions, though its rates
+  may move between near-identical columns), and a fixed-seed quick check (tools/run_quick_checks.sh) must give
+  byte-identical tables and reports, its run files differing by rounding alone.
 - Keep G sparse (scipy CSC/CSR). Never create n×n objects or dense copies of G at the 5e5 scale.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).

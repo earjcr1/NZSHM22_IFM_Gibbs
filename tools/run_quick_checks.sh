@@ -14,7 +14,7 @@ DATA=$(cd "$1" && pwd)
 mkdir -p "$2" && RUNS=$(cd "$2" && pwd)
 L=$RUNS/logs; NB=$CODE/cru_workflow.ipynb; R=$CODE/tools/run_nb.py; PY=${PYTHON:-python3}
 PIN=("PRESET='quick'" "SLIP_SECTIONS='auto'" FLOOR=-10 "BOX_TOP='soft'" THETA=1.0 USE_SWAPS=True SA_STARTS=None BLOCKS=None
-     OUTPUT_DRAWS=False)                               # the settings TESTING.md's reference values were measured under
+     OUTPUT_DRAWS=False BEST_FIT=True)                               # the settings TESTING.md's reference values were measured under
 mkdir -p "$L"
 mark() { echo "$1 $(date +%T)" >> "$L/progress.txt"; }
 step() { local name=$1; shift; [ -f "$L/done_$name" ] && return; mark "$name start"; "$@" > "$L/$name.txt" 2>&1; local rc=$?

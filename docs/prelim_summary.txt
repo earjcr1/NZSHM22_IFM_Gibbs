@@ -18,7 +18,8 @@
    fit check: if the uncertainties are right, the chi^2 of a draw should be near 126 +- 16 (68 slip-rate measurements, one per section, and 58 other rows; assuming each section's slip rate is uniform along it)
 == MFD uncertainty ('as-given'): the inputs give the 18 magnitude bins (original rows 809-826, 6.80-6.90 to 8.50-8.60) relative uncertainties of 10.0% at 7.00-7.10 (from 9.8% at the highest-rate bin, 6.90-7.00, to 15.4% at the lowest-rate bin, 8.50-8.60), growing as R_j^-0.250 towards the rarer bins (exactly)
    every bin counts as its own measurement (the inputs as given): the bin rows alone pin the bins' total rate to +-2.8% and their slope to +-0.024 in b
-   saved cleaned problem -> cru_clean.npz   (2.1s)
+   saved cleaned problem -> cru_clean.npz   (0.6s)
+   magnitude-bin rows, checked on the saved problem: 18 bin rows, each a plain sum over its ruptures; every rupture in exactly one bin; targets R_j from 0.000342 to 0.00209/yr, total 0.02143/yr
 == scales (sigma = 1, box [0, 1])
    ||G_i||: min 4.88e+03, 5% 6e+03, median 1.58e+04, 95% 3.13e+04, max 3.76e+04
    conditional sd s_i = sigma/||G_i||: min 2.66e-05, 5% 3.2e-05, median 6.31e-05, 95% 0.000167, max 0.000205
@@ -33,15 +34,15 @@
    s_k at k = 1, 10, 50, 100, 200, 300, 400: 1.89e+06, 2.82e+05, 5.34e+04, 1.84e+04, 4.16e+03, 1.44e+03, 247
    resolution diagonal R_ii: min 0.00228, 5% 0.00539, median 0.0133, 95% 0.0622, max 1;  sum = 413.0 (= rank)
    cosine-Gram eigenvalues (diag(G^T G)-scaled): top [5286.8 1812.5 1387.7  905.3]; omega_max = 72.7 for HMC with mass diag(G^T G)/sigma^2
-== near-duplicate columns (cosine similarity; 3.8s)
+== near-duplicate columns (cosine similarity; 17.3% of the cosines a full search computes, the others ruled out exactly; 0.4s)
    cos>0.99  :  338177 pairs,  17453 columns in  1042 groups, largest group 1656
    cos>0.999 :   22474 pairs,  12149 columns in  2121 groups, largest group 76
    cos>0.9999:    1080 pairs,   1473 columns in   401 groups, largest group 12
    exactly proportional pairs (cos > 1 - 1e-12): 0
-== best fit (Lawson-Hanson NNLS, 210 outer iterations, 1.5s)
+== best fit (Lawson-Hanson NNLS, 210 outer iterations, 0.5s)
    chi^2_min = 31.25 for N = 446 rows, 446 non-empty (chi^2/N = 0.070); nonzeros 111; max m = 0.0015 (hi = 1 does not bind); sum m = 0.02195
    block B2:var   : chi^2 =   13.10 over  40 rows, max |r|/sigma = 1.95
    block MFD      : chi^2 =    1.11 over  18 rows, max |r|/sigma = 0.34
    block S        : chi^2 =   17.04 over 388 rows, max |r|/sigma = 0.81
-   KKT: min gradient on zero set = -4.89e-05 (>= 0 required, to within the stopping tolerance 0.0013), max |gradient| on support = 8.9e-10
+   KKT: min gradient on zero set = -4.89e-05 (>= 0 required, to within the stopping tolerance 0.0013), max |gradient| on support = 5.8e-10
    magnitude bins in the best fit: totals +1.0% to +4.9% of their targets (median +2.7%), within 0.34 of their uncertainties; total 0.02195 against 0.02143 (+2.4%)

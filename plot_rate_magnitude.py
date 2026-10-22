@@ -6,7 +6,9 @@
                                   [--bins-block MFD] [--slip-block S]
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
-.npz); their `mean` column is each rupture's posterior mean rate, pooled over the replicates. Several result sets
+.npz); their `mean` column is each rupture's posterior mean rate, pooled over the replicates. VECTORS may also be a
+single model's, such as the best fit that preliminaries.py writes (nnls_vectors.npz); when every result set is one,
+the labels speak of rates rather than posterior means. Several result sets
 give panels side by side on one rate axis (to compare priors, say), each rupture at the same magnitude in every
 panel. LABEL names a panel; by default it is the rate vectors' folder (the prior).
 
@@ -25,7 +27,10 @@ out.
 
 Writes FIGURE (default: fig_rate_magnitude.png next to the first rate vectors) and, as its table view, the same name
 with .txt: per bin, the number of ruptures, the target, the total of the means and their ratio, the 10%, 50% and 90%
-points and the largest of log10 of the mean rates, and how many lie below the floor.
+points and the largest of log10 of the mean rates, and how many lie below the floor; then, per bin, how many ruptures
+have a mean rate below the floor (including 0), in each decade from the floor up to 1e-2, and at 1e-2 or above, so
+that every rupture is counted once. Means in the lowest decades come from ruptures switched on in few draws, so their
+counts depend on run length.
 """
 import argparse
 import os
@@ -107,16 +112,23 @@ def main():
         pen = int(np.sum(z['penalised'])) if 'penalised' in z.files else n_raw - n
         m = m_all[keep_c]
         tot = np.bincount(bin_of, weights=m, minlength=B)
-        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen))
+        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen,
+                         model=str(z['model']) if 'model' in z.files else ''))
+    single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
+    mean_ = '' if single else 'mean '
 
     # table view
     clip = lambda v: f'<{floor:g}' if v <= floor else f'{v:.2f}'
+    dec = [floor] + [float(e) for e in range(int(np.floor(floor)) + 1, -1)]      # decade edges: the floor, ..., 1e-2
+    dlab = [f'<1e{floor:g}'] + [f'1e{e:g}' for e in dec[:-1]] + [f'>=1e{dec[-1]:g}']
+    dw = max(6, max(len(s) for s in dlab)) + 1
     lines = list(head)
     for D in data:
         Lm = np.log10(np.maximum(D['m'], 10.0 ** floor))
         lines += ['', f'{D["label"]} ({D["path"]}): {D["pen"]:,} penalised ruptures (rate 0 by construction) not shown',
-                  f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total of means":>14s} {"ratio":>6s} '
-                  f'{"log10 mean: 10%":>16s} {"50%":>7s} {"90%":>7s} {"max":>7s} {"below " + f"1e{floor:g}":>12s}']
+                  f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
+                  f'{"log10 rate: 10%" if single else "log10 mean: 10%":>16s} {"50%":>7s} {"90%":>7s} {"max":>7s} '
+                  f'{"below " + f"1e{floor:g}":>12s}']
         for k in list(range(B)) + [None]:
             sel = bin_of == k if k is not None else np.ones(n, bool)
             tgt = R[k] if k is not None else R.sum()
@@ -125,6 +137,16 @@ def main():
             lines.append(f'{(rng_name(k) if k is not None else "all"):<11s} {int(sel.sum()):8d} {tgt:11.3e} {tt:14.3e} '
                          f'{tt / tgt:6.3f} {clip(q[0]):>16s} {clip(q[1]):>7s} {clip(q[2]):>7s} {clip(Lm[sel].max()):>7s} '
                          f'{int(D["below"][sel].sum()):12d}')
+        with np.errstate(divide='ignore'):                # a mean of 0 is below the floor
+            idx = np.where(D['below'], 0, np.maximum(np.digitize(np.log10(D['m']), dec), 1))
+        cnt = np.bincount(bin_of * len(dlab) + idx, minlength=B * len(dlab)).reshape(B, len(dlab))
+        what = 'rates' if single else 'means'
+        lines += ['', f"ruptures by decade of {mean_}rate (each column counts the {what} from its value up to the next one's; "
+                      f"<1e{floor:g} includes {what} of exactly 0):",
+                  f'{"bin":<11s}' + ''.join(f'{s:>{dw}s}' for s in dlab)]
+        for k in list(range(B)) + [None]:
+            c = cnt[k] if k is not None else cnt.sum(0)
+            lines.append(f'{(rng_name(k) if k is not None else "all"):<11s}' + ''.join(f'{int(v):{dw}d}' for v in c))
     text = '\n'.join(lines)
     print(text)
 
@@ -184,13 +206,14 @@ def main():
     ticks = list(range(int(np.ceil(floor)), int(np.floor(top)) + 1))
     axs[0][0].set_yticks(ticks + ([band_c] if any_below else []))
     axs[0][0].set_yticklabels([log_label(t) for t in ticks] + ([f'< {log_label(floor)}'] if any_below else []))
-    axs[0][0].set_ylabel('log10 of the posterior mean rate (per year)', color=INK2, fontsize=9)
-    handles = [Line2D([], [], ls='none', marker='o', ms=4, mfc=BLUE, mec=BLUE, alpha=0.6, label='rupture: mean rate'),
+    axs[0][0].set_ylabel('log10 of the ' + ('' if single else 'posterior mean ') + 'rate (per year)', color=INK2, fontsize=9)
+    handles = [Line2D([], [], ls='none', marker='o', ms=4, mfc=BLUE, mec=BLUE, alpha=0.6, label=f'rupture: {mean_}rate'),
                Line2D([], [], color=INK, lw=1.0, label='bin target R_j (total rate)'),
-               Line2D([], [], ls='none', marker='o', ms=6.5, mfc=ORANGE, mec=SURFACE, mew=1.0, label='bin total of the means')]
+               Line2D([], [], ls='none', marker='o', ms=6.5, mfc=ORANGE, mec=SURFACE, mew=1.0,
+                      label='bin total' + ('' if single else ' of the means'))]
     if any_below:
-        handles.append(Patch(facecolor=BAND, edgecolor='none', label=f'band: mean below 1e{floor:g}, including 0'))
-    fig.suptitle('Posterior mean rate of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
+        handles.append(Patch(facecolor=BAND, edgecolor='none', label=f'band: {mean_}below 1e{floor:g}, including 0'))
+    fig.suptitle(('Rate' if single else 'Posterior mean rate') + ' of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
                  color=INK, fontsize=13, fontweight='bold', y=0.975)
     fig.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=8.5, labelcolor=INK2,
                bbox_to_anchor=(0.5, 0.045), handletextpad=0.5, columnspacing=1.6)

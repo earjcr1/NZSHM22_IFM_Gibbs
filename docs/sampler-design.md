@@ -55,7 +55,8 @@ first given.
   (`BLOCK_WEIGHTS`), which could not move the bins: their misfit is set by the model's freedom. See REPORT.md, "MFD
   uncertainty".
 - **Production sampler: Gibbs** (C kernel via ctypes, threads across chains, about 2 ms per chain per
-  sweep at 2e4, near-independent draws every 4 sweeps). It also ran the acceptable-set target
+  sweep at 2e4, near-independent draws every 4 sweeps; at 211,000 ruptures, since October 2026's faster kernel, about
+  11 ms per chain per sweep under spike-and-slab and 38 ms under θ). It also ran the acceptable-set target
   (coordinate hit-and-run on {χ² ≤ χ²_max}, the chord atlas run as an exact chain) until it was removed with the χ²
   cap in October 2026; the Gaussian likelihood is now the only target.
 - **Reflective HMC (section 4) is retired for this problem.** Thousands of wall reflections per
@@ -287,7 +288,7 @@ Only after this passes: production run on the real `G` at 2e4, then 4e5.
 
 ## 10. Outputs and bookkeeping
 
-**As built** (supersedes the plan below; details in REPORT.md): draws are optional, stored as float32 of shape `(chains, draws, n)` (`--no-samples`, or `OUTPUT_DRAWS = False` in the notebook). Every run writes running summaries (`<out>_stream.npz`), including a per-rupture histogram of log rate in 0.01-decade bins, from which the notebook computes each rupture's mean, median, mode and ±1σ/±2σ-equivalent quantiles (`rate_vectors.csv`) in the original rupture numbering.
+**As built** (supersedes the plan below; details in REPORT.md): draws are optional, stored as float32 of shape `(chains, draws, n)` (`--no-samples`, or `OUTPUT_DRAWS = False` in the notebook, its default). Every run writes running summaries (`<out>_stream.npz`), including a per-rupture histogram of log rate in 0.01-decade bins, from which the notebook computes each rupture's mean, median, mode and ±1σ/±2σ-equivalent quantiles (`rate_vectors.csv`) in the original rupture numbering.
 
 - Thinned samples as a float32 memmap of shape `(n, n_samples)`, e.g. 3000 samples at
   `n = 4e5` ≈ 5 GB on disk; plus per-chain `χ²`, `Σm`, and the user's functionals per sample.

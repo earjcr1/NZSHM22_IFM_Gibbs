@@ -7,6 +7,10 @@ Cleaning: (1) rows containing any entry with |value| > --huge (the 1e20/1e21 pen
 to zero) are removed from G and d, together with the parameters they apply to; (2) all-zero rows and columns are
 removed (rows that constrained only removed parameters, or were empty to begin with: they add only a constant to
 chi^2), so N counts only rows that carry data.  --keep-empty-rows keeps them: same posterior, larger N.
+Between the two, a row after the slip-rate rows with a target of 0 and a single entry left is a soft zero-forcing
+penalty on that parameter (1e4 in the NZSHM22 inputs, a legacy weight): its parameter is forced to zero as the penalty
+rows' are, and removed with the row. In the corrected 2e4 inputs every such row is on a parameter a penalty row already
+removes; in the 211k inputs 301 are not. --keep-soft-penalties keeps them as the inputs give them (soft caps).
 Slip-rate sections (--slip-sections, 'auto' by default): a fault section's slip rate, copied to each of its k
 subsections, is one measurement, so the rows of each run of copies (identical targets and identical coefficients for
 the ruptures they share) are divided by sqrt(k) and the measurement counts once; rows unlike their neighbours (k = 1,
@@ -23,18 +27,33 @@ kept (it is set where the inputs are built). Magnitudes count the bin rows up fr
 steps of --bin-width (0.1) in their original order, as plot_rate_magnitude.py does. The cleaned problem records the
 setting and the multiplier (mfd_uncertainty, mfd_scale), and row_scale includes it. The fit check still counts one
 measurement per bin: a draw's bin totals scatter independently, within their widened uncertainties.
-Writes the cleaned problem (--out), all diagnostics (prelim_results.npz), a summary (prelim_summary.txt) and
-a figure (prelim.png); for --out other than cru_clean.npz these names get the --out stem as a prefix.  Everything here costs a few passes over G plus O(N^3) with N = number of rows.
+Writes the cleaned problem (--out), all diagnostics (prelim_results.npz), a summary (prelim_summary.txt), a figure
+(prelim.png) and, in a folder of its own next to --out, nnls/, the best fit as rate vectors (nnls_vectors.npz: a
+`mean` column in the original rupture numbering, as the notebook's rate vectors, for plot_rate_magnitude.py,
+plot_slip_rates.py, plot_paleo_rates.py and make_solution.py; nnls_vectors.csv: the same as a table with the rows of
+rate_vectors.csv, one per rupture of the inputs, columns rupture, penalised and best_fit, removed ruptures 0); for
+--out other than cru_clean.npz these names get the --out stem as a prefix. Copies left beside --out by the layout
+before nnls/ are removed. --no-nnls skips the best fit: then there are no nnls_vectors files and no best fit in
+prelim_results.npz, so gibbs.py starts elsewhere.
+Nothing here forms a dense copy of G or anything n x n: the near-duplicate search compares each column only with the
+columns that can pass its cosine threshold (an exact pruning), the best fit works on the sparse G with an updated QR
+factorization, and the resolution diagonal takes G a block of columns at a time. At 2e5 ruptures (2,395 rows) the
+whole step takes about a minute on an M2, with 3 GB of memory: the best fit 25 s, the near-duplicate search 13 s.
 """
 import argparse
+import csv
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import scipy.sparse as sp
+from scipy.linalg import qr, qr_delete, qr_insert, solve_triangular
+from scipy.sparse.csgraph import connected_components
 
-from cru_common import (load_colt_sparse, load_vector, save_problem, column_norms, describe, detect_bin_rows, check_slip_rows,
-                        relabel_rows, slip_sections, chi2_expectation, mfd_uncertainty, scale_rows)
+from cru_common import (load_colt_sparse, load_vector, save_problem, load_problem, column_norms, describe, detect_bin_rows,
+                        check_bin_rows, check_slip_rows, relabel_rows, slip_sections, chi2_expectation, mfd_uncertainty,
+                        scale_rows)
 
 LOG = []
 
@@ -46,8 +65,11 @@ def say(*a):
 
 
 # --------------------------------------------------------------------------- cleaning
-def clean(A, d, huge, drop_empty_rows=True):
+def clean(A, d, huge, drop_empty_rows=True, force_soft=True):
     """1) remove the penalty rows (any |entry| > huge) from G and d, and the parameters (columns) they apply to;
+    1b) after the slip-rate rows (which end at the first zero-forcing row), a row with a target of 0 and a single entry
+    left is a soft zero-forcing penalty on that parameter: if force_soft, the parameter is forced to zero as the penalty
+    rows' are (removed), and the row with it;
     2) remove all-zero columns, and all-zero rows if drop_empty_rows.  Returns G, d, kept indices, info."""
     A = sp.csr_matrix(A)
     N, n = A.shape
@@ -59,12 +81,26 @@ def clean(A, d, huge, drop_empty_rows=True):
     G = A[keep_r][:, keep_c].tocsr()
     step1 = G.shape
     zr = np.flatnonzero(np.diff(G.indptr) == 0)
-    zc = np.flatnonzero(np.diff(G.tocsc().indptr) == 0)
     emptied = np.setdiff1d(keep_r[zr], raw_empty)
+    cand = np.concatenate([pen_r, raw_empty, emptied])   # zero-forcing rows so far (target 0): the first ends the slip rates
+    cand = cand[d[cand] == 0]
+    first = int(cand.min()) if cand.size else 0
+    one = keep_r[np.diff(G.indptr) == 1]
+    soft_r = one[(d[one] == 0) & (one >= first)]
+    soft_c = np.unique(A[soft_r][:, keep_c].indices) if len(soft_r) else np.zeros(0, int)
+    soft = dict(soft_r=soft_r, soft_c=keep_c[soft_c] if len(soft_r) else soft_c, soft_forced=bool(force_soft),
+                soft_values=np.unique(A[soft_r][:, keep_c].data) if len(soft_r) else np.array([]))
+    if force_soft and len(soft_r):
+        keep_r = np.setdiff1d(keep_r, soft_r)
+        keep_c = np.setdiff1d(keep_c, soft['soft_c'])
+        G = A[keep_r][:, keep_c].tocsr()
+        zr = np.flatnonzero(np.diff(G.indptr) == 0)
+    zc = np.flatnonzero(np.diff(G.tocsc().indptr) == 0)
     info = dict(pen_r=pen_r, pen_c=pen_c, pen_values=np.unique(A[pen_r].data), step1=step1, raw_empty=raw_empty,
                 emptied=emptied, emptied_entries=np.unique(A[emptied].data) if len(emptied) else np.array([]),
                 emptied_on_removed=bool(np.isin(A[emptied].indices, pen_c).all()) if len(emptied) else True,
-                zero_rows=keep_r[zr], zero_cols=keep_c[zc], chi2_const=float(np.sum(d[keep_r[zr]] ** 2)))
+                zero_rows=keep_r[zr], zero_cols=keep_c[zc], chi2_const=float(np.sum(d[keep_r[zr]] ** 2)),
+                step1b=G.shape, **soft)
     if drop_empty_rows:
         keep_r = np.delete(keep_r, zr)
     keep_c = np.delete(keep_c, zc)
@@ -140,77 +176,166 @@ def row_blocks(G, keep_r, spec=None, min_rows=5):
 
 
 # --------------------------------------------------------------------------- best fit
-def nnls_lawson_hanson(G, d, tol=None, max_outer=None):
-    """Lawson-Hanson active-set NNLS for wide dense G (N << n).  Never forms G^T G; memory O(N n)."""
+def nnls_lawson_hanson(G, d, tol=None, max_outer=None, threads=None):
+    """Lawson-Hanson active-set NNLS for a wide G (N << n), sparse or dense. Never forms G^T G or a dense copy of G: the
+    gradients are sparse products, split by column blocks over threads (the same sums as G.T @ r), the predictions sum
+    over the nonzero rates only (the same sums as G @ x, without the zero terms), and the passive set's least-squares
+    problem is solved from a QR factorization of its columns, updated as columns enter and leave (scipy.linalg.qr_insert
+    / qr_delete) rather than recomputed."""
+    G = sp.csc_matrix(G)
     N, n = G.shape
+    threads = threads or min(4, os.cpu_count() or 1)
+    cuts = np.linspace(0, n, threads + 1).astype(int)
+    GT = [sp.csr_matrix(G[:, c0:c1].T) for c0, c1 in zip(cuts[:-1], cuts[1:])]
     x = np.zeros(n)
     P = np.zeros(n, bool)
-    w = G.T @ d
-    if tol is None:
-        tol = 1e-9 * np.abs(w).max()
-    tabu = -1
-    for it in range(max_outer or 3 * n):
-        wc = np.where(P, -np.inf, w)
-        if tabu >= 0:
-            wc[tabu] = -np.inf
-        j = int(np.argmax(wc))
-        if not wc[j] > tol:
-            break
-        P[j] = True
-        first = True
-        while True:
-            idx = np.flatnonzero(P)
-            s = np.linalg.lstsq(G[:, idx], d, rcond=None)[0]
-            if np.all(s > 0):
-                x[:] = 0.0
-                x[idx] = s
-                tabu = -1
+    idx, QR = [], [None, None]                       # passive columns, in factorization order, and the QR of G[:, idx]
+
+    def insert(j):                                   # returns False if column j is numerically dependent on the others
+        u = G[:, j].toarray().ravel()
+        if idx:
+            QR[:] = qr_insert(QR[0], QR[1], u, len(idx), which='col', overwrite_qru=True, check_finite=False)
+        else:
+            QR[:] = qr(u[:, None], check_finite=False)
+        idx.append(j)
+        return abs(QR[1][len(idx) - 1, len(idx) - 1]) > 1e-12 * np.linalg.norm(u)
+
+    def delete(p):
+        if len(idx) == 1:
+            QR[:] = [None, None]
+        else:
+            QR[:] = qr_delete(QR[0], QR[1], p, which='col', overwrite_qr=True, check_finite=False)
+        del idx[p]
+
+    def solve():
+        k = len(idx)
+        return solve_triangular(QR[1][:k, :k], QR[0][:, :k].T @ d, check_finite=False)
+
+    with ThreadPoolExecutor(threads) as pool:
+        def gradient(res):                           # G^T res, one block of columns per thread
+            w = np.empty(n)
+
+            def part(k):
+                w[cuts[k]:cuts[k + 1]] = GT[k] @ res
+            list(pool.map(part, range(threads)))
+            return w
+
+        w = gradient(d)
+        if tol is None:
+            tol = 1e-9 * np.abs(w).max()
+        tabu = -1
+        for it in range(max_outer or 3 * n):
+            wc = np.where(P, -np.inf, w)
+            if tabu >= 0:
+                wc[tabu] = -np.inf
+            j = int(np.argmax(wc))
+            if not wc[j] > tol:
                 break
-            if first and s[idx == j][0] <= 0:      # numerically degenerate entry: skip it this round
-                P[j] = False
-                tabu = j
-                break
-            first = False
-            neg = s <= 0
-            xi = x[idx]
-            alpha = np.min(xi[neg] / (xi[neg] - s[neg]))
-            x[idx] = xi + alpha * (s - xi)
-            P[idx[x[idx] <= 0]] = False
-            x[~P] = 0.0
-        w = G.T @ (d - G @ x)
+            P[j] = True
+            independent = insert(j)
+            first = True
+            while True:
+                if not idx:                          # every passive column left: the solution is 0, as an empty solve gives
+                    x[:] = 0.0
+                    break
+                s = solve() if independent else None
+                if s is not None and np.all(s > 0):
+                    x[:] = 0.0
+                    x[idx] = s
+                    tabu = -1
+                    break
+                if first and (s is None or s[-1] <= 0):  # numerically degenerate entry (j is the last column): skip it this round
+                    delete(len(idx) - 1)
+                    P[j] = False
+                    tabu = j
+                    break
+                first = False
+                ia = np.array(idx)
+                neg = s <= 0
+                xi = x[ia]
+                ratio = xi[neg] / (xi[neg] - s[neg])
+                alpha = np.min(ratio)
+                x[ia] = xi + alpha * (s - xi)
+                x[ia[np.flatnonzero(neg)[ratio == alpha]]] = 0.0     # the blocking rates leave exactly: rounding cannot leave
+                for p in np.flatnonzero(x[ia] <= 0)[::-1]:   # from the end, so the positions of the others stay valid
+                    P[idx[p]] = False
+                    delete(int(p))
+                x[~P] = 0.0
+            nz = np.flatnonzero(x)
+            w = gradient(d - G[:, nz] @ x[nz])
     return x, it
 
 
 # --------------------------------------------------------------------------- near-duplicate columns
-def near_duplicates(G, cn, thresholds=(0.99, 0.999, 0.9999), block=1024):
-    n = G.shape[1]
-    Gn = (sp.csc_matrix(G) @ sp.diags(1.0 / np.where(cn > 0, cn, 1.0))).toarray()
+def near_duplicates(G, cn, thresholds=(0.99, 0.999, 0.9999), chunk=4096):
+    """Pairs of columns with cosine similarity above min(thresholds), and the groups they tie together at each threshold.
+    Exact, without comparing every pair: two unit columns with cosine above t differ by less than delta = sqrt(2 (1 - t))
+    in every entry, so every column that pairs with a column holding an entry of at least delta (a heavy entry) is
+    nonzero in that entry's row. Each column with a heavy entry is filed under its heavy row with the fewest columns and
+    compared with that row's columns only, over the rows its chunk of columns touches (the only rows its cosines need);
+    flat columns (no heavy entry) are compared with one another. Never forms a dense copy of G."""
+    N, n = G.shape
+    Gn = sp.csc_matrix(sp.csc_matrix(G) @ sp.diags(1.0 / np.where(cn > 0, cn, 1.0)))
+    Gn.sort_indices()
+    Gr = sp.csr_matrix(Gn)                           # each row's columns
     tmin = min(thresholds)
-    I, J, C = [], [], []
-    for b0 in range(0, n, block):
-        Cb = Gn[:, b0:b0 + block].T @ Gn
-        ii, jj = np.nonzero(Cb > tmin)
-        keep = jj > ii + b0
-        I.append(ii[keep] + b0)
-        J.append(jj[keep])
-        C.append(Cb[ii[keep], jj[keep]])
-    I, J, C = np.concatenate(I), np.concatenate(J), np.concatenate(C)
-    out = {'pairs_i': I, 'pairs_j': J, 'pairs_cos': C}
+    delta = np.sqrt(2.0 * (1.0 - tmin))
+    lens = np.diff(Gn.indptr)
+    seg = np.repeat(np.arange(n), lens)              # each entry's column
+    rc = np.diff(Gr.indptr)                          # each row's number of columns
+    hv = np.flatnonzero(Gn.data >= delta)            # heavy entries
+    hv = hv[np.lexsort((Gn.indices[hv], rc[Gn.indices[hv]], seg[hv]))]   # by column, then fewest columns, then row
+    first = hv[np.unique(seg[hv], return_index=True)[1]]
+    frow = np.full(n, -1)
+    frow[seg[first]] = Gn.indices[first]             # each column's filing row: its heavy row with the fewest columns
+    flat = (frow < 0) & (lens > 0)
+    pos = np.full(N, -1)                             # the rows in use, numbered
+    I, J, C, work = [], [], [], [0]
+
+    def dense(S, U):                                 # sparse columns S on the rows U, as a dense array
+        k = pos[S.indices]
+        ok = k >= 0
+        D = np.zeros((len(U), S.shape[1]))
+        D[k[ok], np.repeat(np.arange(S.shape[1]), np.diff(S.indptr))[ok]] = S.data[ok]
+        return D
+
+    def compare(A, B, keep):                         # cosines of columns A against columns B; keep(i, j) selects pairs
+        for a0 in range(0, len(A), chunk):
+            a = A[a0:a0 + chunk]
+            Sa = Gn[:, a]
+            U = np.unique(Sa.indices)                # the rows these columns touch
+            pos[U] = np.arange(len(U))
+            Da = dense(Sa, U)
+            for b0 in range(0, len(B), 4 * chunk):
+                b = B[b0:b0 + 4 * chunk]
+                Cb = Da.T @ dense(Gn[:, b], U)
+                work[0] += Cb.size
+                ii, jj = np.nonzero(Cb > tmin)
+                ok = keep(a[ii], b[jj])
+                I.append(a[ii[ok]]), J.append(b[jj[ok]]), C.append(Cb[ii[ok], jj[ok]])
+            pos[U] = -1
+
+    order = np.argsort(frow, kind='stable')          # columns with a heavy entry, grouped by filing row
+    nf = order[frow[order] >= 0]
+    for A in np.split(nf, np.flatnonzero(np.diff(frow[nf])) + 1):
+        if A.size:
+            r = frow[A[0]]
+            compare(A, Gr.indices[Gr.indptr[r]:Gr.indptr[r + 1]], lambda i, j: (j > i) | flat[j])  # each pair once; a flat
+    F = np.flatnonzero(flat)                                                                     # partner never finds it
+    if F.size:
+        compare(F, F, lambda i, j: j > i)
+    I = np.concatenate(I) if I else np.zeros(0, int)
+    J = np.concatenate(J) if J else np.zeros(0, int)
+    C = np.concatenate(C) if C else np.zeros(0)
+    I, J = np.minimum(I, J), np.maximum(I, J)
+    s = np.lexsort((J, I))                           # by first column, then second, as a full search lists them
+    I, J, C = I[s], J[s], C[s]
+    out = {'pairs_i': I, 'pairs_j': J, 'pairs_cos': C, 'flat_columns': int(F.size),
+           'computed': work[0] / max(n * (n - 1) / 2, 1)}   # cosines computed, as a share of a full search's
     for t in thresholds:
         sel = C > t
-        parent = np.arange(n)
-
-        def find(a):
-            while parent[a] != a:
-                parent[a] = parent[parent[a]]
-                a = parent[a]
-            return a
-        for a, b in zip(I[sel], J[sel]):
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[ra] = rb
-        roots = np.array([find(a) for a in range(n)])
-        sizes = np.bincount(roots, minlength=n)
+        _, roots = connected_components(sp.coo_matrix((np.ones(sel.sum()), (I[sel], J[sel])), shape=(n, n)), directed=False)
+        sizes = np.bincount(roots)
         sizes = sizes[sizes > 1]
         out[f'cos>{t}'] = dict(pairs=int(sel.sum()), cols_in_groups=int(sizes.sum()), groups=int(len(sizes)),
                                largest=int(sizes.max()) if len(sizes) else 0)
@@ -249,7 +374,15 @@ def main():
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='lower magnitude edge of the lowest bin row left after '
                     'cleaning (default 6.8), for finding the M7.0-7.1 bin, as in plot_rate_magnitude.py')
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
-    ap.add_argument('--no-duplicates', action='store_true', help='skip the O(N n^2) near-duplicate search')
+    ap.add_argument('--no-duplicates', action='store_true', help='skip the near-duplicate search (about 13 s at 2e5 '
+                    'ruptures); gibbs.py --swap-cos then finds no pairs')
+    ap.add_argument('--no-nnls', action='store_true', help='skip the best nonnegative fit (NNLS; about 25 s at 2e5 ruptures): '
+                    'then no nnls_vectors files (nnls/), no best-fit columns in the tables, and gibbs.py needs --init zero (or '
+                    'another start)')
+    ap.add_argument('--keep-soft-penalties', action='store_true',
+                    help='keep the rows after the slip-rate rows that have a target of 0 and a single entry (soft zero-forcing '
+                         'penalties, 1e4 in the NZSHM22 inputs) as the inputs give them, instead of forcing their ruptures to 0 '
+                         'as the penalty rows do (they then cap those ruptures softly, and the fit check leaves them out)')
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()
@@ -258,20 +391,31 @@ def main():
     stem = os.path.splitext(args.out)[0]                 # side outputs are named after --out
     os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
     pre = '' if os.path.basename(stem) == 'cru_clean' else stem + '_'
-    f_res, f_sum, f_png = (os.path.join(os.path.dirname(stem), pre + f) if not pre else pre + f
-                           for f in ('prelim_results.npz', 'prelim_summary.txt', 'prelim.png'))
+    f_res, f_sum, f_png, old_vec, old_csv = (os.path.join(os.path.dirname(stem), pre + f) if not pre else pre + f
+                                             for f in ('prelim_results.npz', 'prelim_summary.txt', 'prelim.png',
+                                                       'nnls_vectors.npz', 'nnls_vectors.csv'))
+    d_nnls = os.path.join(os.path.dirname(stem), 'nnls')   # the best fit's outputs, in a folder of their own
+    f_vec, f_csv = (os.path.join(d_nnls, os.path.basename(p)) for p in (old_vec, old_csv))
 
     A = load_colt_sparse(args.A)
     d_raw = load_vector(args.d)
     say(f'== raw: G {A.shape[0]} x {A.shape[1]}, nnz {A.nnz}; d {d_raw.shape}; min entry {A.data.min():.4g}, max {A.data.max():.4g}')
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
 
-    G, d, keep_r, keep_c, info = clean(A, d_raw, args.huge, not args.keep_empty_rows)
+    G, d, keep_r, keep_c, info = clean(A, d_raw, args.huge, not args.keep_empty_rows, not args.keep_soft_penalties)
     N, n = G.shape
     pr = info['pen_r']
     say(f'== cleaning step 1: {len(pr)} penalty rows contain entries > {args.huge:g} (values {info["pen_values"]}; original rows '
         f'{pr.tolist() if len(pr) <= 20 else f"{pr.min()}-{pr.max()}"}); they apply to {len(info["pen_c"])} parameters.')
     say(f'   removing those rows from G and d and those parameters from G: {info["step1"][0]} x {info["step1"][1]}')
+    if len(info['soft_r']):
+        sr = info['soft_r']
+        say(f'== cleaning step 1b: {len(sr)} rows after the slip-rate rows have a target of 0 and a single entry left (values '
+            f'{info["soft_values"]}; original rows {sr.min()}-{sr.max()}): soft zero-forcing penalties on {len(info["soft_c"])} '
+            'parameters that no penalty row covers')
+        say(f'   forcing those parameters to zero, as the penalty rows do, and removing them and the rows: {info["step1b"][0]} x '
+            f'{info["step1b"][1]}' if info['soft_forced'] else '   kept as the inputs give them (--keep-soft-penalties): each caps '
+            'its parameter softly, and the fit check leaves them out, since they hold no data')
     say(f'== cleaning step 2: {len(info["zero_rows"])} all-zero rows and {len(info["zero_cols"])} all-zero columns remain')
     if len(info['raw_empty']):
         say(f'   {len(info["raw_empty"])} rows were empty in the raw matrix (original rows {info["raw_empty"].tolist()}, d = {d_raw[info["raw_empty"]].tolist()})')
@@ -330,6 +474,7 @@ def main():
     # ---- slip-rate sections: one measurement per section (copies of a section's slip rate divided by sqrt(k))
     row_scale, section = np.ones(N), np.full(N, -1, np.int64)
     nonempty = np.diff(sp.csr_matrix(G).indptr) > 0
+    n_soft = 0 if info['soft_forced'] else int(np.isin(keep_r, info['soft_r']).sum())   # kept soft penalties: no data
     const = info['chi2_const'] if args.keep_empty_rows else 0.0
     spec = args.slip_sections
     if args.slip_block in bnames:
@@ -363,14 +508,15 @@ def main():
         if weigh:
             G = sp.csc_matrix(sp.diags(row_scale) @ G)
             d = d * row_scale
-        n_other = int(nonempty.sum()) - len(srows)
+        n_other = int(nonempty.sum()) - len(srows) - n_soft
         chi2_exp = chi2_expectation(ks, 1.0 / np.sqrt(ks) if weigh else np.ones(len(ks)), n_other, const)
         say(f'   fit check: if the uncertainties are right, the chi^2 of a draw should be near {chi2_exp[0]:.0f} +- {chi2_exp[1]:.0f} '
             + (f'({len(ks)} slip-rate measurements, one per section, and {n_other} other rows' if weigh else
                f'({len(srows)} slip-rate rows, whose copies of one section share its error, which widens the spread, and {n_other} other rows')
-            + (f', plus a constant {const:g} from the all-zero rows kept' if const else '') + '; assuming each section\'s slip rate is uniform along it)')
+            + (f', plus a constant {const:g} from the all-zero rows kept' if const else '')
+            + (f'; the {n_soft} soft zero-forcing rows kept are left out' if n_soft else '') + '; assuming each section\'s slip rate is uniform along it)')
     else:
-        chi2_exp = chi2_expectation([], [], int(nonempty.sum()), const)
+        chi2_exp = chi2_expectation([], [], int(nonempty.sum()) - n_soft, const)
         say(f'   fit check: if the uncertainties are right, the chi^2 of a draw should be near {chi2_exp[0]:.0f} +- {chi2_exp[1]:.0f} (every row its own measurement)')
 
     # ---- MFD uncertainty: the bins' overall level, their bin-to-bin shape as the inputs give it
@@ -432,6 +578,7 @@ def main():
                  row_scale=row_scale, section=section, slip_sections=str(spec), chi2_expect=np.array(chi2_exp),
                  mfd_uncertainty=mfd_spec, mfd_scale=mfd_c)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
+    say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 
     # ---- scales
     cn = column_norms(G)
@@ -473,8 +620,13 @@ def main():
     n_data = int(np.sum(np.diff(Gr.indptr) > 0))
     say('== spectrum: singular values s_1 = %.4g, s_%d = %.4g, numerical rank %d of %d rows (%d non-empty)' % (sv[0], rank, sv[rank - 1], rank, N, n_data))
     say('   s_k at k = 1, 10, 50, 100, 200, 300, 400: ' + ', '.join('%.3g' % sv[k - 1] for k in [1, 10, 50, 100, 200, 300, 400] if k <= N))
-    W = (U[:, :rank].T @ Gr.toarray()) / sv[:rank, None]
-    R = np.sum(W ** 2, 0)
+    Us = np.ascontiguousarray(U[:, :rank].T) / sv[:rank, None]   # contiguous: @ on the reversed view of U bypasses BLAS
+    Gc, R = G.tocsc(), np.empty(n)
+    for c0 in range(0, n, 1024):                     # R_ii = ||S^-1 U^T G_i||^2 by column blocks, with no dense copy of G,
+        Sb = Gc[:, c0:c0 + 1024]                     # over the rows each block touches (about a fifth of them at 2e5)
+        rows = np.unique(Sb.indices)
+        Wb = Us[:, rows] @ Sb[rows].toarray()
+        R[c0:c0 + 1024] = np.einsum('ij,ij->j', Wb, Wb)
     say('   ' + describe(R, 'resolution diagonal R_ii') + f';  sum = {R.sum():.1f} (= rank)')
     Gn = Gr @ sp.diags(1.0 / cn)
     ev_n = np.linalg.eigvalsh((Gn @ Gn.T).toarray())[::-1]
@@ -486,41 +638,62 @@ def main():
     if not args.no_duplicates:
         t = time.time()
         dup = near_duplicates(G, cn)
-        say(f'== near-duplicate columns (cosine similarity; {time.time() - t:.1f}s)')
+        took = time.time() - t
+        flat_txt = f', {dup["flat_columns"]} flat columns compared with one another' if dup['flat_columns'] else ''
+        say(f'== near-duplicate columns (cosine similarity; {100 * dup["computed"]:.1f}% of the cosines a full search computes, '
+            f'the others ruled out exactly{flat_txt}; {took:.1f}s)')
         for k in [k for k in dup if k.startswith('cos>')]:
             v = dup[k]
             say(f'   {k:10s}: {v["pairs"]:7d} pairs, {v["cols_in_groups"]:6d} columns in {v["groups"]:5d} groups, largest group {v["largest"]}')
         say(f'   exactly proportional pairs (cos > 1 - 1e-12): {dup["exact_proportional_pairs"]}')
 
-    # ---- best fit
-    t = time.time()
-    Gd = G.toarray()
-    m_nnls, its = nnls_lawson_hanson(Gd, d)
-    r = Gd @ m_nnls - d
-    grad = Gd.T @ r / sig ** 2
-    chi2_min = float(r @ r) / sig ** 2
-    say(f'== best fit (Lawson-Hanson NNLS, {its} outer iterations, {time.time() - t:.1f}s)')
-    say(f'   chi^2_min = {chi2_min:.2f} for N = {N} rows, {n_data} non-empty (chi^2/N = {chi2_min / N:.3f}); nonzeros {np.sum(m_nnls > 0)}; '
-        f'max m = {m_nnls.max():.3g} (hi = {args.hi:g} {"binds!" if m_nnls.max() > args.hi else "does not bind"}); sum m = {m_nnls.sum():.4g}')
-    for b, nm in enumerate(bnames):
-        k = block == b
-        say(f'   block {nm:9s}: chi^2 = {r[k] @ r[k] / sig ** 2:7.2f} over {k.sum():3d} rows, max |r|/sigma = {abs(r[k]).max() / sig:.2f}')
-    tol = 1e-9 * np.abs(Gd.T @ d).max() / sig ** 2       # nnls_lawson_hanson's default stopping tolerance, as a gradient
-    say(f'   KKT: min gradient on zero set = {grad[m_nnls == 0].min():.3g} (>= 0 required, to within the stopping tolerance '
-        f'{tol:.2g}), max |gradient| on support = {abs(grad[m_nnls > 0]).max():.2g}')
-    if args.bins_block in bnames:                        # the best fit's bin totals: the data's own tension, with no prior
-        brow = np.flatnonzero(block == bnames.index(args.bins_block))
-        Gb = sp.csr_matrix(G)[brow]
-        coef = np.array([Gb.data[Gb.indptr[k]] for k in range(len(brow))])
-        tgt, tot = d[brow] / coef, (Gb @ m_nnls) / coef
-        rr = tot / tgt - 1
-        say(f'   magnitude bins in the best fit: totals {100 * rr.min():+.1f}% to {100 * rr.max():+.1f}% of their targets (median '
-            f'{100 * np.median(rr):+.1f}%), within {np.abs(rr * d[brow]).max():.2f} of their uncertainties; total {tot.sum():.4g} '
-            f'against {tgt.sum():.4g} ({100 * (tot.sum() / tgt.sum() - 1):+.1f}%)')
+    # ---- best fit (optional)
+    m_nnls = r = chi2_min = None
+    if args.no_nnls:
+        say('== best fit: skipped (--no-nnls)')
+    else:
+        t = time.time()
+        m_nnls, its = nnls_lawson_hanson(G, d)
+        r = G @ m_nnls - d
+        grad = G.T @ r / sig ** 2
+        chi2_min = float(r @ r) / sig ** 2
+        say(f'== best fit (Lawson-Hanson NNLS, {its} outer iterations, {time.time() - t:.1f}s)')
+        say(f'   chi^2_min = {chi2_min:.2f} for N = {N} rows, {n_data} non-empty (chi^2/N = {chi2_min / N:.3f}); nonzeros {np.sum(m_nnls > 0)}; '
+            f'max m = {m_nnls.max():.3g} (hi = {args.hi:g} {"binds!" if m_nnls.max() > args.hi else "does not bind"}); sum m = {m_nnls.sum():.4g}')
+        for b, nm in enumerate(bnames):
+            k = block == b
+            say(f'   block {nm:9s}: chi^2 = {r[k] @ r[k] / sig ** 2:7.2f} over {k.sum():3d} rows, max |r|/sigma = {abs(r[k]).max() / sig:.2f}')
+        tol = 1e-9 * np.abs(G.T @ d).max() / sig ** 2       # nnls_lawson_hanson's default stopping tolerance, as a gradient
+        say(f'   KKT: min gradient on zero set = {grad[m_nnls == 0].min():.3g} (>= 0 required, to within the stopping tolerance '
+            f'{tol:.2g}), max |gradient| on support = {abs(grad[m_nnls > 0]).max():.2g}')
+        if args.bins_block in bnames:                        # the best fit's bin totals: the data's own tension, with no prior
+            brow = np.flatnonzero(block == bnames.index(args.bins_block))
+            Gb = sp.csr_matrix(G)[brow]
+            coef = np.array([Gb.data[Gb.indptr[k]] for k in range(len(brow))])
+            tgt, tot = d[brow] / coef, (Gb @ m_nnls) / coef
+            rr = tot / tgt - 1
+            say(f'   magnitude bins in the best fit: totals {100 * rr.min():+.1f}% to {100 * rr.max():+.1f}% of their targets (median '
+                f'{100 * np.median(rr):+.1f}%), within {np.abs(rr * d[brow]).max():.2f} of their uncertainties; total {tot.sum():.4g} '
+                f'against {tgt.sum():.4g} ({100 * (tot.sum() / tgt.sum() - 1):+.1f}%)')
 
     np.savez(f_res, cn=cn, s_cond=s_cond, collective=collective, cap=cap, spread=spread, sv=sv, R=R, ev_n=ev_n,
-             m_nnls=m_nnls, r_nnls=r, chi2_min=chi2_min, block=block,
-             dup_i=dup['pairs_i'] if dup else [], dup_j=dup['pairs_j'] if dup else [], dup_cos=dup['pairs_cos'] if dup else [])
+             **({} if m_nnls is None else dict(m_nnls=m_nnls, r_nnls=r, chi2_min=chi2_min)), block=block,
+             dup_i=dup['pairs_i'] if dup else np.zeros(0, int), dup_j=dup['pairs_j'] if dup else np.zeros(0, int),
+             dup_cos=dup['pairs_cos'] if dup else np.zeros(0))
+    if m_nnls is not None:
+        m_orig = np.zeros(A.shape[1])                    # the best fit as rate vectors (original rupture numbering, removed
+        m_orig[keep_c] = m_nnls                          # ruptures 0), for the fit figures (plot_*.py)
+        pen = np.ones(A.shape[1], int)
+        pen[keep_c] = 0
+        os.makedirs(d_nnls, exist_ok=True)
+        np.savez(f_vec, mean=m_orig, penalised=pen, model='best fit (NNLS)')
+        with open(f_csv, 'w', newline='') as fh:         # and as a table with the rows of make_tables.py's rate_vectors.csv
+            wr = csv.writer(fh)
+            wr.writerow(['rupture', 'penalised', 'best_fit'])
+            wr.writerows([i, pen[i], f'{m_orig[i]:.6e}'] for i in range(len(m_orig)))
+    for f in (old_vec, old_csv) + (() if m_nnls is not None else (f_vec, f_csv)):
+        if os.path.exists(f):                            # an earlier cleaning's best fit would not match this problem
+            os.remove(f)
     open(f_sum, 'w').write('\n'.join(LOG) + '\n')
 
     # ---- figure
@@ -540,15 +713,20 @@ def main():
     ax[0, 1].set_xlabel('k'); ax[0, 1].set_ylabel('singular value'); ax[0, 1].set_title(f'Spectrum of G (rank {rank})')
     ax[1, 0].hist(np.log10(np.clip(R, 1e-6, 1)), 60)
     ax[1, 0].set_xlabel(r'$\log_{10} R_{ii}$'); ax[1, 0].set_ylabel('parameters'); ax[1, 0].set_title('Resolution diagonal')
-    for b, nm in enumerate(bnames):
-        k = np.flatnonzero(block == b)
-        ax[1, 1].plot(k, r[k] / sig, '.', ms=3, label=nm)
-    ax[1, 1].axhline(0, color='k', lw=.5)
-    ax[1, 1].set_xlabel('row (cleaned index)'); ax[1, 1].set_ylabel(r'residual $(Gm-d)/\sigma$'); ax[1, 1].set_ylim(-3, 2)
-    ax[1, 1].set_title(rf'NNLS best fit, $\chi^2_{{min}}$ = {chi2_min:.1f}'); ax[1, 1].legend(fontsize=8)
+    if r is None:
+        ax[1, 1].text(0.5, 0.5, 'best fit skipped (--no-nnls)', ha='center', va='center', transform=ax[1, 1].transAxes)
+        ax[1, 1].set_axis_off()
+    else:
+        for b, nm in enumerate(bnames):
+            k = np.flatnonzero(block == b)
+            ax[1, 1].plot(k, r[k] / sig, '.', ms=3, label=nm)
+        ax[1, 1].axhline(0, color='k', lw=.5)
+        ax[1, 1].set_xlabel('row (cleaned index)'); ax[1, 1].set_ylabel(r'residual $(Gm-d)/\sigma$'); ax[1, 1].set_ylim(-3, 2)
+        ax[1, 1].set_title(rf'NNLS best fit, $\chi^2_{{min}}$ = {chi2_min:.1f}'); ax[1, 1].legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(f_png, dpi=120)
-    say(f'== done in {time.time() - t0:.1f}s: {args.out}, {f_res}, {f_sum}, {f_png}')
+    say(f'== done in {time.time() - t0:.1f}s: {args.out}, {f_res}, {f_sum}, {f_png}'
+        + ('' if m_nnls is None else f', {f_vec}, {f_csv}'))
 
 
 if __name__ == '__main__':

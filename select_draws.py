@@ -175,7 +175,7 @@ def main():
         tr_tot.append(z['sum_m'])
         chi2_all.append(z['chi2'][:, nb_:].ravel())
         tot_all.append(z['sum_m'][:, nb_:].ravel())
-        st = load_stream(run)
+        st = load_stream(run, ('tot_s', 'tot_b'))
         post_s.append(st['tot_s'].reshape(-1, nS).astype(np.float64))
         post_b.append(st['tot_b'].reshape(-1, B).astype(np.float64))
     chi2_rng = np.percentile(np.concatenate(chi2_all), [1, 99])

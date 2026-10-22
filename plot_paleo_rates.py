@@ -9,11 +9,15 @@ VECTORS is a result set's rate vectors as the notebook writes them (<prior folde
 rates, its prediction for a row is also the posterior mean of that row's prediction. When the runs that made the rate
 vectors sit next to them (<prior folder>/main_rep0.npz, main_rep1.npz, ..., as the notebook writes them), the
 predictions they recorded for every draw give each row's posterior spread, drawn as a bar from its 16% to its 84%
-point. Several result sets give one panel each, side by side on the same axes (to compare priors, say). LABEL names a
-result set; by default it is the rate vectors' folder (the prior).
+point. VECTORS may also be a single model's, such as the best fit that preliminaries.py writes (nnls_vectors.npz),
+which has no spread; when every result set is one, the labels speak of the model rather than the mean model. Several
+result sets give one panel each, side by side on the same axes (to compare priors, say). LABEL names a result set; by
+default it is the rate vectors' folder (the prior).
 
 Paleo rows: the rows of --paleo-block, or by default every row in neither the slip-rate block (--slip-block) nor the
-magnitude-bin block (--bins-block); for the NZSHM22 inputs these are the 40 paleoseismic event-rate rows.
+magnitude-bin block (--bins-block) whose target is positive; for the NZSHM22 inputs these are the paleoseismic
+event-rate rows (40 at 2e4, 65 at 211k). Rows with a target of 0 are zero-forcing penalty rows (one coefficient of
+1e4 on one rupture), not rates; at 211k, 301 of them survive cleaning, and they are left out with a note.
 
 Units: the input rows are divided by their uncertainties, which the inputs do not give, so targets and predictions are
 in units of each row's uncertainty. On log-log axes that moves a point only along the 1:1 line: its distance from the
@@ -78,7 +82,7 @@ def main():
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem (default cru_clean.npz)')
     ap.add_argument('--out', default=None, help='figure (default: fig_paleo_rates.png next to the first rate vectors)')
     ap.add_argument('--paleo-block', default=None, help='the paleo row group (default: every row in neither the slip-rate '
-                    'nor the magnitude-bin group)')
+                    'nor the magnitude-bin group whose target is positive)')
     ap.add_argument('--slip-block', default='S', help='the slip-rate row group (default S)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
     ap.add_argument('--label', type=int, default=4, help='label this many rows furthest from their targets (default 4)')
@@ -98,9 +102,14 @@ def main():
     else:
         other = [names.index(b) for b in (a.slip_block, a.bins_block) if b in names]
         rows = np.flatnonzero(~np.isin(P['block'], other) & nonempty)
+        zero = rows[P['d'][rows] <= 0]                   # zero-forcing penalty rows (target 0) are not paleo rates
+        rows = rows[P['d'][rows] > 0]
         rest = sorted({names[b] for b in P['block'][rows]})
         which = (f'the rows in neither {a.slip_block!r} nor {a.bins_block!r}: row block{"s" if len(rest) > 1 else ""} '
                  + ', '.join(map(repr, rest)))
+        if len(zero):
+            which += (f'; {len(zero)} other rows with targets of 0 or less left out (zero-forcing penalty rows, '
+                      f'{len({names[b] for b in P["block"][zero]})} row blocks)')
     if len(rows) == 0:
         raise SystemExit(f'no paleo rows found ({which}); name them with --paleo-block')
     orig = np.asarray(P['keep_rows'])[rows]
@@ -124,23 +133,27 @@ def main():
         yw = Gp @ m_all[keep_c]                          # predictions as the likelihood sees them
         y = yw / scale
         r = y - t
-        Y, used = run_predictions(os.path.dirname(path) or '.', rows, Gr.shape[0], scale)
+        model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
+        Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, Gr.shape[0], scale)
         q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None
         data.append(dict(path=path, label=label, y=y, r=r, ratio=y / t, q=q, used=used, ndraws=0 if Y is None else len(Y),
                          chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(r) <= 1)),
-                         in2=float(np.mean(np.abs(r) <= 2)), groups=list(np.argsort(-np.abs(r), kind='stable')[:max(0, a.label)])))
+                         in2=float(np.mean(np.abs(r) <= 2)), groups=list(np.argsort(-np.abs(r), kind='stable')[:max(0, a.label)]),
+                         model=model))
+    mm = 'model' if all(D['model'] for D in data) else 'mean model'
 
     # table view
     lines = list(head)
     for D in data:
         rq = np.percentile(D['ratio'], [5, 50, 95])
         spread = (f'posterior spread from the {D["ndraws"]} draws recorded by {", ".join(D["used"])}' if D['q'] is not None
+                  else f'{D["model"]}: a single model, so no posterior spread' if D['model']
                   else 'no runs found next to the rate vectors, so no posterior spread')
-        lines += ['', f'{D["label"]} ({D["path"]}): the mean model\'s chi2 over the paleo rows {D["chi2"]:.1f}; '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the paleo rows {D["chi2"]:.1f}; '
                   f'{100 * D["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two; '
                   f'prediction / target: median {rq[1]:.2f} (5-95%: {rq[0]:.2f} to {rq[2]:.2f}); {spread}; furthest from their '
                   'targets: ' + '; '.join(f'row {orig[k]} ({D["r"][k]:+.2f})' for k in D['groups']),
-                  f'{"row":>7s} {"target":>9s} {"mean prediction":>16s} {"16%":>9s} {"50%":>9s} {"84%":>9s} '
+                  f'{"row":>7s} {"target":>9s} {"prediction" if D["model"] else "mean prediction":>16s} {"16%":>9s} {"50%":>9s} {"84%":>9s} '
                   f'{"difference":>11s} {"ratio":>7s}']
         for k in np.argsort(orig, kind='stable'):
             qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, k]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
@@ -238,14 +251,14 @@ def main():
         ax.set_xlabel('paleo rate target (in units of its uncertainty)', color=INK2, fontsize=9)
         if j == 0:
             ax.set_ylabel('model prediction (same units)', color=INK2, fontsize=9)
-        sub = (f'mean model: χ² {D["chi2"]:.1f} over the {len(rows)} paleo rows\n'
+        sub = (f'{mm}: χ² {D["chi2"]:.1f} over the {len(rows)} paleo rows\n'
                f'{100 * D["in1"]:.0f}% within one uncertainty '
                f'of their targets, {100 * D["in2"]:.0f}% within two')
         ax.annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
                     va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         ax.annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 12), textcoords='offset points',
                     va='bottom', color=INK2, fontsize=8.5, linespacing=1.35)
-    handles = [Line2D([], [], ls='none', marker='o', ms=6, mfc=BLUE, mec=SURFACE, label='mean prediction')]
+    handles = [Line2D([], [], ls='none', marker='o', ms=6, mfc=BLUE, mec=SURFACE, label='prediction' if mm == 'model' else 'mean prediction')]
     if any(D['q'] is not None for D in data):
         handles.append(Line2D([], [], color=BLUE, alpha=0.45, lw=1.6, label='posterior 16–84% of the prediction'))
     handles += [Line2D([], [], color=INK, lw=1.0, label='prediction = target'),

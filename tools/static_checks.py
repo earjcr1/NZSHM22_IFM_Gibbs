@@ -12,7 +12,7 @@ import sys
 import zipfile
 
 ZIP, ROOT = sys.argv[1], sys.argv[2]          # the bundle zip, and the folder it was unzipped into (…/cru_workflow)
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py']
 DOCS = ['CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md', 'docs/prelim_summary.txt']
 fails = []
 
@@ -102,7 +102,7 @@ check(re.findall(r"^PRIOR_KIND = ('[a-z]+')", cells[0][1], re.M) == ["'spikeslab
       f"notebook PRIOR_KIND = {re.findall(r'^PRIOR_KIND = (.*?) ', cells[0][1], re.M)}")
 check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not None else \(1 if spike_mode else None\)", src['gibbs.py'])),
       'gibbs.py: --hyper-every defaults to 1 for spike-and-slab')
-for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py'):
+for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     d = argdefault(trees[s], '--diag-floor')
     check(d == -10, f'{s} --diag-floor default {d!r}')
 m = re.findall(r"spike_mode:.*\n.*\n\s*W, se, top = float\(sp_\[0\] or (-?\d+)\)", src['gibbs.py'])
@@ -110,13 +110,17 @@ check(m == ['-10'], f'gibbs.py spike-and-slab default slab floor {m}')
 cfg = cells[0][1]
 check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-10'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
       f"notebook FLOOR = {re.findall(r'^FLOOR = (-?[0-9]+)', cfg, re.M)}, no SLAB_FLOOR or DIAG_FLOOR setting")
-for script in ('preliminaries.py', 'gibbs.py', 'summarize_runs.py', 'plot_rate_magnitude.py'):
+for script in ('preliminaries.py', 'gibbs.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     cc = [i for i, c in cells if 'sh(' in c and f"'{script}'" in c
-          and not (c.count(f"'{script}'") == 1 and re.search(rf"sh\(\s*'{script}',\s*'--selftest'\)", c))]
+          and not (c.count(f"'{script}'") == 1 and re.search(rf"sh\(\s*'{script}',\s*'--selftest'(,\s*'\w+')?\)", c))]
     ok = bool(cc) and all('--diag-floor={FLOOR}' in c for i, c in cells if i in cc)
     check(ok, f"notebook passes --diag-floor={{FLOOR}} to {script} (cells {cc})")
 check(any("spikeslab:{FLOOR}:{BOX_TOP}" in c for _, c in cells), 'notebook uses spikeslab:{FLOOR}:{BOX_TOP}')
-check(any(re.search(r'clip = 10\.0 \*\* FLOOR\b', c) for _, c in cells), 'notebook clips the convergence diagnostics at 10.0 ** FLOOR')
+check(re.search(r'clip = 10\.0 \*\* floor\b', src['check_convergence.py']) is not None and not any('clip = 10.0 **' in c for _, c in cells),
+      'check_convergence.py clips the convergence diagnostics at 10 ** --diag-floor (the notebook passes FLOOR); the notebook computes none itself')
+cc = [i for i, c in cells if 'sh(' in c and "'check_convergence.py'" in c]
+check(len(cc) == 1 and all("'--preset', PRESET" in c for i, c in cells if i in cc) and any("'make_tables.py'" in c for _, c in cells),
+      f'notebook runs check_convergence.py once with its PRESET (cells {cc}), then make_tables.py')
 keys = None
 for i, c in cells:
     for n in ast.walk(ast.parse(c)):
@@ -166,6 +170,36 @@ check(argdefault(trees['gibbs.py'], '--target') == 'MISSING' and argdefault(tree
       'gibbs.py has no --target or --chi2max option and no acceptable-set mode (the Gaussian likelihood is the only one)')
 check(not any('TARGET' in c or "'--target'" in c for _, c in cells) and keys is not None and 'target' not in keys,
       'notebook has no TARGET setting, passes no --target, and records no target')
+od = re.findall(r'^OUTPUT_DRAWS = (\w+)', cfg, re.M)
+check(od == ['False'], f'notebook OUTPUT_DRAWS = {od}')
+bf = re.findall(r'^BEST_FIT = (\w+)', cfg, re.M)
+check(bf == ['True'] and keys is not None and 'best_fit' in keys, f'notebook BEST_FIT = {bf}, recorded in the configuration')
+cc = [i for i, c in cells if "'--no-nnls'" in c]
+check(len(cc) == 1 and all(re.search(r"if not BEST_FIT:\n\s+args \+= \['--no-nnls'\]", c) for i, c in cells if i in cc)
+      and any("('nnls' if BEST_FIT else 'zero')" in c for _, c in cells),
+      f'the cleaning cell passes --no-nnls only without BEST_FIT (cells {cc}), and the runs then start from zero')
+pre_opts = {a.value for n in ast.walk(trees['preliminaries.py']) if isinstance(n, ast.Call) and getattr(n.func, 'attr', '') == 'add_argument'
+            for a in n.args if isinstance(a, ast.Constant)}
+check({'--no-nnls', '--keep-soft-penalties'} <= pre_opts, 'preliminaries.py has --no-nnls and --keep-soft-penalties')
+dense_g = re.findall(r'\bG[a-z]?\.toarray\(\)', src['preliminaries.py'])        # a whole G made dense: 4 GB at 2e5, 11 at 5e5
+check(not dense_g and 'qr_insert' in src['preliminaries.py'], 'preliminaries.py makes no dense copy of G (the best fit updates a QR '
+      'factorization)' + (f'; found {", ".join(dense_g)}' if dense_g else ''))
+st_cells = [i for i, c in cells if re.search(r"sh\(\s*'gibbs\.py',\s*'--selftest'", c)]
+check(len(st_cells) == 1 and all("sh('gibbs.py', '--selftest', 'current')" in c for i, c in cells if i in st_cells)
+      and re.search(r"'--selftest', nargs='\?', const='all', choices=\['all', 'current'\]", src['gibbs.py']) is not None,
+      f"notebook's self-tests run gibbs.py --selftest current (cells {st_cells}); gibbs.py --selftest takes 'all' or 'current'")
+cc = [i for i, c in cells if 'nnls_vectors.npz' in c]
+check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('preliminaries.py', 'plot_slip_rates.py',
+      'plot_rate_magnitude.py', 'plot_paleo_rates.py')) and "'nnls_vectors.npz'" in src['preliminaries.py'],
+      f'the cleaning cell draws the best fit from nnls_vectors.npz, which preliminaries.py writes (cells {cc})')
+check("'nnls_vectors.csv'" in src['preliminaries.py'], 'preliminaries.py also writes the best fit as a table, nnls_vectors.csv')
+cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c]
+check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find_rupture_set(DATA_DIR)' in cfg and len(cc) == 1
+      and all("'nnls/nnls_vectors.npz" in c and "'--out', 'nnls'" in c and "'nnls/fig_slip_rates_nnls.png'" in c
+              and "'--ruptures', RUPTURE_DIR" in c for i, c in cells if i in cc)
+      and "os.path.join(os.path.dirname(stem), 'nnls')" in src['preliminaries.py'] and {'rupture_set', 'rupture_dir'} <= set(keys or []),
+      f"the best fit's outputs go into RUN_DIR/nnls/ (preliminaries.py and the cleaning cell {cc}), with its OpenSHA solution from "
+      "make_solution.py for the rupture set RUPTURE_SET = 'auto' finds in DATA_DIR; both recorded")
 
 print('5. Options and imports')
 opts = {}
