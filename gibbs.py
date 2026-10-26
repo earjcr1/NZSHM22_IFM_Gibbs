@@ -11,9 +11,14 @@ exponential proposal in the tails, so conditionals sitting hundreds of sds beyon
 
 Under the log-rate priors (--prior), each rate is drawn exactly by a slice sampler in log rate. The default is
 spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from the slab floor (1e-10)
-up to a soft top at its bin's target rate, and the fraction on in each bin is estimated. --prior binbox-theta:1:0 gives
-the alternative, per-bin log-uniform boxes whose depths put no pressure on the bin totals (theta = 1). See --help for
-the rest.
+up to a soft top at its bin's target rate, and the fraction on in each bin is estimated. --slab sqrt makes an on
+rupture's rate uniform in sqrt(rate) instead (density m^-1/2, not 1/m), the cross-check on how the lower end of the
+rates is treated. --prior binbox-theta:1:0 (per-bin log-uniform boxes whose depths put no pressure on the bin totals,
+theta = 1; the alternative until October 2026) is kept for comparison. --prior linear is an optional linear-space prior:
+each rupture's rate uniform from 0 to its bin's target rate, drawn by the exact truncated-normal updates above. See
+--down-the-middle adds a balance term to the misfit: each data type's relative shortfall s (summed predictions against
+summed targets) costs A s^2, one A for every type (or, with --down-the-middle zero-model, each type's own, its zero-model
+misfit), as extra rows of G and d, for any prior. See --help for the rest.
 
 Backends: a C kernel compiled on first use with $CC (default 'cc') and loaded through ctypes; chains run in
 parallel threads (ctypes releases the GIL).  Each thread moves its chains through the ruptures together, reading each
@@ -34,7 +39,7 @@ import time
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path, report_to
+from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path, report_to, balance_rows
 import scipy.sparse as _sparse
 sp_csc = _sparse.csc_matrix
 
@@ -85,13 +90,23 @@ static double texp(uint64_t *s, double beta, double lo, double hi) {
     return lo - log1p(u * expm1(-beta * w)) / beta;
 }
 
-/* ---- log-box prior: flat in z = log m on [zlo, zhi]; outside, half-Gaussian edges exp(-k (distance)^2), k <= 0: hard */
-typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0, muz, kz; } lbctx;
+/* ---- log-box prior: flat in z = log m on [zlo, zhi]; outside, half-Gaussian edges exp(-k (distance)^2), k <= 0: hard.
+   Spike-and-slab's slab may be tilted: everything times exp(gam z), a density m^(gam - 1) in m (gam = 0: log-uniform;
+   1/2: uniform in sqrt m).  The halfway prior (mA > 0) mixes a linear and a log-uniform range, each normalized over the
+   box and its edges: density mA exp(z - zhi) + mB in z, inside the box, times the same edges. */
+typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0, muz, kz, gam, mA, mB; } lbctx;
 static inline double lb_prior(const lbctx *c, double z) {
     if (c->pk == 2) return -(z - c->muz) * (z - c->muz) * c->kz;      /* hierarchical: log m ~ Normal(muz, 1/(2 kz)) */
-    if (z < c->zlo) return (c->k > 0.0) ? -(c->zlo - z) * (c->zlo - z) * c->k : -INFINITY;
-    if (z > c->zhi) return (c->ku > 0.0) ? -(z - c->zhi) * (z - c->zhi) * c->ku : -INFINITY;   /* upper edge: own width */
-    return 0.0;
+    if (c->mA > 0.0) {
+        if ((z < c->zlo && !(c->k > 0.0)) || (z > c->zhi && !(c->ku > 0.0))) return -INFINITY;
+        double p = log(c->mA * exp(z - c->zhi) + c->mB);
+        if (z < c->zlo) p -= (c->zlo - z) * (c->zlo - z) * c->k;
+        if (z > c->zhi) p -= (z - c->zhi) * (z - c->zhi) * c->ku;
+        return p;
+    }
+    if (z < c->zlo) return (c->k > 0.0) ? -(c->zlo - z) * (c->zlo - z) * c->k + c->gam * z : -INFINITY;
+    if (z > c->zhi) return (c->ku > 0.0) ? -(z - c->zhi) * (z - c->zhi) * c->ku + c->gam * z : -INFINITY;   /* own width */
+    return c->gam * z;
 }
 /* log conditional density of z relative to the current point z0 (so it is exactly 0 at z0) */
 static inline double lb_ld(const lbctx *c, double z) {
@@ -102,16 +117,20 @@ static inline double lb_ld(const lbctx *c, double z) {
     return -(m - c->m0) * (m + c->m0 - 2.0 * c->mu) * c->inv2s2 + p - c->lp0;
 }
 /* A lower bound on lb_ld(c, z) over a stretch [za, zb] of the box (zlo <= z <= zhi and zmin <= z <= zmax, where the
-   log-box prior is 0), or less.  There lb_ld is the likelihood term, a concave quadratic in m = e^z, less lp0, so it is
-   at least its smaller value at the two ends of the range of m.  The range is widened by 1e-12 (relative) and 1e-300
+   log-box prior is 0, or the slab's tilt gam z, or the halfway prior's log density), or less.  There lb_ld is the
+   likelihood term, a concave quadratic in m = e^z, plus the prior's, less lp0, so it is at least the quadratic's
+   smaller value at the two ends of the range of m plus the tilt's at the two ends of [za, zb] (the halfway prior's at
+   za: it rises with z).  The range is widened by 1e-12 (relative) and 1e-300
    (absolute), far more than any rounding of exp, and the bound lowered by 1e-9 of the terms' size, far more than the
    rounding of lb_ld itself (about 1e-15 of it): wherever the bound exceeds y, so does every evaluation of lb_ld. */
 static double lb_floor(const lbctx *c, double za, double zb) {
     const double ma = fmax(exp(za) * (1.0 - 1e-12) - 1e-300, 0.0), mb = exp(zb) * (1.0 + 1e-12) + 1e-300;
     const double fa = -(ma - c->m0) * (ma + c->m0 - 2.0 * c->mu) * c->inv2s2;
     const double fb = -(mb - c->m0) * (mb + c->m0 - 2.0 * c->mu) * c->inv2s2;
-    const double size = (mb + fabs(c->m0)) * (mb + fabs(c->m0) + 2.0 * fabs(c->mu)) * c->inv2s2 + fabs(c->lp0);
-    return fmin(fa, fb) - c->lp0 - 1e-9 * (size + 1.0);
+    const double pm = c->mA > 0.0 ? log(c->mA * exp(za - c->zhi) + c->mB) : 0.0;
+    const double size = (mb + fabs(c->m0)) * (mb + fabs(c->m0) + 2.0 * fabs(c->mu)) * c->inv2s2 + fabs(c->lp0)
+                        + fabs(c->gam) * fmax(fabs(za), fabs(zb)) + fabs(pm);
+    return fmin(fa, fb) + (c->mA > 0.0 ? pm : fmin(c->gam * za, c->gam * zb)) - c->lp0 - 1e-9 * (size + 1.0);
 }
 /* univariate slice sampler (Neal 2003): stepping out with width w (at most 64 steps), then shrinkage.  Under the
    log-box prior, once an end is inside the box, its steps over the stretch of the box it can still reach are taken
@@ -151,35 +170,66 @@ static double lb_slice(uint64_t *s, const lbctx *c, double z0, double w) {
 }
 
 /* Exact draw (in z = log m) from the spike-and-slab's slab, the pseudo-prior of an "off" rupture: flat on [zlo, zhi]
-   (hard floor), with a Gaussian shoulder above zhi of sd 1/sqrt(2 ku) up to zmax (ku > 0), or a hard top (ku = 0).
-   Its constants q = (wp, wt, sdt, lim) depend only on the rupture: kernel_consts computes them once per run. */
+   (hard floor), with a Gaussian shoulder above zhi of sd 1/sqrt(2 ku) up to zmax (ku > 0), or a hard top (ku = 0); a
+   tilted slab has everything times exp(gam z).  Its constants q = (wp, wt, sdt, lim), the two parts' masses relative
+   to the density at zhi and the shoulder's sd and length, depend only on the rupture: kernel_consts computes them once
+   per run. */
 static void slab_consts(const lbctx *c, double *q) {
-    const double zt = fmin(c->zhi, c->zmax), wp = zt - c->zlo;
+    const double zt = fmin(c->zhi, c->zmax);
+    const double wp = c->gam == 0.0 ? zt - c->zlo : (exp(c->gam * (zt - c->zhi)) - exp(c->gam * (c->zlo - c->zhi))) / c->gam;
     double wt = 0.0, sdt = 0.0, lim = 0.0;
     if (c->ku > 0.0 && c->zmax > c->zhi) {
         sdt = 1.0 / sqrt(2.0 * c->ku); lim = c->zmax - c->zhi;
-        wt = sdt * 1.2533141373155003 * erf(lim / (sdt * 1.4142135623730951));   /* sdt sqrt(pi/2) erf(...) */
+        if (c->gam == 0.0)
+            wt = sdt * 1.2533141373155003 * erf(lim / (sdt * 1.4142135623730951));   /* sdt sqrt(pi/2) erf(...) */
+        else {        /* exp(gam t - ku t^2) = exp(gam^2 sdt^2 / 2) x a Gaussian centred at gam sdt^2, over [0, lim] */
+            const double ct = c->gam * sdt * sdt;
+            wt = exp(0.5 * c->gam * ct) * sdt * 1.2533141373155003
+                 * (erf((lim - ct) / (sdt * 1.4142135623730951)) + erf(ct / (sdt * 1.4142135623730951)));
+        }
     }
     q[0] = wp; q[1] = wt; q[2] = sdt; q[3] = lim;
 }
-static double slab_draw(uint64_t *s, const lbctx *c, const double *q) {
+/* The draw, as m = e^z.  Tilted, the flat part is drawn down from its top zt by inversion, z = zt + log(1 - u f) / gam with
+   f = 1 - exp(-gam (zt - zlo)), which is gam wp when zt = zhi (always under spike-and-slab); for the square-root slab
+   (gam = 1/2) that is m = e^zt (1 - u f)^2, with no logarithm. */
+static double slab_draw_m(uint64_t *s, const lbctx *c, const double *q) {
     const double wp = q[0], wt = q[1], sdt = q[2], lim = q[3];
-    if (unif(s) * (wp + wt) < wp) return c->zlo + wp * unif(s);
-    for (;;) { const double t = fabs(stdnorm(s)) * sdt; if (t <= lim) return c->zhi + t; }
+    if (unif(s) * (wp + wt) < wp) {
+        if (c->gam == 0.0) return exp(c->zlo + wp * unif(s));
+        const double zt = fmin(c->zhi, c->zmax);
+        const double f = zt == c->zhi ? c->gam * wp : c->gam * wp * exp(c->gam * (c->zhi - zt));
+        const double v = 1.0 - unif(s) * f;
+        if (c->gam == 0.5) return (zt == 0.0 ? 1.0 : exp(zt)) * v * v;
+        return exp(zt + log(v) / c->gam);
+    }
+    if (c->gam == 0.0)
+        for (;;) { const double t = fabs(stdnorm(s)) * sdt; if (t <= lim) return exp(c->zhi + t); }
+    const double ct = c->gam * sdt * sdt;
+    for (;;) { const double t = ct + stdnorm(s) * sdt; if (t >= 0.0 && t <= lim) return exp(c->zhi + t); }
 }
 
 /* Per-rupture constants of gibbs_run, computed once per run by the expressions the sweeps used to evaluate for every
    rupture, chain and sweep (so with the same values): log lo (or -inf), log hi, and the slab's constants (4 per rupture;
-   used by spike-and-slab only, whose upper-edge width defaults to 0 without KU). */
+   used by spike-and-slab only, whose upper-edge width defaults to 0 without KU, with its tilt gam).  With MIX, the
+   halfway prior's constants (mA, mB per rupture), from the masses of a linear (gam 1) and a log-uniform (gam 0) slab
+   over the same range, mixed mixw : 1 - mixw. */
 void kernel_consts(int64_t n, const double *lo, const double *hi, double zlo, double zhi, const double *ZLO,
-                   const double *KU, double *LLO, double *LHI, double *SC)
+                   const double *KU, double gam, double mixw, double *MIX, double *LLO, double *LHI, double *SC)
 {
     for (int64_t i = 0; i < n; i++) {
         LLO[i] = lo[i] > 0.0 ? log(lo[i]) : -INFINITY;
         LHI[i] = log(hi[i]);
         lbctx c;
-        c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.ku = KU ? KU[i] : 0.0; c.zmax = LHI[i];
+        c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.ku = KU ? KU[i] : 0.0; c.zmax = LHI[i]; c.gam = gam;
         slab_consts(&c, SC + 4 * i);
+        if (MIX) {
+            double q1[4], q0[4];
+            c.gam = 1.0; slab_consts(&c, q1);
+            c.gam = 0.0; slab_consts(&c, q0);
+            MIX[2 * i] = mixw / (q1[0] + q1[1]);
+            MIX[2 * i + 1] = (1.0 - mixw) / (q0[0] + q0[1]);
+        }
     }
 }
 
@@ -213,13 +263,15 @@ static inline void col_dots(int64_t kg, const double *data, const int32_t *indic
    pkind 0: prior exp(-beta.m) on [lo, hi] (beta = 0: flat).  pkind 1: log-box prior (beta ignored), drawn by slice
    sampling z = log m.  The chains move through the ruptures together, but each is updated exactly as if it ran alone
    (its own residual, random numbers and order of operations), so the output does not depend on how chains are grouped.
-   LLO, LHI, SC: per-rupture constants from kernel_consts. */
+   LLO, LHI, SC: per-rupture constants from kernel_consts.  gam: spike-and-slab's slab tilt (0: log-uniform).  MIX: the
+   halfway prior's constants (pkind 1), or NULL. */
 void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices,
                const double *data, const double *inv_csq, const double *lo, const double *hi,
                const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t nsweeps,
                int64_t pkind, double zlo, double zhi, double kedge, double slw,
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
-               const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT)
+               const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
+               double gam, const double *MIX)
 {
     const double s2 = sigma * sigma;
     for (int64_t sw = 0; sw < nsweeps; sw++) {
@@ -243,7 +295,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 double xn;
                 if (pkind == 3) {             /* spike-and-slab: x_i is 0 (off) or its slab value (on) */
                     lbctx c;
-                    c.pk = 1; c.muz = 0.0; c.kz = 0.0;
+                    c.pk = 1; c.muz = 0.0; c.kz = 0.0; c.gam = gam; c.mA = 0.0; c.mB = 0.0;
                     c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0;
                     c.zmin = LLO[i];
                     c.zmax = LHI[i];
@@ -255,18 +307,19 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
                         m = exp(lb_slice(s, &c, z0, slw));
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
-                        m = exp(slab_draw(s, &c, SC + 4 * i));
+                        m = slab_draw_m(s, &c, SC + 4 * i);
                     }
                     /* on or off given m: log odds = log(pi/(1-pi)) + log L(m) - log L(0); with the rupture switched off
                        the residual is r0 = r - x_i G_i, so G_i.r0 = dot - x_i ||G_i||^2 */
-                    double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's bin */
+                    double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's group */
                     if (!empty) { const double d0 = dot - xi * aa; lr -= (2.0 * m * d0 + m * m * aa) / (2.0 * s2); }
                     const double pon = lr >= 0.0 ? 1.0 / (1.0 + exp(-lr)) : exp(lr) / (1.0 + exp(lr));
                     xn = (unif(s) < pon) ? m : 0.0;
                     SM[k * n + i] = m;
                 } else if (pkind >= 1) {
                     lbctx c;
-                    c.pk = (int)pkind; c.muz = 0.0; c.kz = 0.0;
+                    c.pk = (int)pkind; c.muz = 0.0; c.kz = 0.0; c.gam = 0.0;
+                    c.mA = MIX ? MIX[2 * i] : 0.0; c.mB = MIX ? MIX[2 * i + 1] : 0.0;
                     if (pkind == 2) { c.muz = MUZ[k * n + i]; c.kz = KZ[k]; }
                     c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = kedge; c.ku = KU ? KU[i] : kedge;
                     c.zmin = LLO[i];
@@ -462,9 +515,9 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P]
     L.gibbs_run.restype = None
-    L.kernel_consts.argtypes = [I, P, P, D, D, P, P, P, P, P]
+    L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
     L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 4
     L.swap_run.restype = None
@@ -497,6 +550,10 @@ class Target:
         self.zlo_vec = None                        # optional per-coordinate lower edge (log-box prior), overrides zlo
         self.ku_vec = None                         # optional per-coordinate upper-edge width k = 1/(2 sd^2), sd in ln rate
         self.ss = None                             # spike-and-slab settings (pkind 3): bins, B, nb, a, b, optional fixed pi
+        self.gam = 0.0                             # spike-and-slab: the slab's tilt, density m^(gam - 1) (1/2: uniform in sqrt m)
+        self.mixw = 0.0                            # the halfway prior (pkind 1): the linear part's share (0: none)
+        self.n_data = self.N                       # the data rows; any rows after them are the balance term's
+        self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
             self.pkind = 1
@@ -546,11 +603,14 @@ def _ptr(a):
 
 
 def kernel_consts(lib, T):
-    """The C kernel's per-rupture constants (log lo, log hi, the slab's), once per run, by the kernel's own code."""
+    """The C kernel's per-rupture constants (log lo, log hi, the slab's, the halfway prior's), once per run, by the
+    kernel's own code."""
     LLO, LHI, SC = np.empty(T.n), np.empty(T.n), np.empty(4 * T.n)
+    MIX = np.empty(2 * T.n) if T.mixw > 0 else None
     lib.kernel_consts(T.n, _ptr(T.lo), _ptr(T.hi), T.zlo, T.zhi, None if T.zlo_vec is None else _ptr(T.zlo_vec),
-                      None if T.ku_vec is None else _ptr(T.ku_vec), _ptr(LLO), _ptr(LHI), _ptr(SC))
-    return LLO, LHI, SC
+                      None if T.ku_vec is None else _ptr(T.ku_vec), T.gam, T.mixw, None if MIX is None else _ptr(MIX),
+                      _ptr(LLO), _ptr(LHI), _ptr(SC))
+    return LLO, LHI, SC, MIX
 
 
 def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, LOD=None, KC=None, CNT=None):
@@ -578,7 +638,8 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
                       ctypes.c_void_p(SM.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
-                      None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8))
+                      None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
+                      None if KC[3] is None else _ptr(KC[3]))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -672,12 +733,23 @@ def _lb_slice_py(g, c, z0, w):
     def lprior(z):
         if c.get('pk', 1) == 2:
             return -(z - c['muz']) ** 2 * c['kz']
+        gam = c.get('gam', 0.0)
+        if c.get('mA', 0.0) > 0:                         # the halfway prior: a linear and a log-uniform part
+            ku = c.get('ku', c['k'])
+            if (z < c['zlo'] and not c['k'] > 0) or (z > c['zhi'] and not ku > 0):
+                return -np.inf
+            p = np.log(c['mA'] * np.exp(z - c['zhi']) + c['mB'])
+            if z < c['zlo']:
+                p -= (c['zlo'] - z) ** 2 * c['k']
+            if z > c['zhi']:
+                p -= (z - c['zhi']) ** 2 * ku
+            return p
         if z < c['zlo']:
-            return -(c['zlo'] - z) ** 2 * c['k'] if c['k'] > 0 else -np.inf
+            return -(c['zlo'] - z) ** 2 * c['k'] + gam * z if c['k'] > 0 else -np.inf
         if z > c['zhi']:
             ku = c.get('ku', c['k'])
-            return -(z - c['zhi']) ** 2 * ku if ku > 0 else -np.inf
-        return 0.0
+            return -(z - c['zhi']) ** 2 * ku + gam * z if ku > 0 else -np.inf
+        return gam * z
 
     def ld(z):
         if not (c['zmin'] <= z <= c['zmax']):
@@ -722,6 +794,9 @@ def _sweep_logbox_numpy(T, X, R, g, i, MUZ=None, KZ=None):
                  ku=T.kedge if T.ku_vec is None else T.ku_vec[i], zmin=np.log(lo) if lo > 0 else -np.inf, zmax=np.log(hi),
                  m0=np.exp(z0), mu=0.0, inv2s2=0.0, pk=T.pkind,
                  muz=MUZ[k, i] if T.pkind == 2 else 0.0, kz=KZ[k] if T.pkind == 2 else 0.0)
+        if T.mixw > 0:                                   # the halfway prior's constants, as kernel_consts computes them
+            m1, m0_ = _slab_masses_py(c, 1.0), _slab_masses_py(c, 0.0)
+            c.update(mA=T.mixw / (m1[0] + m1[1]), mB=(1.0 - T.mixw) / (m0_[0] + m0_[1]))
         if not empty:
             dot = float(R[k, rows] @ vals)
             aa = T.csq[i]
@@ -732,20 +807,34 @@ def _sweep_logbox_numpy(T, X, R, g, i, MUZ=None, KZ=None):
         X[k, i] = xn
 
 
-def _slab_draw_py(g, c):
-    """NumPy twin of slab_draw: an exact draw of z = log m from the slab."""
+def _slab_masses_py(c, gam):
+    """NumPy twin of slab_consts: the slab's two masses (box, shoulder) relative to its density at zhi, the shoulder's
+    sd and length, and its centre's offset gam sd^2."""
     import math
     zt = min(c['zhi'], c['zmax'])
-    wp = zt - c['zlo']
-    wt = sdt = lim = 0.0
+    wp = zt - c['zlo'] if gam == 0 else (np.exp(gam * (zt - c['zhi'])) - np.exp(gam * (c['zlo'] - c['zhi']))) / gam
+    wt = sdt = lim = ct = 0.0
     if c['ku'] > 0 and c['zmax'] > c['zhi']:
         sdt, lim = 1.0 / np.sqrt(2.0 * c['ku']), c['zmax'] - c['zhi']
-        wt = sdt * np.sqrt(np.pi / 2.0) * math.erf(lim / (sdt * np.sqrt(2.0)))
+        ct = gam * sdt ** 2
+        wt = (np.exp(0.5 * gam * ct) * sdt * np.sqrt(np.pi / 2.0)
+              * (math.erf((lim - ct) / (sdt * np.sqrt(2.0))) + math.erf(ct / (sdt * np.sqrt(2.0)))))
+    return wp, wt, sdt, lim, ct
+
+
+def _slab_draw_py(g, c):
+    """NumPy twin of slab_draw_m: an exact draw of z = log m from the slab."""
+    gam = c.get('gam', 0.0)
+    zt = min(c['zhi'], c['zmax'])
+    wp, wt, sdt, lim, ct = _slab_masses_py(c, gam)
     if _u01(g) * (wp + wt) < wp:
-        return c['zlo'] + wp * _u01(g)
+        if gam == 0:
+            return c['zlo'] + wp * _u01(g)
+        f = gam * wp * np.exp(gam * (c['zhi'] - zt))     # drawn down from the top, as in the kernel
+        return zt + np.log(1.0 - _u01(g) * f) / gam
     while True:
-        t = abs(g.standard_normal()) * sdt
-        if t <= lim:
+        t = ct + g.standard_normal() * sdt if gam != 0 else abs(g.standard_normal()) * sdt
+        if 0.0 <= t <= lim:
             return c['zhi'] + t
 
 
@@ -758,7 +847,8 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
     for k in range(X.shape[0]):
         xi = X[k, i]
         c = dict(zlo=T.zlo if T.zlo_vec is None else T.zlo_vec[i], zhi=T.zhi, k=0.0, ku=0.0 if T.ku_vec is None else T.ku_vec[i],
-                 zmin=np.log(lo) if lo > 0 else -np.inf, zmax=np.log(hi), mu=0.0, inv2s2=0.0, pk=1, muz=0.0, kz=0.0, m0=1.0)
+                 zmin=np.log(lo) if lo > 0 else -np.inf, zmax=np.log(hi), mu=0.0, inv2s2=0.0, pk=1, muz=0.0, kz=0.0, m0=1.0,
+                 gam=T.gam)
         dot = aa = 0.0
         if not empty:
             dot, aa = float(R[k, rows] @ vals), T.csq[i]
@@ -1010,8 +1100,11 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     n_keep = n_rec - n_burn
     monitor = np.asarray(monitor, dtype=np.int64)
     tr = dict(chi2=np.zeros((K, n_rec)), sum_m=np.zeros((K, n_rec)), tscale=np.zeros((K, n_rec)),
-              mon=np.zeros((K, n_rec, len(monitor))), y=np.zeros((K, n_keep, T.N), np.float32), sweep=np.zeros(n_rec, int))
-    dd = T.d @ T.d
+              mon=np.zeros((K, n_rec, len(monitor))), y=np.zeros((K, n_keep, T.n_data), np.float32), sweep=np.zeros(n_rec, int))
+    nd = T.n_data                                        # chi2 and predictions over the data rows only
+    dd = T.d[:nd] @ T.d[:nd]
+    if nd < T.N:                                         # the balance term's rows: recorded on their own
+        tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     samp = None
     ST = None                                            # running summaries: everything the notebook needs, without draws
     if stream is not None and n_keep > 0:
@@ -1078,11 +1171,15 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('hyper_s', np.zeros((K, n_rec)))[:, rec] = htau / LN10
             tr.setdefault('hyper_mu', np.zeros((K, n_rec, H.B)))[:, rec] = hmu / LN10
         R = T.residual(X)                                    # exact recompute: no drift
-        y = R + T.d
-        tr['chi2'][:, rec] = np.sum(R ** 2, 1) / T.sigma ** 2
+        Rd = R if nd == T.N else R[:, :nd]                   # the data rows (after them, the balance term's)
+        y = Rd + T.d[:nd]
+        tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
+        if nd < T.N:                                         # the balance term, and each type's relative shortfall
+            tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:] ** 2, 1) / T.sigma ** 2
+            tr.setdefault('balance_s', np.zeros((K, n_rec, T.N - nd)))[:, rec] = R[:, nd:] / np.sqrt(T.balance['A'])
         Xm = X if sc is None else X * sc
         tr['sum_m'][:, rec] = Xm.sum(1)
-        tr['tscale'][:, rec] = y @ T.d / dd
+        tr['tscale'][:, rec] = y @ T.d[:nd] / dd
         tr['mon'][:, rec] = Xm[:, monitor]
         tr['sweep'][rec] = (rec + 1) * thin
         if rec >= n_burn:
@@ -1179,6 +1276,14 @@ def report(tr, burn, thin, names=None):
         es = [ess(mu[..., k]) for k in range(mu.shape[2])]
         print(f'bin centres (log10): {mu.mean((0, 1)).min():.2f} to {mu.mean((0, 1)).max():.2f}; worst R-hat {np.nanmax(rh):.3f}, '
               f'smallest ESS {min(es):.0f}  (converged when every R-hat < 1.01)')
+    if 'balance' in tr:                              # down the middle: the balance term (not in chi2 above)
+        sb = tr['balance_s'][:, nb:, :]
+        Av = np.atleast_1d(tr['balance_A'])              # one A for every type, or each type's own
+        print(f'balance term (down the middle, A = '
+              + (f'{Av[0]:.4g}' if np.all(Av == Av[0]) else ', '.join(f'{v:.4g}' for v in Av))
+              + f'): {tr["balance"][:, nb:].mean():.1f} on average, '
+              f'not counted in chi2 above; each type\'s relative shortfall (sum of predictions / sum of targets - 1): '
+              + ', '.join(f'{nm} {sb[..., k].mean():+.3f}' for k, nm in enumerate(tr['balance_types'])))
     if 'hyper_pi' in tr:                             # spike-and-slab: per-bin fraction switched on
         pi = tr['hyper_pi'][:, nb:, :]
         rh = split_rhat(pi)
@@ -1374,11 +1479,13 @@ def selftest_edges(backends=('c', 'numpy')):
     return ok
 
 
-def selftest_spikeslab(backends=('c', 'numpy')):
+def selftest_spikeslab(backends=('c', 'numpy'), gam=0.0):
     """Spike-and-slab: 2 rates in one bin, with different slab floors and soft tops and the fraction on integrated out
-    under Beta(1, 1); P(on) and E[log10 m | on] against exact values from enumerating the on/off states on a grid."""
+    under Beta(1, 1); P(on) and E[log10 m | on] against exact values from enumerating the on/off states on a grid.
+    gam = 1/2: the square-root slab (density m^-1/2 below the top)."""
     from scipy.special import betaln
-    print('spike-and-slab prior: P(on) and E[log10 m | on] vs exact enumeration and grid integrals')
+    print('spike-and-slab prior' + (' (square-root slab)' if gam else '') + ': P(on) and E[log10 m | on] vs exact enumeration '
+          'and grid integrals')
     Gs = sp.csc_matrix(np.array([[1.0, 0.7], [0.5, 1.0]]))
     d, sig, lo10, su, a_, b_ = np.array([0.6, 0.3]), 0.1, np.array([-3.0, -5.0]), np.array([0.05, 0.15]), 1.0, 1.0
     u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
@@ -1386,7 +1493,7 @@ def selftest_spikeslab(backends=('c', 'numpy')):
     for ui, sv in zip(u, su):                        # slab mass per grid node (trapezoid weights, normalized)
         w = np.full(len(ui), ui[1] - ui[0])
         w[[0, -1]] *= 0.5
-        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * w
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * w * 10.0 ** (gam * ui)   # tilt: m^gam per log m
         gw.append(f / f.sum())
     L = lambda m1, m2: np.exp(-0.5 * ((m1 + 0.7 * m2 - d[0]) ** 2 + (0.5 * m1 + m2 - d[1]) ** 2) / sig ** 2)
     pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]   # one on/off pattern with k on
@@ -1404,6 +1511,7 @@ def selftest_spikeslab(backends=('c', 'numpy')):
         T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
         T.pkind = 3
         T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.gam = gam
         K, sw = (8, 40000) if be == 'c' else (4, 4000)
         tr = sample(T, np.full((K, 2), 0.3), sw, sw // 10, 1, be, 1, 7, monitor=(0, 1), verbose=False, keep_samples=False)
         Mo = tr['mon'][:, sw // 10:, :]
@@ -1418,8 +1526,134 @@ def selftest_spikeslab(backends=('c', 'numpy')):
                   f'E[log10 m | on] {uu.mean():.4f} (exact {e_u[i]:.4f}, z {zu:+.2f})')
         pi = tr['hyper_pi'][:, sw // 10:, 0]
         print(f'   {be:5s} fraction on: mean {pi.mean():.4f} (exact {(a_ + p_on[0] + p_on[1]) / (a_ + b_ + 2):.4f})')
-    print('SELFTEST (spike-and-slab)', 'PASSED' if ok else 'FAILED')
+    print('SELFTEST (spike-and-slab' + (', square-root slab' if gam else '') + ')', 'PASSED' if ok else 'FAILED')
     return ok
+
+
+def selftest_linear(backends=('c', 'numpy')):
+    """The linear prior: 2 correlated rates, each uniform from 0 to its own top (0.3 and 1, as rates in two bins), the first
+    pushed against its top by the data; their means and sds against a grid integral."""
+    print('linear prior (per-rupture tops): E[m] and sd vs grid integration')
+    G, d, sig, top = np.array([[1.0, 0.7], [0.5, 1.0]]), np.array([0.6, 0.45]), 0.1, np.array([0.3, 1.0])
+    u = [np.linspace(0.0, t, 3001) for t in top]
+    w = []
+    for ui in u:                                         # trapezoid weights: the density is not 0 at the walls
+        wi = np.full(len(ui), ui[1] - ui[0])
+        wi[[0, -1]] *= 0.5
+        w.append(wi)
+    A, B = np.meshgrid(u[0], u[1], indexing='ij')
+    Pg = np.exp(-((A + 0.7 * B - d[0]) ** 2 + (0.5 * A + B - d[1]) ** 2) / (2 * sig ** 2)) * np.outer(w[0], w[1])
+    Pg /= Pg.sum()
+    ex = [np.sum(Pg * A), np.sum(Pg * B)]
+    sd = [np.sqrt(np.sum(Pg * A ** 2) - ex[0] ** 2), np.sqrt(np.sum(Pg * B ** 2) - ex[1] ** 2)]
+    ok = True
+    for be in backends:
+        T = Target(sp.csc_matrix(G), d, sig, 0.0, top)
+        K, sw = (8, 40000) if be == 'c' else (4, 8000)
+        tr = sample(T, np.full((K, 2), 0.1), sw, 1000, 1, be, 1, 13, monitor=(0, 1), verbose=False, keep_samples=False)
+        x = tr['mon'][:, 1000:]
+        zs = [(x[..., j].mean() - ex[j]) / (x[..., j].std() / np.sqrt(ess(x[..., j]))) for j in (0, 1)]
+        ok &= all(abs(z) < 4 for z in zs) and x[..., 0].max() <= top[0] and x[..., 1].max() <= top[1]
+        print(f'   {be:6s} means ({x[..., 0].mean():.4f}, {x[..., 1].mean():.4f}) exact ({ex[0]:.4f}, {ex[1]:.4f}) '
+              f'z = ({zs[0]:+.2f}, {zs[1]:+.2f}); sds ({x[..., 0].std():.4f}, {x[..., 1].std():.4f}) exact ({sd[0]:.4f}, {sd[1]:.4f}); '
+              f'highest draws ({x[..., 0].max():.4f}, {x[..., 1].max():.4f})')
+    print('SELFTEST (linear prior)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_halfway(backends=('c', 'numpy'), w=0.5):
+    """The halfway prior: 2 rates with different floors and soft tops, each from a w : 1 - w mix of a uniform and a
+    log-uniform range, both parts normalized on a grid (independently of the kernel's closed forms); E[log10 m] and E[m]
+    against grid integrals."""
+    print('halfway prior (a mix of a uniform and a log-uniform range): E[log10 m] and E[m] vs grid integrals')
+    Gs = sp.csc_matrix(np.array([[1.0, 0.7], [0.5, 1.0]]))
+    d, sig, lo10, su = np.array([0.6, 0.3]), 0.1, np.array([-3.0, -5.0]), np.array([0.05, 0.15])
+    u = [np.linspace(l, min(8 * sv, 1.0), 3001) for l, sv in zip(lo10, su)]
+    pw = []
+    for ui, sv in zip(u, su):                        # each rate's prior mass per grid node in log10 m
+        tw = np.full(len(ui), ui[1] - ui[0])
+        tw[[0, -1]] *= 0.5
+        sh = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * tw
+        lin, lg = sh * 10.0 ** ui, sh                # a uniform range is 10^u per unit of log10 m; a log-uniform one flat
+        pw.append(w * lin / lin.sum() + (1 - w) * lg / lg.sum())
+    U1, U2 = np.meshgrid(u[0], u[1], indexing='ij')
+    M1, M2 = 10 ** U1, 10 ** U2
+    chi = ((M1 + 0.7 * M2 - d[0]) ** 2 + (0.5 * M1 + M2 - d[1]) ** 2) / sig ** 2
+    Pg = np.exp(-0.5 * (chi - chi.min())) * pw[0][:, None] * pw[1][None, :]
+    Pg /= Pg.sum()
+    ex = [((Pg * U1).sum(), (Pg * M1).sum()), ((Pg * U2).sum(), (Pg * M2).sum())]
+    ok = True
+    for be in backends:
+        T = Target(Gs, d, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.mixw = w
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.full((K, 2), 0.1), sw, sw // 10, 1, be, 1, 17, monitor=(0, 1), verbose=False, keep_samples=False)
+        Mo = tr['mon'][:, sw // 10:, :]
+        for i in range(2):
+            out = []
+            for v, e in ((np.log10(Mo[:, :, i]), ex[i][0]), (Mo[:, :, i], ex[i][1])):
+                z = (v.mean() - e) / (v.std() / np.sqrt(ess(v)))
+                ok &= abs(z) < 4
+                out.append(f'{v.mean():.4f} (exact {e:.4f}, z {z:+.2f})')
+            print(f'   {be:5s} rate {i} (floor 1e{lo10[i]:g}): E[log10 m] {out[0]}; E[m] {out[1]}')
+    print('SELFTEST (halfway prior)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_balance(backends=('c', 'numpy')):
+    """The balance term (--down-the-middle) on a small problem with two slip-rate sections, two magnitude bins and a
+    paleo row, under both weightings: each balance row's residual is sqrt(A_t) times its type's relative shortfall,
+    computed independently here (sections as the mean of their subsections); the zero model costs A_t in every type;
+    with 'equal', one A, each type's weight at most one extra measurement and exactly one for the type that sets A; with
+    'zero-model', each type's A_t its zero-model misfit; and a run records chi2 and predictions over the data rows only,
+    with the balance term and shortfalls on their own."""
+    print('balance term (down the middle): its rows against a direct computation, and a run\'s bookkeeping')
+    g = np.random.default_rng(3)
+    k3, k2 = 1 / np.sqrt(3), 1 / np.sqrt(2)
+    Gd = np.abs(g.normal(1.0, 0.4, (8, 6)))
+    Gd[:3] *= k3
+    Gd[3:5] *= k2
+    Gd[5], Gd[6] = [1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 1]
+    Gd[5:7] *= 4.0
+    d = np.r_[np.full(3, 2.0 * k3), np.full(2, 1.2 * k2), 8.0, 7.0, 3.0]
+    P = dict(G=sp.csr_matrix(Gd), d=d, block=np.array([0] * 5 + [1] * 2 + [2]), block_names=['S', 'MFD', 'P'],
+             section=np.r_[0, 0, 0, 1, 1, -1, -1, -1], row_scale=np.r_[[k3] * 3, [k2] * 2, 1.0, 1.0, 1.0])
+    m = np.abs(g.normal(0.5, 0.3, 6))
+    y = Gd @ m
+    T_ = [2.0 + 1.2, 8.0 + 7.0, 3.0]                     # each type's sum of targets (sections: 2 and 1.2)
+    s_ = [((y[:3] / k3).mean() + (y[3:5] / k2).mean()) / T_[0] - 1, (y[5] + y[6]) / T_[1] - 1, y[7] / T_[2] - 1]
+    Z_ = [2.0 ** 2 + 1.2 ** 2, 8.0 ** 2 + 7.0 ** 2, 3.0 ** 2]   # each type's zero-model misfit (each section once)
+    ok = True
+    for wt in ('equal', 'zero-model'):
+        B, b, A, info = balance_rows(P, weights=wt)
+        zero = (B @ np.zeros(6) - b) ** 2
+        share = [t['weight'] * t['n'] for t in info]
+        ok_r = bool(np.allclose(B @ m - b, np.sqrt(A) * np.array(s_), rtol=1e-12, atol=1e-12)) and bool(np.allclose(zero, A))
+        if wt == 'equal':                                # one A, set by the type it gives one extra measurement's weight
+            ok_r &= (bool(np.allclose(A, min(t ** 2 / n_ for t, n_ in zip(T_, (2, 2, 1))))) and max(share) <= 1 + 1e-12
+                     and bool(np.isclose(max(share), 1.0)) and all(A[0] <= t['zero_misfit'] + 1e-12 for t in info))
+        else:                                            # each type's own A, its zero-model misfit
+            ok_r &= bool(np.allclose(A, Z_)) and bool(np.allclose([t['zero_misfit'] for t in info], Z_))
+        ok &= ok_r
+        print(f'   {wt}: relative shortfalls {np.round(s_, 4)} recovered; zero model {np.round(zero, 4)} (A {np.round(A, 4)}); '
+              f'shares of a measurement {np.round(share, 3)}: ' + ('yes' if ok_r else 'NO'))
+        for be in backends:
+            T = Target(sp.vstack([P['G'], B]), np.r_[d, b], 0.5, 0.0, 10.0)
+            T.n_data, T.balance = 8, dict(A=A, names=[t['name'] for t in info])
+            tr = sample(T, np.full((2, 6), 0.3), 60, 0, 1, be, 1, 5, monitor=np.arange(6), verbose=False, keep_samples=False)
+            M_ = tr['mon']                                # every rate, every draw
+            Y = M_ @ Gd.T
+            chi = np.sum((Y - d) ** 2, 2) / 0.25
+            bal = np.sum((M_ @ B.T.toarray() - b) ** 2, 2) / 0.25
+            ok_b = (tr['y'].shape[2] == 8 and np.allclose(tr['y'], Y, rtol=1e-5) and np.allclose(tr['chi2'], chi, rtol=1e-9)
+                    and np.allclose(tr['balance'], bal, rtol=1e-9)
+                    and np.allclose(tr['balance_s'], (M_ @ B.T.toarray() - b) / np.sqrt(A), rtol=1e-9, atol=1e-12))
+            ok &= ok_b
+            print(f'   {wt:10s} {be:5s} chi2 over the 8 data rows and the balance term recorded apart: ' + ('yes' if ok_b else 'NO'))
+    print('SELFTEST (balance term)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
 
 
 def selftest_swaps(backends=('c', 'numpy')):
@@ -1504,6 +1738,17 @@ def selftest_hier(backends=('c', 'numpy')):
     return ok
 
 
+def rupture_bins(P, rows, block):
+    """Each rupture's magnitude bin: the index, in rows, of the bin row holding it."""
+    Gr = P['G'].tocsr()
+    bins = np.full(P['G'].shape[1], -1, np.int64)
+    for k, j in enumerate(rows):
+        bins[Gr.indices[Gr.indptr[j]:Gr.indptr[j + 1]]] = k
+    if (bins < 0).any():
+        raise SystemExit(f'{int((bins < 0).sum())} ruptures are in no row of block {block!r}')
+    return bins
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--problem', default='cru_clean.npz')
@@ -1516,16 +1761,35 @@ def main():
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
                          "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
-                         "fraction on in each bin estimated under a Beta(1, 1) prior); spikeslab:A:TOP:a:b "
+                         "fraction on in each bin estimated under a Beta(1, 1) prior; --slab sqrt: a slab uniform in sqrt(rate)); "
+                         "spikeslab:A:TOP:a:b "
                          "for slab floor 10^A, TOP = soft, hard or a factor F (hard top at F x R_j), and a Beta(a, b) prior; "
-                         "binbox-theta:THETA:SE:TOP for per-bin log-uniform boxes below R_j, depths n_j / (THETA ln 10) decades, "
-                         "lower edge SE (0 = hard); THETA = 1 puts no pressure on the bin totals. Kept for comparison: "
-                         "binbox-floor:A:SE:TOP (per-bin boxes down to a common floor 10^A; the default until October 2026) and "
+                         "Kept for comparison: binbox-theta:THETA:SE:TOP (per-bin log-uniform boxes below R_j, depths "
+                         "n_j / (THETA ln 10) decades, lower edge SE (0 = hard); THETA = 1 puts no pressure on the bin totals; "
+                         "the alternative until October 2026), binbox-floor:A:SE:TOP (per-bin boxes down to a common floor 10^A; the default until October 2026) and "
                          "binbox:W:SE:TOP (W decades below each R_j); 'logbox:A:B:SE' (one box for all ruptures, flat in log10 m "
                          "on [A, B] with half-Gaussian edges of sd SE decades, SE = 0: hard; e.g. logbox:-12:-2:1), "
                          "'logbox-centre:W:SE' (width W decades centred on the average data-imposed rate) and 'logbox-mean:W:SE' "
-                         "(placed so its mean equals it); 'lognormal' (hierarchical, retired); 'flat'; a prior mean tau "
-                         "(exponential prior) or a .npy of tau_i")
+                         "(placed so its mean equals it); 'lognormal' (hierarchical, retired); 'linear' (optional: each rupture's "
+                         "rate uniform from 0 to its bin's target rate R_j, a hard top, drawn in linear space by the exact "
+                         "truncated-normal updates; its prior pushes the bin totals up, n_j R_j / 2 a priori); 'halfway' "
+                         "(optional, halfway between 'linear' and per-bin log-uniform boxes: each rupture's rate from a 50/50 "
+                         "mix of a uniform and a log-uniform range from 10^A up to its bin's target rate R_j, every rupture always "
+                         "on; halfway:A:TOP:W for floor 10^A (-10 by default), TOP as for spikeslab and the uniform part's share "
+                         "W, 0.5 by default; it too pushes the bin totals up); 'flat'; a prior mean tau (exponential prior) or a "
+                         ".npy of tau_i")
+    ap.add_argument('--down-the-middle', nargs='?', const='equal', default=None, choices=['equal', 'zero-model'],
+                    help="add the balance term (the notebook's DOWN_THE_MIDDLE): each data type's relative shortfall s = (sum of "
+                         "predictions - sum of targets) / sum of targets (slip-rate sections, magnitude bins, paleo rows; in units "
+                         "of each measurement's uncertainty) costs A s^2. 'equal' (the default when given alone): A the largest "
+                         "weight common to the types that keeps each at or below one extra measurement; 'zero-model': each type's "
+                         "own A, its zero-model misfit, so s = -1 or +1 costs a type what the zero model costs it in chi2 "
+                         "(cru_common.balance_rows); as extra rows of G and d, so for any prior. "
+                         "The recorded chi2 and predictions stay on the data rows; the term is recorded on its own")
+    ap.add_argument('--slab', default='log', choices=['log', 'sqrt'],
+                    help="spike-and-slab: the slab's shape below its top: 'log' (log-uniform, density 1/m; the default) or 'sqrt' "
+                         "(uniform in sqrt m, density m^-1/2, half the log-uniform's pull of each rate towards 0; small rates "
+                         "cost more, so fewer ruptures are on: the cross-check on how the lower end of the rates is treated)")
     ap.add_argument('--bins-block', default='MFD', help='lognormal prior: row block whose rows define the bins')
     ap.add_argument('--s-range', default='0.05,5', help='lognormal prior: uniform hyperprior range for s (decades)')
     ap.add_argument('--mu-prior', default='-6,10', help='lognormal prior: normal hyperprior (mean, sd) for each log10 centre')
@@ -1558,14 +1822,15 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, five verdicts; 'current' only "
-                         "what spike-and-slab and theta use (per-rupture lower edges, the soft top, spike-and-slab and swap "
-                         "moves), four verdicts")
+                    help="exact tests: 'all' (the default) after any change to the sampler, nine verdicts; 'current' only "
+                         "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
+                         "term and swap moves), five verdicts")
     a = ap.parse_args()
     if a.selftest == 'current':
         ok = selftest_zlo()
         ok &= selftest_edges()
         ok &= selftest_spikeslab()
+        ok &= selftest_balance()
         ok &= selftest_swaps()
         sys.exit(0 if ok else 1)
     if a.selftest:
@@ -1574,6 +1839,10 @@ def main():
         ok &= selftest_zlo()
         ok &= selftest_edges()
         ok &= selftest_spikeslab()
+        ok &= selftest_spikeslab(gam=0.5)
+        ok &= selftest_linear()
+        ok &= selftest_halfway()
+        ok &= selftest_balance()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -1582,8 +1851,23 @@ def main():
     report_to(a.out + '_log.txt')                        # everything printed below is also kept with the run
     P = load_problem(a.problem)
     n = P['G'].shape[1]
+    G_fit, d_fit, B_bal = P['G'], P['d'], None       # the rows the sampler fits: the data, and the balance term's rows
+    if a.down_the_middle:
+        B_bal, b_bal, A_bal, info_bal = balance_rows(P, a.slip_block, a.bins_block, weights=a.down_the_middle)
+        G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(P['G']), B_bal])), np.r_[P['d'], b_bal]
+        print(f'down the middle: a balance term per data type, A s^2 with s its relative shortfall (sum of predictions / sum of '
+              f'targets - 1, in units of each measurement\'s uncertainty), '
+              + (f'the same A = {A_bal[0]:.4g} for every type; ' if a.down_the_middle == 'equal'
+                 else 'each type\'s own A, its zero-model misfit; ')
+              + '; '.join(f'{t["name"]} ({t["n"]}): ' + (f'A = {t["A"]:.4g}, ' if a.down_the_middle != 'equal' else '')
+                          + f'{100 * t["A"] / t["zero_misfit"]:.0f}% of their zero-model misfit '
+                          f'({t["zero_misfit"]:.0f}), {t["weight"] * t["n"]:.2f} of a measurement' for t in info_bal))
     logbox, beta, lognormal, scale, zlo_vec, bins, ku_vec, hi_u = None, None, None, None, None, None, None, 1.0
+    hi_vec = None                                  # linear prior: each rupture's top
+    mixw = 0.0                                     # halfway prior: the uniform part's share
     spike_mode = False
+    if a.slab != 'log' and not a.prior.startswith('spikeslab'):
+        raise SystemExit('--slab applies to --prior spikeslab only')
     if a.prior == 'lognormal':
         Gr = P['G'].tocsr()
         rows = np.flatnonzero(P['block'] == P['block_names'].index(a.bins_block)) if a.bins_block in P['block_names'] else []
@@ -1602,28 +1886,30 @@ def main():
             print(f'partial non-centring: {int(strong.sum())} data-pinned rates (from {a.pnc_pilot}, spread {s_p:.2f} decades) '
                   f'stay put when the hyperparameters move')
         beta = np.zeros(n)
-    elif a.prior.startswith('binbox') or a.prior.startswith('spikeslab'):
+    elif a.prior.startswith('binbox') or a.prior.startswith('spikeslab') or a.prior.startswith('halfway'):
         # per-bin log-uniform boxes, sampled as u = m / (F R_j) in a box below 1; spikeslab: each rupture is off (rate 0)
-        # or on, with a log-uniform rate from the slab floor 10^A up to the bin's top, and a per-bin fraction on, estimated
+        # or on, with a log-uniform rate from the slab floor 10^A up to the bin's top, and a per-bin fraction on, estimated;
+        # halfway: the boxes down to 10^A, each rate from a mix of a uniform and a log-uniform range
         spike_mode = a.prior.startswith('spikeslab')
+        halfway_mode = a.prior.startswith('halfway')
         theta_mode = a.prior.startswith('binbox-theta')
-        floor_mode = a.prior.startswith('binbox-floor') or spike_mode  # a common floor 10^W for every bin
+        floor_mode = a.prior.startswith('binbox-floor') or spike_mode or halfway_mode  # a common floor 10^W for every bin
         if spike_mode:                                   # spikeslab:A:TOP:a:b (slab floor 10^A, A = -10 by default)
             sp_ = (a.prior.split(':') + [None] * 5)[1:5]
             W, se, top = float(sp_[0] or -10), 0.0, str(sp_[1] or 'soft').lower()
             ss_a, ss_b = float(sp_[2] or 1), float(sp_[3] or 1)
+        elif halfway_mode:                               # halfway:A:TOP:W (floor 10^A, A = -10; W the uniform part's share)
+            hw = (a.prior.split(':') + [None] * 4)[1:4]
+            W, se, top, mixw = float(hw[0] or -10), 0.0, str(hw[1] or 'soft').lower(), float(hw[2] or 0.5)
+            if not 0.0 < mixw < 1.0:
+                raise SystemExit(f'halfway:A:TOP:W: the uniform part\'s share W must lie between 0 and 1 (got {mixw:g})')
         else:
             parts = (a.prior.split(':') + [None] * 4)[1:4]
             W, se = float(parts[0] or (1 if theta_mode else -12 if floor_mode else 10)), float(parts[1] if parts[1] is not None else 0)
             top = str(parts[2] or 'soft').lower()        # 'soft' (default), 'hard', or a factor F for a hard top at F x R_j
         soft_top, F = (top == 'soft'), (1.0 if top in ('soft', 'hard') else float(top))
         Rb, rows = bin_targets(P, a.bins_block)
-        Gr = P['G'].tocsr()
-        bins = np.full(n, -1, np.int64)
-        for k, j in enumerate(rows):
-            bins[Gr.indices[Gr.indptr[j]:Gr.indptr[j + 1]]] = k
-        if (bins < 0).any():
-            raise SystemExit(f'{int((bins < 0).sum())} ruptures are in no row of block {a.bins_block!r}')
+        bins = rupture_bins(P, rows, a.bins_block)
         if a.transfers:
             raise SystemExit('transfer moves are not implemented for binbox priors')
         scale = Rb[bins] * F
@@ -1657,8 +1943,15 @@ def main():
             zlo_vec = np.ascontiguousarray(-Wj[bins] * LN10)
             logbox = (-float(Wj.max()), 0.0, se)
             imp = nb * np.array([box_mean(-Wj[b], se, su[b]) for b in range(len(rows))]) * F
-            if spike_mode:
-                print(f'prior: spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from '
+            if halfway_mode:
+                hmean = mixw * 0.5 * nb * F + (1.0 - mixw) * imp   # the uniform part's mean about half the top
+                print(f'prior: halfway between linear and log-uniform, every rupture always on: each rupture\'s rate from a '
+                      f'{mixw:.0%} : {1 - mixw:.0%} mix of a uniform and a log-uniform range from 1e{W:g} up to R_j ({Wj.min():.2f} '
+                      f'to {Wj.max():.2f} decades; {edge}); implied prior bin totals about {hmean.min():.0f} to {hmean.max():.0f} '
+                      f'x their targets')
+            elif spike_mode:
+                slab = 'rate uniform in sqrt(rate)' if a.slab == 'sqrt' else 'log-uniform rate'
+                print(f'prior: spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a {slab} from '
                       f'the slab floor 1e{W:g} up to R_j ({Wj.min():.2f} to {Wj.max():.2f} decades; {edge}); the fraction on in '
                       f'each bin ~ Beta({ss_a:g}, {ss_b:g}), estimated')
             else:
@@ -1670,6 +1963,15 @@ def main():
             imp = nb * np.array([box_mean(-W, se, su[b]) for b in range(len(rows))]) * F
             print(f'prior: per-bin log-uniform boxes from R_j down {W:g} decades ({edge}); tops '
                   f'{scale.min():.2e} to {scale.max():.2e}; implied prior bin totals {imp.min():.1f} to {imp.max():.1f} x their targets')
+    elif a.prior == 'linear':                     # each rupture's rate uniform on [0, R_j]: truncated-normal Gibbs updates
+        Rb, rows = bin_targets(P, a.bins_block)
+        bins = rupture_bins(P, rows, a.bins_block)
+        if a.transfers:
+            raise SystemExit('transfer moves are not implemented for the linear prior')
+        hi_vec, beta = np.ascontiguousarray(Rb[bins]), np.zeros(n)
+        nb = np.bincount(bins, minlength=len(rows))
+        print(f'prior: linear, each rupture\'s rate uniform from 0 to its bin\'s target rate R_j ({Rb.min():.2e} to {Rb.max():.2e}; '
+              f'hard top); prior bin totals n_j R_j / 2, {nb.min() / 2:.0f} to {nb.max() / 2:.0f} x their targets')
     elif a.prior.startswith('logbox'):
         la, lb, lse, desc = resolve_logbox(a.prior, P, a.bins_block)
         logbox = (la, lb, lse)
@@ -1683,10 +1985,13 @@ def main():
         sel = pr['dup_cos'] > a.swap_cos
         if lognormal is not None:                  # swaps must leave the prior unchanged: same bin only
             sel &= lognormal['bins'][pr['dup_i']] == lognormal['bins'][pr['dup_j']]
-        if zlo_vec is not None or ku_vec is not None:   # per-bin depths or tops: boxes differ between bins
-            sel &= bins[pr['dup_i']] == bins[pr['dup_j']]
+        if zlo_vec is not None or ku_vec is not None or hi_vec is not None:   # per-bin depths or tops: boxes differ
+            sel &= bins[pr['dup_i']] == bins[pr['dup_j']]                      # between bins
         pi, pj = pr['dup_i'][sel], pr['dup_j'][sel]
         pairs = (pi, pj, pr['dup_cos'][sel] * pr['cn'][pi] * pr['cn'][pj])
+        if B_bal is not None:                      # the balance rows' share of each pair's inner product
+            Bd = B_bal.toarray()
+            pairs = (pi, pj, pairs[2] + np.einsum('kp,kp->p', Bd[:, pi], Bd[:, pj]))
         if scale is not None:                      # inner products of the scaled columns
             pairs = (pi, pj, pairs[2] * scale[pi] * scale[pj])
         print(f'swap moves: {sel.sum()} near-duplicate pairs with cosine > {a.swap_cos}, one pass per recorded draw')
@@ -1694,16 +1999,21 @@ def main():
     if dirs is not None:
         print(f'transfer moves: {len(dirs["uu"])} directions from {a.transfers}, one pass per recorded draw')
     if scale is None:
-        T = Target(P['G'], P['d'], P['sigma'], P['lo'], P['hi'], beta, logbox, pairs, dirs, lognormal)
+        T = Target(G_fit, d_fit, P['sigma'], P['lo'], P['hi'] if hi_vec is None else hi_vec, beta, logbox, pairs, dirs, lognormal)
     else:                                          # u = m / scale: columns scaled, box [1e-W, 1], u <= 1 is the hard top
         import scipy.sparse as _sp
-        T = Target(sp_csc(P['G'] @ _sp.diags(scale)), P['d'], P['sigma'], 0.0, hi_u, beta, logbox, pairs, dirs, lognormal)
+        T = Target(sp_csc(G_fit @ _sp.diags(scale)), d_fit, P['sigma'], 0.0, hi_u, beta, logbox, pairs, dirs, lognormal)
         T.scale = scale
         T.zlo_vec = zlo_vec
         T.ku_vec = ku_vec
+        T.mixw = mixw
         if spike_mode:                               # pkind 3: x_i = 0 (off) or its slab value (on)
             T.pkind = 3
             T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
+            T.gam = 0.5 if a.slab == 'sqrt' else 0.0
+    T.n_data = P['G'].shape[0]                     # the data rows; the balance term's rows follow them
+    if B_bal is not None:
+        T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
     if a.init == 'nnls':
         with np.load(fprelim) as pr0:
             if 'm_nnls' not in pr0.files:

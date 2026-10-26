@@ -13,9 +13,9 @@ Claude Code loads by itself and which pulls in the three documents in `docs/`.
 - **This handoff** adds `HANDOFF.md` and `tools/`, the development tools the cloud session used that are not part of
   the code set:
   - `tools/run_nb.py`: runs the notebook headless, cell by cell, with configuration values overridden from the
-    command line (`OUTPUT_DRAWS=False`, `"MFD_UNCERTAINTY='two-measurements'"`, `CELLS=5`, ...).
+    command line (`"PRESET='quick'"`, `"MFD_UNCERTAINTY='two-measurements'"`, `CELLS=5`, ...).
   - `tools/run_quick_checks.sh DATA_DIR RUNS_DIR`: the smoke test from `TESTING.md` (quick preset; spike-and-slab
-    and θ under the defaults, spike-and-slab with `'two-measurements'`), one run at a time, resumable.
+    under the defaults and with `'two-measurements'`), one run at a time, resumable.
   - `tools/static_checks.py BUNDLE.zip UNZIPPED/cru_workflow`: the checks run on every bundle before delivery
     (inventory, parsing, leftovers, defaults, options, imports); expect "0 failures". Update it whenever a default,
     a setting or the file list changes.
@@ -45,8 +45,8 @@ files are now. The conversation was compacted once, so the documents remain the 
 
 ## State as of 21 October 2026
 
-**Defaults:** spike-and-slab prior (`PRIOR_KIND = 'spikeslab'`, slab floor and diagnostic cutoff `FLOOR = -10`),
-with θ = 1 as the alternative and cross-check; the Gaussian likelihood, the only one; one measurement per slip-rate
+**Defaults:** spike-and-slab prior (the notebook's only one; slab floor and diagnostic cutoff `FLOOR = -10`),
+with the square-root slab (`gibbs.py --slab sqrt`) as the cross-check; the Gaussian likelihood, the only one; one measurement per slip-rate
 section (`SLIP_SECTIONS = 'auto'`); the MFD bins' uncertainties as the inputs give them (`MFD_UNCERTAINTY =
 'as-given'`).
 
@@ -74,12 +74,12 @@ section (`SLIP_SECTIONS = 'auto'`); the MFD bins' uncertainties as the inputs gi
 
 **Quick-preset reference values** (two replicates; TESTING.md has more): spike-and-slab χ² 140 ± 12 against the fit
 check's 126 ± 16, total rate 0.0218 per year against bin targets totalling 0.0214, bins a median 1.9% above their
-targets; θ 142 ± 12, 0.0218, +2.0%. Self-tests: `python gibbs.py --selftest` (five verdicts, all PASSED, about 6
-minutes) and `python block_fit.py --selftest` (seconds).
+targets; θ 142 ± 12, 0.0218, +2.0%. Self-tests: `python gibbs.py --selftest` (nine verdicts, all PASSED, about 3.5
+minutes; the notebook runs five of them, `--selftest current`) and `python block_fit.py --selftest` (seconds).
 
 **Open items** are listed in REPORT.md ("Open items") and TESTING.md ("Known weak spots"). The main ones: the very
-conservative spike-and-slab run on the corrected inputs is still to do; dispersed starts (`SA_STARTS`) are untested;
-a slow-mixing minority of ruptures under both priors; the representative draws' tolerances; a correlated MFD
+conservative spike-and-slab run on the corrected inputs is still to do; dispersed starts (`gibbs.py --init`) are untested;
+a slow-mixing minority of ruptures; the representative draws' tolerances; a correlated MFD
 covariance (the two measurements' within-branch uncertainty plus a model error per bin) as the fuller MFD
 treatment; the 5e5 configuration.
 
@@ -87,7 +87,7 @@ treatment; the 5e5 configuration.
 
 - Ask before changing a modelling decision (the list is in CLAUDE.md: the prior, its floor, edges and hyperpriors,
   the likelihood, sigma, bounds, how the slip-rate rows count, the MFD bins' uncertainty level).
-- Keep draws only when needed: `OUTPUT_DRAWS = False` in the notebook, `--no-samples` for `gibbs.py`.
+- Keep draws only when needed: the notebook stores none (`gibbs.py --no-samples`).
 - Run heavy jobs one at a time.
 - Delete each test folder once its numbers are recorded in the docs.
 - Keep the docs in step with the code: every change updates REPORT.md, TESTING.md, CLAUDE.md and the design notes

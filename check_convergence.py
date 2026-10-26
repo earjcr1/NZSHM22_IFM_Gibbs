@@ -163,7 +163,7 @@ def main():
             if r['ess_pi_min'] < need_sum / 5:
                 why.append(f"each bin's fraction on needs {need_sum / 5:,.0f} effective draws (fewest {r['ess_pi_min']:,.0f})")
         print(f"{r['run']}: " + ('PASS' if not why else 'CHECK: ' + '; '.join(why) + ': run longer (more sweeps)'
-                                 + ('; if this persists, start chains from dispersed models (SA_STARTS) to look for separate modes' if modes else '')))
+                                 + ('; if this persists, start chains from dispersed models (gibbs.py --init FILE.npy) to look for separate modes' if modes else '')))
     print()
     pct = lambda x: f'{100 * x:.2g}%' if 100 * x < 10 else f'{100 * x:.0f}%'
     for r in runs:                                        # the slow-mixing minority, reported apart from the verdict

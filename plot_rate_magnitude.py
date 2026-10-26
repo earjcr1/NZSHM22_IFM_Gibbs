@@ -3,7 +3,7 @@
 
     python plot_rate_magnitude.py VECTORS[:LABEL] [VECTORS[:LABEL] ...] [--problem cru_clean.npz] [--out FIGURE]
                                   [--lowest-bin 6.8] [--bin-width 0.1] [--diag-floor -10]
-                                  [--bins-block MFD] [--slip-block S]
+                                  [--bins-block MFD] [--slip-block S] [--reference RATES[:LABEL]]
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
 .npz); their `mean` column is each rupture's posterior mean rate, pooled over the replicates. VECTORS may also be a
@@ -21,7 +21,7 @@ rise with magnitude if the bins are in order.
 
 Marks: a dot per rupture at log10 of its mean rate, with means below 10^--diag-floor (1e-10, the notebook's FLOOR),
 including exactly 0, in a band at the bottom; a line across each bin at its target total rate R_j (with the
-notebook's default soft top, BOX_TOP = 'soft', also every rupture's soft upper limit); and a dot for the bin's total
+notebook's soft top, also every rupture's soft upper limit); and a dot for the bin's total
 of the means, which is the posterior mean of the bin's total. Penalised ruptures (rate 0 by construction) are left
 out.
 
@@ -31,6 +31,11 @@ points and the largest of log10 of the mean rates, and how many lie below the fl
 have a mean rate below the floor (including 0), in each decade from the floor up to 1e-2, and at 1e-2 or above, so
 that every rupture is counted once. Means in the lowest decades come from ruptures switched on in few draws, so their
 counts depend on run length.
+
+Reference: --reference RATES[:LABEL] marks another model's bin totals on every panel as aqua squares, beside each bin's
+own total, such as the model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds
+the solution folder); LABEL defaults to the solution folder's name. The table view adds its bin totals and their ratios
+to the targets. Its rates on ruptures that cleaning removed are left out of its totals, and the table says how much.
 """
 import argparse
 import os
@@ -38,10 +43,11 @@ import os
 import numpy as np
 from scipy.stats import spearmanr
 
-from cru_common import load_problem, magnitude_bins
+from cru_common import load_problem, magnitude_bins, reference_rates
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
+AQUA = '#1baf7a'                             # categorical slot 3 (slots 1-3 validate all-pairs): the reference
 MINUS = '−'
 
 
@@ -72,6 +78,8 @@ def main():
                     '(default -10; the notebook passes FLOOR)')
     ap.add_argument('--bins-block', default='MFD')
     ap.add_argument('--slip-block', default='S')
+    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates, whose bin totals "
+                    "to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors")
     a = ap.parse_args()
     sets = [parse_set(s) for s in a.sets]
     out = a.out or os.path.join(os.path.dirname(sets[0][0]) or '.', 'fig_rate_magnitude.png')
@@ -116,6 +124,10 @@ def main():
                          model=str(z['model']) if 'model' in z.files else ''))
     single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
     mean_ = '' if single else 'mean '
+    ref = None
+    if a.reference:                                  # another model's bin totals, marked on every panel
+        ref = reference_rates(a.reference, P)
+        ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
 
     # table view
     clip = lambda v: f'<{floor:g}' if v <= floor else f'{v:.2f}'
@@ -123,6 +135,12 @@ def main():
     dlab = [f'<1e{floor:g}'] + [f'1e{e:g}' for e in dec[:-1]] + [f'>=1e{dec[-1]:g}']
     dw = max(6, max(len(s) for s in dlab)) + 1
     lines = list(head)
+    if ref is not None:
+        lines += ['', f'reference: {ref["label"]} ({ref["path"]}): bin totals; total rate {ref["tot"].sum():.4g} '
+                  f'against targets totalling {R.sum():.4g}' + (f'; {ref["note"]}' if ref['note'] else ''),
+                  f'{"bin":<11s} {"target R_j":>11s} {"total":>11s} {"ratio":>6s}']
+        for k in range(B):
+            lines.append(f'{rng_name(k):<11s} {R[k]:11.3e} {ref["tot"][k]:11.3e} {ref["tot"][k] / R[k]:6.3f}')
     for D in data:
         Lm = np.log10(np.maximum(D['m'], 10.0 ** floor))
         lines += ['', f'{D["label"]} ({D["path"]}): {D["pen"]:,} penalised ruptures (rate 0 by construction) not shown',
@@ -163,6 +181,8 @@ def main():
     any_below = any(D['below'].any() for D in data)
     band_c = floor - 1.0
     top = max(np.log10(max(D['m'].max(), D['tot'].max(), R.max())) for D in data)
+    if ref is not None and ref['tot'].max() > 0:
+        top = max(top, np.log10(ref['tot'].max()))
     top = np.ceil(2.0 * (top + 0.25)) / 2.0
     bottom = floor - 1.5 if any_below else floor - 0.3
     k_panels = len(data)
@@ -195,6 +215,10 @@ def main():
         ax.hlines(np.log10(R), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
         ok = D['tot'] > 0
         ax.scatter(lo[ok] + 0.5 * w, np.log10(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
+        if ref is not None:                          # the reference's bin totals, beside the bin's own
+            okr = ref['tot'] > 0
+            ax.scatter(lo[okr] + 0.78 * w, np.log10(ref['tot'][okr]), s=26, marker='s', c=AQUA, edgecolors=SURFACE,
+                       linewidths=1.0, zorder=4)
         nb = int(b.sum())
         nz = int((D['m'] == 0).sum())
         ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20)
@@ -211,11 +235,16 @@ def main():
                Line2D([], [], color=INK, lw=1.0, label='bin target R_j (total rate)'),
                Line2D([], [], ls='none', marker='o', ms=6.5, mfc=ORANGE, mec=SURFACE, mew=1.0,
                       label='bin total' + ('' if single else ' of the means'))]
+    if ref is not None:
+        handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=AQUA, mec=SURFACE, mew=1.0,
+                              label=f'bin total of {ref["label"]}'))
     if any_below:
         handles.append(Patch(facecolor=BAND, edgecolor='none', label=f'band: {mean_}below 1e{floor:g}, including 0'))
     fig.suptitle(('Rate' if single else 'Posterior mean rate') + ' of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
                  color=INK, fontsize=13, fontweight='bold', y=0.975)
-    fig.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=8.5, labelcolor=INK2,
+    lc = len(handles) if len(handles) <= 4 else 3
+    handles = [h for c in range(lc) for h in handles[c::lc]]     # legend columns filled so it reads row by row
+    fig.legend(handles=handles, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
                bbox_to_anchor=(0.5, 0.045), handletextpad=0.5, columnspacing=1.6)
     pens = sorted({D['pen'] for D in data})
     fig.text(0.5, 0.012, f'Bins counted up in the bin rows original order. '

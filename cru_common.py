@@ -512,6 +512,61 @@ def prelim_path(problem):
     return os.path.join(os.path.dirname(stem), 'prelim_results.npz' if base == 'cru_clean' else base + '_prelim_results.npz')
 
 
+def balance_rows(P, slip_block='S', bins_block='MFD', weights='equal'):
+    """The 'down the middle' balance term (the notebook's DOWN_THE_MIDDLE; gibbs.py --down-the-middle): for each data
+    type (the slip-rate sections, the magnitude bins, the paleo rows: every other non-empty row whose target is
+    positive), its relative shortfall s = (sum of predictions - sum of targets) / sum of targets, both in units of each
+    measurement's uncertainty as the likelihood weighs it (a slip-rate section as the mean of its subsections), costs
+    A_t s^2, so the zero model (s = -1) and predictions summing to twice the targets (s = +1) cost A_t.
+    weights='equal' (the default): one A for every type, min over types of (sum of targets)^2 / N: the largest common
+    weight that keeps every type's term at or below one extra measurement ((sum of residuals)^2 / N, the size of its
+    chance imbalance), so A is at most each type's zero-model misfit. weights='zero-model': each type's own A_t, its
+    zero-model misfit (the sum of its squared targets in units of uncertainty), so s = -1 or +1 costs a type what the
+    zero model costs it in chi2 (REPORT.md, "Balance between over- and underprediction").
+    As rows of G and d, row t is sqrt(A_t) / T_t times the type's sum of rows, target sqrt(A_t) (T_t: the type's sum of
+    targets), so its residual is sqrt(A_t) s_t. Returns (B, b, A, info): B sparse (types x ruptures), b the targets,
+    A the weights (one per type), and per type a dict of its name, measurements, sum of targets, zero-model misfit, A and
+    weight (A_t / T_t^2, on the squared sum of its residuals)."""
+    G = sp.csr_matrix(P['G'])
+    d, blk, names = np.asarray(P['d'], np.float64), np.asarray(P['block']), list(P['block_names'])
+    N = G.shape[0]
+    found = []
+    if slip_block in names:
+        S = np.flatnonzero(blk == names.index(slip_block))
+        sec = np.asarray(P['section'])[S]
+        if (sec < 0).any():                              # no sections recorded: each row its own measurement
+            sec = np.arange(len(S))
+        sec = np.unique(sec, return_inverse=True)[1]
+        ks = np.bincount(sec)
+        c = np.zeros(N)
+        c[S] = 1.0 / (ks[sec] * np.asarray(P['row_scale'], np.float64)[S])   # section means, sqrt(k) undone
+        found.append(('slip-rate sections', c, len(ks), S))
+    if bins_block in names:
+        M = np.flatnonzero(blk == names.index(bins_block))
+        c = np.zeros(N)
+        c[M] = 1.0
+        found.append(('magnitude bins', c, len(M), M))
+    other = np.flatnonzero(~np.isin(blk, [names.index(b_) for b_ in (slip_block, bins_block) if b_ in names]))
+    pal = other[(np.diff(G.indptr)[other] > 0) & (d[other] > 0)]
+    if len(pal):
+        c = np.zeros(N)
+        c[pal] = 1.0
+        found.append(('paleo rows', c, len(pal), pal))
+    found = [(nm, c, n_, rr, float(c @ d)) for nm, c, n_, rr in found if float(c @ d) > 0]
+    if not found:
+        raise ValueError('no data type with a positive sum of targets: nothing to balance')
+    if weights == 'equal':
+        A = np.full(len(found), min(T ** 2 / n_ for _, _, n_, _, T in found))
+    elif weights == 'zero-model':
+        A = np.array([float(np.sum(d[rr] ** 2)) for _, _, _, rr, _ in found])
+    else:
+        raise ValueError(f"weights = {weights!r}: use 'equal' or 'zero-model'")
+    B = sp.vstack([sp.csr_matrix(np.sqrt(a) / T * c) @ G for a, (_, c, _, _, T) in zip(A, found)]).tocsr()
+    info = [dict(name=nm, n=n_, sum_targets=T, zero_misfit=float(np.sum(d[rr] ** 2)), A=float(a), weight=a / T ** 2)
+            for a, (nm, c, n_, rr, T) in zip(A, found)]
+    return B, np.sqrt(A), A, info
+
+
 def find_rupture_set(folder, search=True):
     """The OpenSHA rupture set (a folder holding indices.csv, properties.csv, ...) at folder: the folder itself, its
     ruptures/ if it is an OpenSHA solution folder, or, with search, the ruptures/ of the one OpenSHA solution folder
@@ -529,6 +584,53 @@ def find_rupture_set(folder, search=True):
         raise ValueError(f'{len(found)} OpenSHA solution folders in {folder} '
                          f'({", ".join(os.path.basename(os.path.dirname(f)) for f in found)}): name the one to use')
     return found[0] if found else None
+
+
+def load_rates(path):
+    """A rate vector over the original ruptures (the raw matrix's columns): an OpenSHA solution's rates ('Rupture
+    Index,Annual Rate': its rates.csv, the solution/ folder holding it, or the solution folder above that), or rate
+    vectors (.npz: their 'mean' column, as the notebook and preliminaries.py write them)."""
+    path = os.path.abspath(os.path.expanduser(str(path)))
+    if os.path.isdir(path):
+        found = [c for c in (os.path.join(path, 'rates.csv'), os.path.join(path, 'solution', 'rates.csv')) if os.path.isfile(c)]
+        if not found:
+            raise FileNotFoundError(f'no rates.csv in {path} or in its solution/ folder')
+        path = found[0]
+    if path.endswith('.csv'):
+        idx, rate = np.loadtxt(path, delimiter=',', skiprows=1, unpack=True, ndmin=2)
+        out = np.zeros(int(idx.max()) + 1)
+        out[idx.astype(np.int64)] = rate
+        return out
+    with np.load(path) as z:
+        return np.asarray(z['mean'], np.float64)
+
+
+def reference_rates(spec, P):
+    """The fit figures' --reference RATES[:LABEL]: another model's rates, marked on every panel, such as the model's own
+    OpenSHA solution (its solution/rates.csv; see load_rates). LABEL defaults to the solution folder's name. Returns
+    dict(m: its rates on the cleaned problem's ruptures, label, path, total: its total rate, removed and n_removed: its
+    rate on the ruptures cleaning removed, and how many of them it puts rate on, which its predictions here leave out,
+    note: a sentence saying so, or '')."""
+    path, label = spec, None
+    if ':' in spec:
+        head, tail = spec.rsplit(':', 1)
+        if tail and '/' not in tail and os.sep not in tail:
+            path, label = head, tail
+    full = os.path.abspath(os.path.expanduser(path))
+    m_all = load_rates(full)
+    n_raw = P['raw_shape'][1] if P.get('raw_shape') is not None else int(np.max(P['keep_cols'])) + 1
+    if len(m_all) != n_raw:
+        raise SystemExit(f'--reference {path}: {len(m_all)} ruptures; the cleaned problem has {n_raw} (another rupture set?)')
+    if label is None:
+        label = (os.path.basename(os.path.dirname(os.path.dirname(full)))
+                 if full.endswith(os.path.join('solution', 'rates.csv')) else os.path.basename(full))
+    gone = np.ones(n_raw, bool)
+    gone[P['keep_cols']] = False
+    removed, n_removed = float(m_all[gone].sum()), int(np.count_nonzero(m_all[gone]))
+    note = (f'its rates on the {n_removed} ruptures cleaning removed ({removed:.3g} per year, '
+            f'{100 * removed / m_all.sum():.2g}% of its total) are not in these predictions' if removed > 0 else '')
+    return dict(m=m_all[P['keep_cols']], label=label, path=path, total=float(m_all.sum()), removed=removed,
+                n_removed=n_removed, note=note)
 
 
 # --------------------------------------------------------------------------- row groups: magnitude bins and slip rates

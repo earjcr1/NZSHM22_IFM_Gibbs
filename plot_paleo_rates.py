@@ -3,6 +3,7 @@
 
     python plot_paleo_rates.py VECTORS[:LABEL] [VECTORS[:LABEL] ...] [--problem cru_clean.npz] [--out FIGURE]
                                [--paleo-block NAME] [--slip-block S] [--bins-block MFD] [--label 4]
+                               [--reference RATES[:LABEL]]
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
 .npz). The mean model is their `mean` column, each rupture's posterior mean rate; since predictions are linear in the
@@ -31,6 +32,11 @@ bands; and the original row numbers of the --label rows furthest from their targ
 4). Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
+
+Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as aqua squares, such as the
+model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
+LABEL defaults to the solution folder's name. The table view adds its chi-squared and shares, and a column of its
+predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
 """
 import argparse
 import glob
@@ -40,11 +46,12 @@ import textwrap
 
 import numpy as np
 
-from cru_common import load_problem
+from cru_common import load_problem, reference_rates
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
 BLUE = '#2a78d6'                                 # categorical slot 1 of the reference palette
+AQUA = '#1baf7a'                                 # categorical slot 3 (slots 1-3 validate all-pairs): the reference
 
 
 def parse_set(s):
@@ -86,6 +93,8 @@ def main():
     ap.add_argument('--slip-block', default='S', help='the slip-rate row group (default S)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
     ap.add_argument('--label', type=int, default=4, help='label this many rows furthest from their targets (default 4)')
+    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates to mark on every "
+                    "panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz)")
     a = ap.parse_args()
     sets = [parse_set(s) for s in a.sets]
     out = a.out or os.path.join(os.path.dirname(sets[0][0]) or '.', 'fig_paleo_rates.png')
@@ -141,6 +150,18 @@ def main():
                          in2=float(np.mean(np.abs(r) <= 2)), groups=list(np.argsort(-np.abs(r), kind='stable')[:max(0, a.label)]),
                          model=model))
     mm = 'model' if all(D['model'] for D in data) else 'mean model'
+    ref = None
+    if a.reference:                                      # another model's predictions, marked on every panel
+        ref = reference_rates(a.reference, P)
+        yw = Gp @ ref['m']
+        r = yw / scale - t
+        ref.update(y=yw / scale, chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(r) <= 1)),
+                   in2=float(np.mean(np.abs(r) <= 2)), q=np.percentile(yw / scale / t, [5, 50, 95]))
+        head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the paleo rows {ref["chi2"]:.1f}; '
+                    f'{100 * ref["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * ref["in2"]:.0f}% '
+                    f'within two; prediction / target: median {ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to '
+                    f'{ref["q"][2]:.2f})' + (f'; {ref["note"]}' if ref['note'] else ''))
+    rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the table
 
     # table view
     lines = list(head)
@@ -154,10 +175,11 @@ def main():
                   f'prediction / target: median {rq[1]:.2f} (5-95%: {rq[0]:.2f} to {rq[2]:.2f}); {spread}; furthest from their '
                   'targets: ' + '; '.join(f'row {orig[k]} ({D["r"][k]:+.2f})' for k in D['groups']),
                   f'{"row":>7s} {"target":>9s} {"prediction" if D["model"] else "mean prediction":>16s} {"16%":>9s} {"50%":>9s} {"84%":>9s} '
-                  f'{"difference":>11s} {"ratio":>7s}']
+                  f'{"difference":>11s} {"ratio":>7s}{rc}']
         for k in np.argsort(orig, kind='stable'):
             qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, k]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
-            lines.append(f'{orig[k]:7d} {t[k]:9.4g} {D["y"][k]:16.4g} {qs} {D["r"][k]:+11.3f} {D["ratio"][k]:7.3f}')
+            lines.append(f'{orig[k]:7d} {t[k]:9.4g} {D["y"][k]:16.4g} {qs} {D["r"][k]:+11.3f} {D["ratio"][k]:7.3f}'
+                         + (f' {ref["y"][k]:10.4g}' if ref else ''))
     text = '\n'.join(lines)
     print('\n'.join(l for l in lines if not l[:7].strip().isdigit() and not l.lstrip().startswith('row ')))
 
@@ -173,11 +195,13 @@ def main():
     show_min = t.min() / 100                         # predictions below this sit on the axis's bottom edge
     vals = np.concatenate([np.r_[D['y'], D['q'][0] if D['q'] is not None else [], D['q'][2] if D['q'] is not None else []]
                            for D in data])
+    if ref is not None:
+        vals = np.r_[vals, ref['y']]
     pos = vals[vals >= show_min]
     lo = min(t.min(), pos.min() if pos.size else t.min()) / 1.4
     hi = 1.4 * max(t.max(), vals.max())
     edge = lo * 1.12
-    clipped = any((D['y'] < show_min).any() for D in data)
+    clipped = any((D['y'] < show_min).any() for D in data) or bool(ref and (ref['y'] < show_min).any())
     ncol = len(data)
     note = ('In units of each row\'s uncertainty: on log axes that moves a point only along the 1:1 line, so its distance '
             'from the line is the ratio of prediction to target. A target is one over its relative uncertainty, so the '
@@ -185,8 +209,9 @@ def main():
     top_in, sub_in, panel_in, side_in = 0.45, 0.85, 5.0, 0.75     # figure layout, in inches
     fig_w = side_in + len(data) * (panel_in + 0.55) + 0.25
     note = textwrap.fill(note, int((fig_w - 0.5) * 17), break_on_hyphens=False)
-    n_handles = 4 + any(D['q'] is not None for D in data) + int(clipped)   # the legend's entries (below)
-    leg_rows = -(-n_handles // (3 if ncol == 1 else n_handles))
+    n_handles = 4 + any(D['q'] is not None for D in data) + int(clipped) + int(ref is not None)   # the legend's entries
+    lc = ((2 if ref is not None else 3) if ncol == 1 else n_handles)   # legend columns: fewer under one panel
+    leg_rows = -(-n_handles // lc)
     leg_y = 0.08 + (note.count('\n') + 1) * 7.5 * 1.4 / 72 + 0.12   # the legend sits just above the note
     bot_in = leg_y + 0.24 * leg_rows + 0.68                          # and the axis labels above the legend
     fig, axs = plt.subplots(1, ncol, figsize=(fig_w, top_in + sub_in + panel_in + bot_in), squeeze=False, facecolor=SURFACE)
@@ -222,6 +247,12 @@ def main():
         if (~shown).any():
             ax.scatter(t[~shown], np.full(int((~shown).sum()), edge), s=32, marker='v', c=BLUE, clip_on=False,
                        linewidths=0, zorder=3)
+        if ref is not None:                          # the reference's predictions
+            sr = ref['y'] >= show_min
+            ax.scatter(t[sr], ref['y'][sr], s=30, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.6, zorder=3.2)
+            if (~sr).any():
+                ax.scatter(t[~sr], np.full(int((~sr).sum()), edge), s=30, marker='v', c=AQUA, clip_on=False, linewidths=0,
+                           zorder=3.2)
         # labels in a column in the empty corner on their points' side of the 1:1 line (lower right for points predicted
         # below their targets, upper left for those above), each near its point's height, with leader lines
         frac = lambda v: (np.log10(v) - np.log10(lo)) / (np.log10(hi) - np.log10(lo))
@@ -261,6 +292,9 @@ def main():
     handles = [Line2D([], [], ls='none', marker='o', ms=6, mfc=BLUE, mec=SURFACE, label='prediction' if mm == 'model' else 'mean prediction')]
     if any(D['q'] is not None for D in data):
         handles.append(Line2D([], [], color=BLUE, alpha=0.45, lw=1.6, label='posterior 16–84% of the prediction'))
+    if ref is not None:
+        handles.append(Line2D([], [], ls='none', marker='s', ms=5.5, mfc=AQUA, mec=SURFACE,
+                              label=f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles += [Line2D([], [], color=INK, lw=1.0, label='prediction = target'),
                 Patch(facecolor=BAND, edgecolor='none', label='within one uncertainty'),
                 Patch(facecolor=BAND2, edgecolor='none', label='within two')]
@@ -269,7 +303,6 @@ def main():
     h_in = fig.get_size_inches()[1]
     fig.suptitle('Paleo rates: targets against the model\'s predictions', x=0.03, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
-    lc = 3 if ncol == 1 else len(handles)
     order = [h for c in range(lc) for h in handles[c::lc]]          # legend columns filled so it reads row by row
     fig.legend(handles=order, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
                bbox_to_anchor=(0.5, leg_y / h_in), handletextpad=0.5, columnspacing=1.8)

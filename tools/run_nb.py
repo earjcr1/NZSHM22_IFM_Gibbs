@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Execute cru_workflow.ipynb's code cells in order in one namespace, as 'Run all' would (no Jupyter here).
 
-    python tools/run_nb.py NOTEBOOK PRIOR_KIND RUN_DIR DATA_DIR RUN_SELFTESTS(0/1) [NAME=VALUE ...] [CELLS=n]
+    python tools/run_nb.py NOTEBOOK RUN_DIR DATA_DIR RUN_SELFTESTS(0/1) [NAME=VALUE ...] [CELLS=n]
 
 RUN_DIR and DATA_DIR are best given as absolute paths (the notebook resolves relative ones from its own folder).
-NAME=VALUE replaces a configuration value, e.g. OUTPUT_DRAWS=False or "MFD_UNCERTAINTY='two-measurements'";
+NAME=VALUE replaces a configuration value, e.g. "PRESET='quick'" or "MFD_UNCERTAINTY='two-measurements'";
 CELLS=n stops after the first n code cells.
 
 Only these configuration values are overridden, by replacing their assignments in the configuration cell; everything
@@ -17,13 +17,13 @@ import sys
 import time
 import traceback
 
-nb_path, kind, run_dir, data_dir, selftests = sys.argv[1:6]
-extra = dict(a.split('=', 1) for a in sys.argv[6:])
+nb_path, run_dir, data_dir, selftests = sys.argv[1:5]
+extra = dict(a.split('=', 1) for a in sys.argv[5:])
 max_cells = int(extra.pop('CELLS', 10 ** 6))
 nb = json.load(open(nb_path))
 cells = [c for c in nb['cells'] if c['cell_type'] == 'code']
 src0 = ''.join(cells[0]['source'])
-for name, val in (('PRIOR_KIND', repr(kind)), ('RUN_DIR', repr(run_dir)), ('DATA_DIR', repr(data_dir)),
+for name, val in (('RUN_DIR', repr(run_dir)), ('DATA_DIR', repr(data_dir)),
                   ('RUN_SELFTESTS', 'True' if selftests == '1' else 'False')) + tuple(extra.items()):
     src0, k = re.subn(rf"^{name} = [^#\n]*?(\s+#)", lambda m: f"{name} = {val}" + m.group(1), src0, count=1, flags=re.M)
     assert k == 1, name
