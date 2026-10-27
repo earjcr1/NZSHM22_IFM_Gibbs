@@ -633,6 +633,65 @@ def reference_rates(spec, P):
                 n_removed=n_removed, note=note)
 
 
+FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('RANDOMIZED_NNLS', 'randomized_nnls'), ('RUPTURE_SET', 'rupture_set'),
+                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
+
+
+def run_settings(config, problem):
+    """The settings that tell runs apart (the notebook's, SLIP_SECTIONS to FLOOR), as (name, value) pairs for the fit
+    figures' settings table: from config, a workflow_config.json (default: the one next to problem, as the notebook
+    writes it; 'none': no table), or None if there is none."""
+    if config == 'none':
+        return None
+    path = config or os.path.join(os.path.dirname(os.path.abspath(problem)), 'workflow_config.json')
+    if not os.path.exists(path):
+        if config:
+            raise SystemExit(f'--config {config}: no such file')
+        return None
+    with open(path) as f:
+        cfg = json.load(f)
+    return [(name, str(cfg[key])) for name, key in FIGURE_SETTINGS if key in cfg]
+
+
+def settings_lines(pairs, width):
+    """Settings as a small table in monospace text: a line of names over a line of values, column by column, continued
+    on further pairs of lines when wider than width characters. Returns [(names, values), ...]."""
+    cols = [(n, v, max(len(n), len(v))) for n, v in pairs]
+    groups, cur, used = [], [], 0
+    for c in cols:
+        if cur and used + c[2] > width:
+            groups.append(cur)
+            cur, used = [], 0
+        cur.append(c)
+        used += c[2] + 3
+    groups.append(cur)
+    return [('   '.join(n.ljust(w) for n, _, w in g).rstrip(), '   '.join(v.ljust(w) for _, v, w in g).rstrip()) for g in groups]
+
+
+def best_fit_rates(problem):
+    """The best fit's rates (preliminaries.py's NNLS) over the cleaned problem's ruptures, from prelim_results.npz next
+    to it, or None if cleaning skipped it. The fit figures take their fixed axes from its predictions (axis_span)."""
+    fp = prelim_path(problem)
+    if not os.path.exists(fp):
+        return None
+    with np.load(fp) as pr:
+        return np.asarray(pr['m_nnls'], np.float64) if 'm_nnls' in pr.files else None
+
+
+def axis_span(targets, best, log, q=(2.0, 98.0)):
+    """The range a fit figure's axis covers, the same for every model fitted to one problem: all of the targets and the
+    central 96% of the best fit's predictions (on a log axis, its positive ones), so that a few extreme best-fit values
+    do not stretch it. Returns (lo, hi), before padding; values beyond sit on the figure's edges."""
+    t, b = np.asarray(targets, np.float64), np.asarray(best, np.float64)
+    if log:
+        t, b = t[t > 0], b[b > 0]
+    lo, hi = float(t.min()), float(t.max())
+    if b.size:
+        lo, hi = min(lo, float(np.percentile(b, q[0]))), max(hi, float(np.percentile(b, q[1])))
+    return lo, hi
+
+
 # --------------------------------------------------------------------------- row groups: magnitude bins and slip rates
 def detect_bin_rows(G, d, rtol=1e-6):
     """Find the magnitude-bin rows without being told: rows whose nonzero coefficients are all equal and whose

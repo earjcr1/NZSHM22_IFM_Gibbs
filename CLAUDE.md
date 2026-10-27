@@ -9,9 +9,10 @@ Code: preliminaries.py (clean, with soft zero-forcing rows forcing their rupture
 NNLS, skipped with --no-nnls (the notebook always computes it and starts its chains from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
 nnls_vectors.npz, which the notebook draws with the three fit-figure scripts below, and nnls_vectors.csv, a table with
 rate_vectors.csv's rows), make_solution.py (a rate vector as an OpenSHA fault system solution, solution/rates.csv and
-modules.json, after checking that the model's OpenSHA rupture set describes the same ruptures; the notebook writes the
-best fit's, nnls/solution/, when DATA_DIR holds the model's OpenSHA solution folder, which RUPTURE_SET = 'auto'
-finds), gibbs.py (production sampler; Gaussian
+modules.json, after checking that the model's OpenSHA rupture set describes the same ruptures; the notebook's last cell
+writes the best fit's, nnls/solution/, and the posterior mean's, spikeslab/solution/ (rnnls/solution/ for the randomized
+fits' mean), one row per rupture of the rupture set like the model's own rates.csv, when DATA_DIR holds the model's
+OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
 and effective draws in convergence.npz), make_tables.py (the posterior tables and rate vectors, pooled over the
 replicates), block_fit.py (each row block's fit from a run's recorded predictions),
@@ -26,7 +27,13 @@ stated noise, in place of the sampler when the notebook's RANDOMIZED_NNLS is a n
 MFD and paleo predictions in figures, in RUN_DIR/rnnls/; the best fit's sampling distribution, not a posterior).
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference
 RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated; the notebook
-passes the model's own OpenSHA solution (REFERENCE: solution/rates.csv beside the rupture set) when DATA_DIR holds it.
+passes the model's own OpenSHA solution (ref_args(): solution/rates.csv beside the rupture set, looked for when each
+figure is drawn, so one finished during the run counts; the best fit's figures come last) when DATA_DIR holds it.
+Their axes are fixed per problem by the targets and the best fit (cru_common.axis_span and best_fit_rates: all of the
+targets and the central 96% of the best fit's predictions, from prelim_results.npz), so every model's figures for one
+problem share them; values beyond sit on the edges as triangles. In place of the result set's label, each shows the
+run's settings, SLIP_SECTIONS to FLOOR (cru_common.run_settings, from workflow_config.json next to --problem; --config),
+and the rates-by-magnitude figure gives the chi2 over the bin rows.
 rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
 moves, single box only) are set aside in cru_retired_scripts.zip; restore them only if that work resumes.
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform

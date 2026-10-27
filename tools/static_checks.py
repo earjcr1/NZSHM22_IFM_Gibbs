@@ -130,11 +130,18 @@ check(re.findall(r'^DOWN_THE_MIDDLE = (\w+)', cells[0][1], re.M) == ['True'] and
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
       'notebook DOWN_THE_MIDDLE = True, recorded, and passed to gibbs.py --down-the-middle, with \'zero-model\' its per-type '
       'weights (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
-check(sum(c.count('*REF_ARGS') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
+check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
       'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
       'solution to all of them (best fit, randomized best fits, posterior)')
+check(all('axis_span(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'randomized_nnls.py'))
+      and 'best_fit_rates(' in src['plot_rate_magnitude.py'] and '\ndef axis_span(' in src['cru_common.py'],
+      'the fit figures take fixed axes from the targets and the best fit (cru_common.axis_span, best_fit_rates)')
+check(all("'--config'" in src[sc] and 'run_settings(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py',
+                                                                          'plot_rate_magnitude.py'))
+      and '\ndef run_settings(' in src['cru_common.py'] and "('FLOOR', 'floor')" in src['cru_common.py'],
+      'the fit figures show the run\'s settings, SLIP_SECTIONS to FLOOR, in place of the label (cru_common.run_settings)')
 check(re.findall(r'^RANDOMIZED_NNLS = (\d+)', cells[0][1], re.M) == ['0'] and 'randomized_nnls' in _cfg_keys
       and any("sh('randomized_nnls.py', '--problem', 'cru_clean.npz', '--fits', RANDOMIZED_NNLS" in c for _, c in cells)
       and sum('if RANDOMIZED_NNLS:' in c for _, c in cells) >= 9 and "'--selftest'" in src['randomized_nnls.py'],
@@ -219,18 +226,21 @@ st_cells = [i for i, c in cells if re.search(r"sh\(\s*'gibbs\.py',\s*'--selftest
 check(len(st_cells) == 1 and all("sh('gibbs.py', '--selftest', 'current')" in c for i, c in cells if i in st_cells)
       and re.search(r"'--selftest', nargs='\?', const='all', choices=\['all', 'current'\]", src['gibbs.py']) is not None,
       f"notebook's self-tests run gibbs.py --selftest current (cells {st_cells}); gibbs.py --selftest takes 'all' or 'current'")
-cc = [i for i, c in cells if 'nnls_vectors.npz' in c]
-check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('preliminaries.py', 'plot_slip_rates.py',
-      'plot_rate_magnitude.py', 'plot_paleo_rates.py')) and "'nnls_vectors.npz'" in src['preliminaries.py'],
-      f'the cleaning cell draws the best fit from nnls_vectors.npz, which preliminaries.py writes (cells {cc})')
+cc = [i for i, c in cells if "'nnls/nnls_vectors.npz:best fit (NNLS)'" in c]
+post = [i for i, c in cells if "sh('plot_paleo_rates.py', vec" in c]
+check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('plot_slip_rates.py', 'plot_rate_magnitude.py',
+      'plot_paleo_rates.py')) and bool(post) and cc[0] > post[0] and "'nnls_vectors.npz'" in src['preliminaries.py'],
+      f'the best fit (nnls_vectors.npz, which preliminaries.py writes) is drawn after the posterior (cells {cc}), so a reference '
+      'solution finished during the run is marked')
 check("'nnls_vectors.csv'" in src['preliminaries.py'], 'preliminaries.py also writes the best fit as a table, nnls_vectors.csv')
-cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c and "'randomized_nnls.py'" not in c]   # the
-check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"]                       # cleaning cell's and 'find_rupture_set(DATA_DIR)' in cfg and len(cc) == 1
-      and all("'nnls/nnls_vectors.npz" in c and "'--out', 'nnls'" in c and "'nnls/fig_slip_rates_nnls.png'" in c
-              and "'--ruptures', RUPTURE_DIR" in c for i, c in cells if i in cc)
+cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c]   # the solutions cell, the last
+check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find_rupture_set(DATA_DIR)' in cfg
+      and '\ndef rupture_dir():' in cfg and len(cc) == 1 and cc[0] == cells[-1][0]
+      and all("'nnls/nnls_vectors.npz'" in c and "'--column', 'mean'" in c and "'--ruptures', _rd" in c and 'rupture_dir()' in c
+              for i, c in cells if i in cc)
       and "os.path.join(os.path.dirname(stem), 'nnls')" in src['preliminaries.py'] and {'rupture_set', 'rupture_dir'} <= set(keys or []),
-      f"the best fit's outputs go into RUN_DIR/nnls/ (preliminaries.py and the cleaning cell {cc}), with its OpenSHA solution from "
-      "make_solution.py for the rupture set RUPTURE_SET = 'auto' finds in DATA_DIR; both recorded")
+      f"the best fit's outputs go into RUN_DIR/nnls/ (preliminaries.py); the last cell ({cc}) writes it and the posterior mean "
+      "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 print('5. Options and imports')
 opts = {}

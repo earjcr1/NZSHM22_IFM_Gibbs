@@ -45,7 +45,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import load_problem, magnitude_bins, prelim_path, reference_rates, report_to, slip_sections
+from cru_common import axis_span, load_problem, magnitude_bins, prelim_path, reference_rates, report_to, slip_sections
 from preliminaries import nnls_lawson_hanson
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'   # the fit
@@ -127,34 +127,38 @@ def _style(ax, logx=False, logy=False, plain=True):
                 axis.set_minor_formatter(NullFormatter())
 
 
-def _ranges(ax, x, q, floor=None, base=None, size=24):
+def _ranges(ax, x, q, floor=None, base=None, size=24, ceil=None):
     """The fits' 2.5-97.5% (thin) and 16-84% (thicker) ranges at each x, the median (dot) and the best fit (open diamond).
-    On a log axis, values below floor sit on the floor (a median there as a triangle)."""
+    Values below floor or above ceil, the axis's edges, sit on them (a median there as a triangle)."""
     lo2, lo1, med, hi1, hi2 = q
-    f = (lambda v: np.maximum(v, floor)) if floor is not None else (lambda v: v)
+    f = lambda v: np.clip(v, -np.inf if floor is None else floor, np.inf if ceil is None else ceil)
     ax.vlines(x, f(lo2), f(hi2), color=BLUE, lw=0.8, alpha=0.35, zorder=2)
     ax.vlines(x, f(lo1), f(hi1), color=BLUE, lw=2.0, alpha=0.6, zorder=2.2)
     low = (med < floor) if floor is not None else np.zeros(len(med), bool)
-    ax.scatter(x[~low], med[~low], s=size, c=BLUE, edgecolors=SURFACE, linewidths=0.6, zorder=3)
-    if low.any():
-        ax.scatter(x[low], np.full(int(low.sum()), floor), s=size + 6, marker='v', c=BLUE, linewidths=0, zorder=3,
-                   clip_on=False)
+    high = (med > ceil) if ceil is not None else np.zeros(len(med), bool)
+    ax.scatter(x[~(low | high)], med[~(low | high)], s=size, c=BLUE, edgecolors=SURFACE, linewidths=0.6, zorder=3)
+    for sel, at, mk in ((low, floor, 'v'), (high, ceil, '^')):
+        if sel.any():
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), s=size + 6, marker=mk, c=BLUE, linewidths=0, zorder=3,
+                       clip_on=False)
     if base is not None:
         ax.scatter(x, f(base), s=size - 6, marker='D', facecolors='none', edgecolors=INK2, linewidths=0.8, zorder=3.5)
 
 
-def _reference(ax, x, v, floor=None, size=24):
-    """A reference solution's values (--reference) as squares; on a log axis, values below floor sit on the floor."""
+def _reference(ax, x, v, floor=None, size=24, ceil=None):
+    """A reference solution's values (--reference) as squares; values below floor or above ceil sit on them."""
     low = (v < floor) if floor is not None else np.zeros(len(v), bool)
-    ax.scatter(x[~low], v[~low], s=size, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.6, zorder=3.4)
-    if low.any():
-        ax.scatter(x[low], np.full(int(low.sum()), floor), s=size + 4, marker='v', c=AQUA, linewidths=0, zorder=3.4,
-                   clip_on=False)
+    high = (v > ceil) if ceil is not None else np.zeros(len(v), bool)
+    ax.scatter(x[~(low | high)], v[~(low | high)], s=size, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.6, zorder=3.4)
+    for sel, at, mk in ((low, floor, 'v'), (high, ceil, '^')):
+        if sel.any():
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), s=size + 4, marker=mk, c=AQUA, linewidths=0, zorder=3.4,
+                       clip_on=False)
 
 
-def _ref_handles(ref):
+def _ref_handles(ref, extra=''):
     from matplotlib.lines import Line2D
-    return [Line2D([], [], ls='none', marker='s', ms=5, mfc=AQUA, mec=SURFACE, label=ref['label'])] if ref else []
+    return [Line2D([], [], ls='none', marker='s', ms=5, mfc=AQUA, mec=SURFACE, label=ref['label'] + extra)] if ref else []
 
 
 def _ref_head(ref, what):
@@ -236,9 +240,9 @@ def fig_slip(out, P, Y, y0, slip_block, nfits, ref=None):
     top_in, row_in, bot_in = 0.95, 5.0, 1.15
     fig, axs = plt.subplots(1, 2, figsize=(10.6, top_in + row_in + bot_in), facecolor=SURFACE)
     h_in = fig.get_size_inches()[1]
-    hi_lin = 1.05 * max(ts.max(), q[4].max(), ysr.max() if ref else 0.0) + 1.0
-    lo_log = ts[ts > 0].min() / 20                       # predictions below this sit on the log panel's bottom edge
-    hi_log = 1.4 * max(ts.max(), q[4].max(), ysr.max() if ref else 0.0)
+    lo_b, hi_b = axis_span(ts, ys0, log=True)            # fixed by the targets and the best fit, as plot_slip_rates.py's
+    hi_lin = 1.05 * axis_span(ts, ys0, log=False)[1] + 1.0
+    lo_log, hi_log = lo_b / 1.4, hi_b * 1.4
     for j, ax in enumerate(axs):
         log = j == 1
         _style(ax, logx=log, logy=log)
@@ -254,9 +258,10 @@ def fig_slip(out, P, Y, y0, slip_block, nfits, ref=None):
         ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
         ax.plot(lim, lim, color=INK, lw=1.0, zorder=1)
         keep = ts > 0 if log else np.ones(S, bool)
-        _ranges(ax, ts[keep], q[:, keep], floor=lim[0] * 1.12 if log else None, base=ys0[keep])
+        fl, cl = (lim[0] * 1.12, lim[1] / 1.12) if log else (None, lim[1] * 0.985)   # values beyond sit on the edges
+        _ranges(ax, ts[keep], q[:, keep], floor=fl, ceil=cl, base=ys0[keep])
         if ref:
-            _reference(ax, ts[keep], ysr[keep], floor=lim[0] * 1.12 if log else None)
+            _reference(ax, ts[keep], ysr[keep], floor=fl, ceil=cl)
         ax.set_xlabel('target slip rate (in units of its measurement uncertainty)', color=INK2, fontsize=9)
         if j == 0:
             ax.set_ylabel('predicted slip rate (same units)', color=INK2, fontsize=9)
@@ -266,7 +271,8 @@ def fig_slip(out, P, Y, y0, slip_block, nfits, ref=None):
             f'{100 * inside1:.0f}% of the {S} sections',
             'In units of each section\'s measurement uncertainty (the mean over its subsections). Each fit is the best '
             'nonnegative fit to the data plus a fresh draw of their stated noise: the spread shows how far the best fit '
-            'moves with the noise, not a posterior. Values below the log axis sit on its bottom edge.', h_in)
+            'moves with the noise, not a posterior. The axes are fixed by the targets and the best fit, as in the other fit '
+            'figures of these inputs; values beyond them sit on the edges.', h_in)
     _legend(fig, h_in, extra_handles=_ref_handles(ref))
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.3) / h_in, bottom=(bot_in + 0.25) / h_in, wspace=0.22)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
@@ -285,6 +291,10 @@ def fig_mfd(out, P, Y, y0, bins_block, lowest, width, nfits, ref=None):
     T0 = y0[rows] / coef
     Tr = ref['y'][rows] / coef if ref else None          # the reference's bin totals
     rel = 1.0 / P['d'][rows]                             # each bin's relative uncertainty, as the likelihood weighs it
+    s2 = float(P['sigma']) ** 2                          # chi2 over the bin rows, as the likelihood weighs them
+    chi = np.sum((Y[:, rows] - P['d'][rows]) ** 2, axis=1) / s2
+    chi0 = float(np.sum((y0[rows] - P['d'][rows]) ** 2)) / s2
+    chir = float(np.sum((ref['y'][rows] - P['d'][rows]) ** 2)) / s2 if ref else None
     q, qr = _pct(T), _pct(T / R)
     inside1 = np.mean((qr[1] <= 1) & (1 <= qr[3]))
     mc = lo + width / 2
@@ -294,7 +304,10 @@ def fig_mfd(out, P, Y, y0, bins_block, lowest, width, nfits, ref=None):
             f'the target lies inside the fits\' 16-84% range for {100 * inside1:.0f}% of the bins; the fits\' median bin total / '
             f'target: median {np.median(qr[2]):.3f} ({qr[2].min():.3f} to {qr[2].max():.3f}); total rate: the fits\' median '
             f'{np.median(T.sum(1)):.4g} (16-84%: {np.percentile(T.sum(1), 16):.4g} to {np.percentile(T.sum(1), 84):.4g}), '
-            f'targets {R.sum():.4g}, best fit {T0.sum():.4g}']
+            f'targets {R.sum():.4g}, best fit {T0.sum():.4g}',
+            f'chi2 over the {len(rows)} bin rows, as the likelihood weights them: the fits\' median {np.median(chi):.1f} '
+            f'(16-84%: {np.percentile(chi, 16):.1f} to {np.percentile(chi, 84):.1f}), the best fit {chi0:.1f}'
+            + (f', the reference {chir:.1f}' if ref else '')]
            + _ref_head(ref, f'bin totals summed {Tr.sum():.4g}; bin total / target: median {np.median(Tr / R):.3f}' if ref else ''),
            ['bin', 'target', 'rel_unc', 'best_fit'] + [f'p{v:g}' for v in Q] + ['median/target'] + (['reference'] if ref else []),
            [[f'{lo[j]:.2f}', f'{R[j]:.4g}', f'{rel[j]:.3f}', f'{T0[j]:.4g}'] + [f'{q[i][j]:.4g}' for i in range(5)]
@@ -307,9 +320,12 @@ def fig_mfd(out, P, Y, y0, bins_block, lowest, width, nfits, ref=None):
     _style(ax, logy=True, plain=False)
     ax.plot(mc, R, color=INK, lw=1.0, zorder=1)
     ax.fill_between(mc, R * np.maximum(1 - rel, 1e-3), R * (1 + rel), color=BAND, lw=0, zorder=0.5)
-    _ranges(ax, mc, q, base=T0)
+    lo_t = min((R * np.maximum(1 - rel, 1e-3)).min(), T0[T0 > 0].min() if (T0 > 0).any() else np.inf) / 1.3
+    hi_t = max((R * (1 + rel)).max(), T0.max()) * 1.3    # fixed by the targets and the best fit
+    ax.set_ylim(lo_t, hi_t)
+    _ranges(ax, mc, q, base=T0, floor=lo_t * 1.06, ceil=hi_t / 1.06)
     if ref:
-        _reference(ax, mc, Tr)
+        _reference(ax, mc, Tr, floor=lo_t * 1.06, ceil=hi_t / 1.06)
     ax.set_xlabel('magnitude (bin centre)', color=INK2, fontsize=9)
     ax.set_ylabel('events per year in the bin', color=INK2, fontsize=9)
     ax.set_title('bin totals', loc='left', color=INK, fontsize=10, pad=6)
@@ -317,19 +333,26 @@ def fig_mfd(out, P, Y, y0, bins_block, lowest, width, nfits, ref=None):
     _style(ax)
     ax.fill_between(mc, 1 - rel, 1 + rel, color=BAND, lw=0, zorder=0.5)
     ax.axhline(1.0, color=INK, lw=1.0, zorder=1)
-    _ranges(ax, mc, qr, base=T0 / R)
+    r_lo = min(1 - rel.max(), (T0 / R).min()) - 0.04
+    r_hi = max(1 + rel.max(), (T0 / R).max()) + 0.04
+    ax.set_ylim(r_lo, r_hi)
+    pad = 0.015 * (r_hi - r_lo)
+    _ranges(ax, mc, qr, base=T0 / R, floor=r_lo + pad, ceil=r_hi - pad)
     if ref:
-        _reference(ax, mc, Tr / R)
+        _reference(ax, mc, Tr / R, floor=r_lo + pad, ceil=r_hi - pad)
     ax.set_xlabel('magnitude (bin centre)', color=INK2, fontsize=9)
     ax.set_ylabel('bin total / target', color=INK2, fontsize=9)
     ax.set_title('relative to the targets', loc='left', color=INK, fontsize=10, pad=6)
     _titles(fig, f'Magnitude bins: {nfits} best fits to noise-perturbed data',
             f'the target is inside the fits\' 16-84% range for {100 * inside1:.0f}% of the {len(rows)} bins; median bin '
-            f'total / target {np.median(qr[2]):.3f}',
+            f'total / target {np.median(qr[2]):.3f}; χ² over the bins: the fits\' median {np.median(chi):.1f} (16-84%: '
+            f'{np.percentile(chi, 16):.1f} to {np.percentile(chi, 84):.1f}), the best fit {chi0:.1f}',
             'The shaded band is each bin\'s target plus or minus its uncertainty, at the level the likelihood gives it '
             '(MFD_UNCERTAINTY). Each fit is the best nonnegative fit to the data plus a fresh draw of their stated noise: '
-            'the spread shows how far the best fit moves with the noise, not a posterior.', h_in)
-    _legend(fig, h_in, extra_handles=[Line2D([], [], color=INK, lw=1.0, label='target')] + _ref_handles(ref),
+            'the spread shows how far the best fit moves with the noise, not a posterior. The axes are fixed by the '
+            'targets and the best fit; values beyond them sit on the edges.', h_in)
+    _legend(fig, h_in, extra_handles=[Line2D([], [], color=INK, lw=1.0, label='target')]
+            + _ref_handles(ref, f' (χ² {chir:.1f})' if ref else ''),
             band_label='within one uncertainty of the target')
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.3) / h_in, bottom=(bot_in + 0.5) / h_in, wspace=0.22)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
@@ -378,8 +401,8 @@ def fig_paleo(out, P, Y, y0, rows, nfits, ref=None):
     fig, ax = plt.subplots(1, 1, figsize=(7.2, top_in + row_in + bot_in), facecolor=SURFACE)
     h_in = fig.get_size_inches()[1]
     _style(ax, logx=True, logy=True)
-    pos = np.r_[t, q[0][q[0] > 0], q[4], ypr[ypr > 0] if ref else []]
-    lim = (pos.min() / 1.6, 1.4 * pos.max())
+    lo_b, hi_b = axis_span(t, yp0, log=True)             # fixed by the targets and the best fit, as plot_paleo_rates.py's
+    lim = (lo_b / 1.4, hi_b * 1.4)
     xs = np.logspace(np.log10(lim[0]), np.log10(lim[1]), 400)
     ax.set_xlim(*lim)
     ax.set_ylim(*lim)
@@ -387,16 +410,16 @@ def fig_paleo(out, P, Y, y0, rows, nfits, ref=None):
     ax.fill_between(xs, np.maximum(xs - 2.0, lim[0]), xs + 2.0, color=BAND2, lw=0, zorder=0.4)
     ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
     ax.plot(lim, lim, color=INK, lw=1.0, zorder=1)
-    _ranges(ax, t, q, floor=lim[0] * 1.12, base=yp0)
+    _ranges(ax, t, q, floor=lim[0] * 1.12, ceil=lim[1] / 1.12, base=yp0)
     if ref:
-        _reference(ax, t, ypr, floor=lim[0] * 1.12)
+        _reference(ax, t, ypr, floor=lim[0] * 1.12, ceil=lim[1] / 1.12)
     ax.set_xlabel('target paleo rate (in units of its uncertainty)', color=INK2, fontsize=9)
     ax.set_ylabel('predicted paleo rate (same units)', color=INK2, fontsize=9)
     _titles(fig, f'Paleo rates: {nfits} best fits to noise-perturbed data',
             f'the target is inside the fits\' 16-84% range for {100 * inside1:.0f}% of the {len(rows)} rows',
             'In units of each row\'s uncertainty: on log-log axes that moves a point only along the 1:1 line, so its '
-            'distance from the line is the ratio of prediction to target. Values below the axis (including 0) sit on its '
-            'bottom edge.', h_in)
+            'distance from the line is the ratio of prediction to target. The axes are fixed by the targets and the best fit, '
+            'as in the other fit figures of these inputs; values beyond them (including 0) sit on the edges.', h_in)
     _legend(fig, h_in, extra_handles=_ref_handles(ref), band_label='within one uncertainty', band2_label='within two')
     fig.subplots_adjust(left=0.12, right=0.97, top=1 - (top_in + 0.3) / h_in, bottom=(bot_in + 0.5) / h_in)
     fig.savefig(out, dpi=150, facecolor=SURFACE)

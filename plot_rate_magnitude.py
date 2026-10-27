@@ -19,14 +19,21 @@ cleaning removed (no ruptures left) leaves a gap. Within its bin each rupture is
 spread the points. A check prints how the median number of subsections per rupture changes from bin to bin; it should
 rise with magnitude if the bins are in order.
 
+Axes: the magnitude axis follows the bins; the rate axis is fixed for the problem by its targets and its best fit (from
+the band below --diag-floor up to the largest of the bin targets, the best fit's rates and its bin totals; the best fit
+from prelim_results.npz next to --problem), so that every model's figure for one problem has the same axes; without a
+best fit, the rate axis follows what is plotted. Rates above the axis sit on its top edge.
+
 Marks: a dot per rupture at log10 of its mean rate, with means below 10^--diag-floor (1e-10, the notebook's FLOOR),
 including exactly 0, in a band at the bottom; a line across each bin at its target total rate R_j (with the
 notebook's soft top, also every rupture's soft upper limit); and a dot for the bin's total
 of the means, which is the posterior mean of the bin's total. Penalised ruptures (rate 0 by construction) are left
 out.
 
+Each panel's subtitle gives the model's chi-squared over the magnitude-bin rows, as the likelihood weights them.
+
 Writes FIGURE (default: fig_rate_magnitude.png next to the first rate vectors) and, as its table view, the same name
-with .txt: per bin, the number of ruptures, the target, the total of the means and their ratio, the 10%, 50% and 90%
+with .txt: the chi-squared, then per bin, the number of ruptures, the target, the total of the means and their ratio, the 10%, 50% and 90%
 points and the largest of log10 of the mean rates, and how many lie below the floor; then, per bin, how many ruptures
 have a mean rate below the floor (including 0), in each decade from the floor up to 1e-2, and at 1e-2 or above, so
 that every rupture is counted once. Means in the lowest decades come from ruptures switched on in few draws, so their
@@ -39,11 +46,12 @@ to the targets. Its rates on ruptures that cleaning removed are left out of its 
 """
 import argparse
 import os
+import textwrap
 
 import numpy as np
 from scipy.stats import spearmanr
 
-from cru_common import load_problem, magnitude_bins, reference_rates
+from cru_common import best_fit_rates, load_problem, magnitude_bins, reference_rates, run_settings, settings_lines
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
@@ -60,6 +68,15 @@ def parse_set(s):
             path, label = head, tail
     base = path[:-4] if path.endswith(('.npz', '.csv')) else path
     return base + '.npz', label or os.path.basename(os.path.dirname(os.path.abspath(base))) or base
+
+
+def draw_settings(ax, tab, y, size=7.5):
+    """The run's settings above a panel, in place of its label: names (muted) over values, the last line y points above."""
+    rows = [r for pair in tab for r in pair]
+    for k, text in enumerate(rows):
+        ax.annotate(text, (0, 1), xycoords='axes fraction', xytext=(0, y + (len(rows) - 1 - k) * size * 1.4),
+                    textcoords='offset points', va='bottom', fontsize=size, family='monospace',
+                    color=MUTED if k % 2 == 0 else INK)
 
 
 def log_label(v):
@@ -80,6 +97,9 @@ def main():
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates, whose bin totals "
                     "to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors")
+    ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
+                    "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
+                    "'none': the label)")
     a = ap.parse_args()
     sets = [parse_set(s) for s in a.sets]
     out = a.out or os.path.join(os.path.dirname(sets[0][0]) or '.', 'fig_rate_magnitude.png')
@@ -121,6 +141,7 @@ def main():
         m = m_all[keep_c]
         tot = np.bincount(bin_of, weights=m, minlength=B)
         data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen,
+                         chi2=float(np.sum((Gr[rows] @ m - P['d'][rows]) ** 2)),   # over the bin rows, as weighted
                          model=str(z['model']) if 'model' in z.files else ''))
     single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
     mean_ = '' if single else 'mean '
@@ -128,6 +149,12 @@ def main():
     if a.reference:                                  # another model's bin totals, marked on every panel
         ref = reference_rates(a.reference, P)
         ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
+        ref['chi2'] = float(np.sum((Gr[rows] @ ref['m'] - P['d'][rows]) ** 2))
+    settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
+    if settings and data[0]['model']:
+        settings = [('model', data[0]['model'])] + settings
+    if settings:
+        head.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
 
     # table view
     clip = lambda v: f'<{floor:g}' if v <= floor else f'{v:.2f}'
@@ -136,14 +163,17 @@ def main():
     dw = max(6, max(len(s) for s in dlab)) + 1
     lines = list(head)
     if ref is not None:
-        lines += ['', f'reference: {ref["label"]} ({ref["path"]}): bin totals; total rate {ref["tot"].sum():.4g} '
+        lines += ['', f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the {B} magnitude-bin rows '
+                  f'{ref["chi2"]:.1f}; bin totals; total rate {ref["tot"].sum():.4g} '
                   f'against targets totalling {R.sum():.4g}' + (f'; {ref["note"]}' if ref['note'] else ''),
                   f'{"bin":<11s} {"target R_j":>11s} {"total":>11s} {"ratio":>6s}']
         for k in range(B):
             lines.append(f'{rng_name(k):<11s} {R[k]:11.3e} {ref["tot"][k]:11.3e} {ref["tot"][k] / R[k]:6.3f}')
     for D in data:
         Lm = np.log10(np.maximum(D['m'], 10.0 ** floor))
-        lines += ['', f'{D["label"]} ({D["path"]}): {D["pen"]:,} penalised ruptures (rate 0 by construction) not shown',
+        lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s chi2 over the {B} '
+                  f'magnitude-bin rows, as the likelihood weights them, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
+                  '(rate 0 by construction) not shown',
                   f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
                   f'{"log10 rate: 10%" if single else "log10 mean: 10%":>16s} {"50%":>7s} {"90%":>7s} {"max":>7s} '
                   f'{"below " + f"1e{floor:g}":>12s}']
@@ -178,16 +208,27 @@ def main():
     g = np.random.default_rng(0)                      # the same spread for every panel, and on every run
     x = lo[bin_of] + w * g.uniform(0.08, 0.92, n)
     jy = g.uniform(-0.28, 0.28, n)
-    any_below = any(D['below'].any() for D in data)
     band_c = floor - 1.0
-    top = max(np.log10(max(D['m'].max(), D['tot'].max(), R.max())) for D in data)
-    if ref is not None and ref['tot'].max() > 0:
-        top = max(top, np.log10(ref['tot'].max()))
+    nn = best_fit_rates(a.problem)                   # the best fit fixes the rate axis, the same for every model
+    fixed = nn is not None and len(nn) == n
+    if fixed:
+        top = np.log10(max(R.max(), nn.max(), np.bincount(bin_of, weights=nn, minlength=B).max()))
+        any_below = True                             # the band below the floor keeps its room, empty or not
+    else:                                            # cleaned without the best fit: the axis follows what is plotted
+        top = max(np.log10(max(D['m'].max(), D['tot'].max(), R.max())) for D in data)
+        if ref is not None and ref['tot'].max() > 0:
+            top = max(top, np.log10(ref['tot'].max()))
+        any_below = any(D['below'].any() for D in data)
     top = np.ceil(2.0 * (top + 0.25)) / 2.0
     bottom = floor - 1.5 if any_below else floor - 0.3
+    cap = top - 0.06                                 # rates above the axis sit on its top edge
+    lg = lambda v: np.minimum(np.log10(v), cap)
     k_panels = len(data)
     fig_w = 8.6 if k_panels == 1 else 0.6 + 6.3 * k_panels
-    fig, axs = plt.subplots(1, k_panels, figsize=(fig_w, 6.0), sharey=True, squeeze=False,
+    tab = settings_lines(settings, int((fig_w - 0.8) / 0.062500)) if settings else None
+    more_top = max(0.0, 2 * len(tab) * 10.5 - 10.0) / 72 if tab else 0.0   # room for the settings table
+    H = 6.0 + more_top
+    fig, axs = plt.subplots(1, k_panels, figsize=(fig_w, H), sharey=True, squeeze=False,
                             facecolor=SURFACE)
     edges = lo[0] + w * np.arange(int(round((lo[-1] + w - lo[0]) / w)) + 1)
     majors = [e for e in edges if abs(round(e * 10) % 2) < 1e-9 or w != 0.1]
@@ -209,20 +250,23 @@ def main():
         b = D['below']
         if any_below:
             ax.axhspan(floor - 1.45, floor - 0.55, color=BAND, lw=0, zorder=0.5)
-        ax.scatter(x[~b], np.log10(D['m'][~b]), s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2)
+        ax.scatter(x[~b], lg(D['m'][~b]), s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2)
         if b.any():
             ax.scatter(x[b], band_c + jy[b], s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2)
         ax.hlines(np.log10(R), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
         ok = D['tot'] > 0
-        ax.scatter(lo[ok] + 0.5 * w, np.log10(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
+        ax.scatter(lo[ok] + 0.5 * w, lg(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
         if ref is not None:                          # the reference's bin totals, beside the bin's own
             okr = ref['tot'] > 0
-            ax.scatter(lo[okr] + 0.78 * w, np.log10(ref['tot'][okr]), s=26, marker='s', c=AQUA, edgecolors=SURFACE,
+            ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=AQUA, edgecolors=SURFACE,
                        linewidths=1.0, zorder=4)
         nb = int(b.sum())
         nz = int((D['m'] == 0).sum())
-        ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20)
-        ax.annotate(f'{n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
+        if tab:
+            draw_settings(ax, tab, 20)
+        else:
+            ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20)
+        ax.annotate(f'χ² {D["chi2"]:.1f} over the {B} magnitude bins; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
                     color=INK2, fontsize=8.5)
@@ -237,21 +281,25 @@ def main():
                       label='bin total' + ('' if single else ' of the means'))]
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=AQUA, mec=SURFACE, mew=1.0,
-                              label=f'bin total of {ref["label"]}'))
+                              label=f'bin total of {ref["label"]} (χ² {ref["chi2"]:.1f})'))
     if any_below:
         handles.append(Patch(facecolor=BAND, edgecolor='none', label=f'band: {mean_}below 1e{floor:g}, including 0'))
     fig.suptitle(('Rate' if single else 'Posterior mean rate') + ' of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
-                 color=INK, fontsize=13, fontweight='bold', y=0.975)
+                 color=INK, fontsize=13, fontweight='bold', y=1 - 0.15 / H)
     lc = len(handles) if len(handles) <= 4 else 3
     handles = [h for c in range(lc) for h in handles[c::lc]]     # legend columns filled so it reads row by row
-    fig.legend(handles=handles, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
-               bbox_to_anchor=(0.5, 0.045), handletextpad=0.5, columnspacing=1.6)
     pens = sorted({D['pen'] for D in data})
-    fig.text(0.5, 0.012, f'Bins counted up in the bin rows original order. '
-             + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
-                'Penalised ruptures (rate 0 by construction) are not shown.'),
-             ha='center', color=MUTED, fontsize=8)
-    fig.subplots_adjust(left=0.07 if k_panels > 1 else 0.075, right=0.985, top=0.85, bottom=0.2, wspace=0.06)
+    foot = textwrap.fill('Bins counted up in the bin rows original order. '
+                         + ('Rate axis fixed by the targets and the best fit, the same for every model of these inputs. '
+                            if fixed else '')
+                         + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
+                            'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
+    more = 0.028 * foot.count('\n')                  # room for a footnote of more than one line
+    fig.legend(handles=handles, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
+               bbox_to_anchor=(0.5, 0.045 + more), handletextpad=0.5, columnspacing=1.6)
+    fig.text(0.5, 0.012, foot, ha='center', va='bottom', color=MUTED, fontsize=8, linespacing=1.4)
+    fig.subplots_adjust(left=0.07 if k_panels > 1 else 0.075, right=0.985, top=1 - (0.9 + more_top) / H,
+                        bottom=(1.2 + 6.0 * more) / H, wspace=0.06)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     with open(os.path.splitext(out)[0] + '.txt', 'w') as f:
         f.write(text + '\n')

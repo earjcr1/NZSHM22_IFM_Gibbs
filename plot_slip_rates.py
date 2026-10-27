@@ -23,8 +23,10 @@ target + 1, is within one measurement uncertainty of its target. With one measur
 single subsection may stray further: in the likelihood it carries sqrt(k) times that uncertainty. On the log scale the
 band reaches the bottom wherever the target is below 1: a prediction of 0 is then within one uncertainty.
 
-Marks: a dot per section mean (blue) and per subsection (grey); means too small for the log scale's axis, including 0,
-on its bottom edge as triangles; the 1:1 line; the +-1 band; and the original rows of the --label sections furthest from
+Axes: fixed for the problem by its targets and its best fit (all of the targets, and the central 96% of the best fit's
+section means, from prelim_results.npz next to --problem), so that every model's figure for one problem has the same
+axes; without a best fit, they follow what is plotted. Marks: a dot per section mean (blue) and per subsection (grey);
+values beyond the axes (on the log scale, including 0) on their edges as triangles; the 1:1 line; the +-1 band; and the original rows of the --label sections furthest from
 their targets (default 3). Writes FIGURE (default: fig_slip_rates.png next to the first rate vectors) and, as its table
 view, the same name with .txt: the mean model's chi-squared over the slip-rate rows as the likelihood weights them, the
 share of sections (and of subsections) within one and two uncertainties, and per section and per row the target, the
@@ -41,7 +43,7 @@ import textwrap
 
 import numpy as np
 
-from cru_common import load_problem, reference_rates, slip_sections
+from cru_common import axis_span, best_fit_rates, load_problem, reference_rates, run_settings, settings_lines, slip_sections
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE = '#2a78d6'                                 # categorical slot 1 of the reference palette
@@ -60,6 +62,25 @@ def parse_set(s):
     return base + '.npz', label or os.path.basename(os.path.dirname(os.path.abspath(base))) or base
 
 
+def draw_settings(ax, tab, y, size=7.5):
+    """The run's settings above a panel, in place of its label: names (muted) over values, the last line y points above."""
+    rows = [r for pair in tab for r in pair]
+    for k, text in enumerate(rows):
+        ax.annotate(text, (0, 1), xycoords='axes fraction', xytext=(0, y + (len(rows) - 1 - k) * size * 1.4),
+                    textcoords='offset points', va='bottom', fontsize=size, family='monospace',
+                    color=MUTED if k % 2 == 0 else INK)
+
+
+def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
+    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above)."""
+    low, high = v < lo, v > hi
+    mid = ~(low | high)
+    ax.scatter(x[mid], v[mid], **kw)
+    for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
+        if sel.any():
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **kw_edge)
+
+
 def main():
     ap = argparse.ArgumentParser(description='Slip-rate targets against the mean model (see the module docstring).')
     ap.add_argument('sets', nargs='+', metavar='VECTORS[:LABEL]', help='rate vectors (<prior folder>/rate_vectors)')
@@ -69,6 +90,9 @@ def main():
     ap.add_argument('--label', type=int, default=3, help='label this many sections furthest from their targets (default 3)')
     ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates to mark on every "
                     "panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz)")
+    ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
+                    "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
+                    "'none': the label)")
     a = ap.parse_args()
     sets = [parse_set(s) for s in a.sets]
     out = a.out or os.path.join(os.path.dirname(sets[0][0]) or '.', 'fig_slip_rates.png')
@@ -134,6 +158,11 @@ def main():
                     f'{ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to {ref["q"][2]:.2f})'
                     + (f'; {ref["note"]}' if ref['note'] else ''))
     rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the tables
+    settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
+    if settings and data[0]['model']:
+        settings = [('model', data[0]['model'])] + settings
+    if settings:
+        head.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
 
     def rows_span(s):
         o = sorted(int(orig[k]) for k in mem[s])
@@ -174,23 +203,41 @@ def main():
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
-    ally = np.concatenate([np.r_[D['y'], D['ys']] for D in data] + ([ref['ys']] if ref else []))
-    hi_lin = 1.05 * max(t.max(), ally.max()) + 1.0
-    show_min = 1e-3 * t.min()                      # the log scale's lowest prediction shown at its value
-    pos = ally[ally >= show_min]
-    lo_log = min(t.min(), pos.min() if pos.size else t.min()) / 1.4
-    hi_log = 1.4 * max(t.max(), ally.max())
-    clipped = any((D['ys'] < show_min).any() or (D['y'] < show_min).any() for D in data) or bool(ref and (ref['ys'] < show_min).any())
+    nn = best_fit_rates(a.problem)                 # the best fit's predictions fix the axes, the same for every model
+    fixed = nn is not None and len(nn) == Gs.shape[1]
+    if fixed:
+        ys_nn = np.bincount(sec, weights=(Gs @ nn) / scale, minlength=S) / ks
+        lo_b, hi_b = axis_span(ts, ys_nn, log=True)
+        hi_lin = 1.05 * axis_span(ts, ys_nn, log=False)[1] + 1.0
+    else:                                          # cleaned without the best fit: the axes follow what is plotted
+        ally = np.concatenate([np.r_[D['y'], D['ys']] for D in data] + ([ref['ys']] if ref else []))
+        pos = ally[ally >= 1e-3 * t.min()]
+        lo_b, hi_b = min(t.min(), pos.min() if pos.size else t.min()), max(t.max(), ally.max())
+        hi_lin = 1.05 * max(t.max(), ally.max()) + 1.0
+    lo_log, hi_log = lo_b / 1.4, hi_b * 1.4
+    edge, top, top_lin = lo_log * 1.12, hi_log / 1.12, hi_lin * 0.985   # where values beyond the axes sit
+    allv = [v for D in data for v in (D['y'], D['ys'])] + ([ref['ys']] if ref else [])
+    clipped = any((v < edge).any() or (v > top).any() or (v > top_lin).any() for v in allv)
+    axes_line = (f'axes: ' + ('fixed by the targets and the best fit (NNLS; its central 96% of section means)' if fixed else
+                             'from the targets and the predictions shown (no best fit in the cleaning results)')
+                 + f': log {lo_log:.3g} to {hi_log:.3g}, linear 0 to {hi_lin:.3g}; values beyond sit on the edges')
+    text += '\n' + axes_line
+    print(axes_line)
     nrow = len(data)
     note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections; '
             + ('each section is one measurement, so a single subsection may stray further than the band.' if weighted else
-               'each subsection is counted as its own measurement (the inputs as given).'))
+               'each subsection is counted as its own measurement (the inputs as given).')
+            + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; values '
+               'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * note.count('\n')                      # room for a note of more than one line
     n_h = 4 + int(clipped) + int(ref is not None)           # the legend's entries (below): one row of up to four
     lc = n_h if n_h <= 4 else 3
     leg_extra = 0.22 * (-(-n_h // lc) - 1)
+    tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
     top_in, row_in, bot_in = 0.45, 5.6, 1.0 + extra + leg_extra   # figure layout, in inches
+    if tab:                                              # the settings table takes a little more room than a label
+        top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
     halo = [pe.withStroke(linewidth=2.6, foreground=SURFACE)]
     for i, D in enumerate(data):
@@ -222,23 +269,16 @@ def main():
             ax.grid(True, which='major', color=GRID, lw=0.5, zorder=0)
             ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=3)
-            edge = lo_log * 1.12
-            for vals, tgt, kw, kw_low in ((D['y'], t, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
-                                           dict(s=14, marker='v', c=SUBSECTION, alpha=0.7, zorder=1.5)),
-                                          (D['ys'], ts, dict(s=26, c=BLUE, alpha=0.85, edgecolors=SURFACE, linewidths=0.5, zorder=2.5),
-                                           dict(s=30, marker='v', c=BLUE, alpha=0.9, zorder=2.5))):
-                shown = (vals >= show_min) if log else np.ones(len(vals), bool)
-                ax.scatter(tgt[shown], vals[shown], **kw)
-                if log and (~shown).any():
-                    ax.scatter(tgt[~shown], np.full(int((~shown).sum()), edge), clip_on=False, linewidths=0, **kw_low)
+            lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
+            scatter_edges(ax, t, D['y'], lo_e, hi_e, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
+                          dict(s=14, c=SUBSECTION, alpha=0.7, zorder=1.5))
+            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=BLUE, alpha=0.85, edgecolors=SURFACE, linewidths=0.5,
+                          zorder=2.5), dict(s=30, c=BLUE, alpha=0.9, zorder=2.5))
             if ref is not None:                      # the reference's section means
-                shown = (ref['ys'] >= show_min) if log else np.ones(S, bool)
-                ax.scatter(ts[shown], ref['ys'][shown], s=24, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.5, zorder=2.6)
-                if log and (~shown).any():
-                    ax.scatter(ts[~shown], np.full(int((~shown).sum()), edge), s=28, marker='v', c=AQUA, clip_on=False,
-                               linewidths=0, zorder=2.6)
+                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=24, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.5,
+                              zorder=2.6), dict(s=28, c=AQUA, zorder=2.6))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
-            pts = [(s, ts[s], D['ys'][s] if (not log or D['ys'][s] >= show_min) else edge) for s in D['groups']]
+            pts = [(s, ts[s], min(max(D['ys'][s], lo_e), hi_e)) for s in D['groups']]
             frac = lambda v: ((np.log10(v) - np.log10(lim[0])) / (np.log10(lim[1]) - np.log10(lim[0])) if log
                               else (v - lim[0]) / (lim[1] - lim[0]))
             for n_, (s, xk, yk) in enumerate(sorted(pts, key=lambda p: (-round(frac(p[2]), 3), frac(p[1])))):   # leaders
@@ -251,8 +291,11 @@ def main():
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
         sub = (f'{mm}: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
                f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
-        axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
-                           va='bottom', color=INK, fontsize=11.5, fontweight='bold')
+        if tab:
+            draw_settings(axs[i][0], tab, 40)
+        else:
+            axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
+                               va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
     handles = [Line2D([], [], ls='none', marker='o', ms=5.5, mfc=BLUE, mec=SURFACE, alpha=0.9, label='section mean'),
@@ -264,7 +307,7 @@ def main():
                               label=f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
     if clipped:
         handles.append(Line2D([], [], ls='none', marker='v', ms=5, mfc=BLUE, mec=BLUE, alpha=0.8,
-                              label=f'below {show_min:.2g} (on the log axis\'s edge)'))
+                              label='beyond the axes (on their edges)'))
     h_in = fig.get_size_inches()[1]
     fig.suptitle(f'Slip-rate targets against the {mm}\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
