@@ -41,7 +41,7 @@ counts depend on run length.
 
 Reference: --reference RATES[:LABEL] marks another model's bin totals on every panel as aqua squares, beside each bin's
 own total, such as the model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds
-the solution folder); LABEL defaults to the solution folder's name. The table view adds its bin totals and their ratios
+the solution folder); LABEL defaults to the solution folder's name (shortened when long). The table view adds its bin totals and their ratios
 to the targets. Its rates on ruptures that cleaning removed are left out of its totals, and the table says how much.
 """
 import argparse

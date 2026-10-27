@@ -605,9 +605,19 @@ def load_rates(path):
         return np.asarray(z['mean'], np.float64)
 
 
+def short_name(name, width=40):
+    """A name for a figure's legend: as it is up to width characters, otherwise its start up to the first '-' and its
+    last four characters (NZSHM22_InversionSolution-QXV0b21hdGlvblRhc2s6MTAyNDc5ZEF0ZnQ= -> NZSHM22_InversionSolution-...ZnQ=)."""
+    if len(name) <= width:
+        return name
+    cut = name.find('-') + 1
+    return (name[:cut] if 0 < cut <= width - 7 else name[:width - 7]) + '...' + name[-4:]
+
+
 def reference_rates(spec, P):
     """The fit figures' --reference RATES[:LABEL]: another model's rates, marked on every panel, such as the model's own
-    OpenSHA solution (its solution/rates.csv; see load_rates). LABEL defaults to the solution folder's name. Returns
+    OpenSHA solution (its solution/rates.csv; see load_rates). LABEL defaults to the solution folder's name, shortened
+    when long (short_name; the tables keep the full path). Returns
     dict(m: its rates on the cleaned problem's ruptures, label, path, total: its total rate, removed and n_removed: its
     rate on the ruptures cleaning removed, and how many of them it puts rate on, which its predictions here leave out,
     note: a sentence saying so, or '')."""
@@ -622,8 +632,8 @@ def reference_rates(spec, P):
     if len(m_all) != n_raw:
         raise SystemExit(f'--reference {path}: {len(m_all)} ruptures; the cleaned problem has {n_raw} (another rupture set?)')
     if label is None:
-        label = (os.path.basename(os.path.dirname(os.path.dirname(full)))
-                 if full.endswith(os.path.join('solution', 'rates.csv')) else os.path.basename(full))
+        label = short_name(os.path.basename(os.path.dirname(os.path.dirname(full)))
+                           if full.endswith(os.path.join('solution', 'rates.csv')) else os.path.basename(full))
     gone = np.ones(n_raw, bool)
     gone[P['keep_cols']] = False
     removed, n_removed = float(m_all[gone].sum()), int(np.count_nonzero(m_all[gone]))

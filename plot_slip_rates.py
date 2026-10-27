@@ -34,7 +34,7 @@ mean prediction, their difference and their ratio.
 
 Reference: --reference RATES[:LABEL] marks another model's section means on every panel as aqua squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
-LABEL defaults to the solution folder's name. The table view adds its chi-squared and shares, and a column of its
+LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
 """
 import argparse
