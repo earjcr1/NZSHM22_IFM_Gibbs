@@ -252,7 +252,8 @@ def main():
                'predictions beyond them sit on the edges.' if fixed else ''))
     top_in, sub_in, panel_in, side_in = 0.45, 0.85, 5.0, 0.75     # figure layout, in inches
     fig_w = side_in + len(data) * (panel_in + 0.55) + 0.25
-    tab = settings_lines(settings, int((fig_w - side_in - 0.1) / 0.062500)) if settings else None
+    ax_left = side_in + 0.55 / 2                         # a square panel sits centred in its wider slot
+    tab = settings_lines(settings, int((fig_w - ax_left - 0.1) / 0.062500)) if settings else None
     if tab:                                              # the settings table takes a little more room than a label
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     note = textwrap.fill(note, int((fig_w - 0.5) * 17), break_on_hyphens=False)
