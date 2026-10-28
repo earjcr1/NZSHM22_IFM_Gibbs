@@ -1,0 +1,2 @@
+# Python bytecode caches: rebuilt automatically, so never tracked
+__pycache__/

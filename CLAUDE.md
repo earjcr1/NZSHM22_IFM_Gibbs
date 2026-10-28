@@ -39,10 +39,10 @@ moves, single box only) are set aside in cru_retired_scripts.zip; restore them o
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform
 from the slab floor 1e-10 up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty; the
 fraction on in each bin estimated under Beta(1, 1); spikeslab:A:TOP:a:b; --hyper-every defaults to 1 for it, so the
-fractions are redrawn every sweep). Its cross-check is --slab sqrt (command line only; not in the notebook): the
-same with an on rupture's rate uniform in sqrt(rate), density m^-1/2 instead of 1/m, so small rates cost more and fewer
-ruptures are on; it fits as the default does, so where the two agree a result does not depend on how the lower end of
-the rates is treated (at 211k, subsection event rates do depend on it: REPORT.md, "Fits and the prior's lower end").
+fractions are redrawn every sweep). --slab sqrt (command line only; not in the notebook) was its cross-check until the
+user dropped it at the end of October 2026 (the request behind it had been misphrased; do not propose it as a check):
+the same with an on rupture's rate uniform in sqrt(rate), density m^-1/2 instead of 1/m; it fitted as the default does,
+and at 211k it moved the subsection event rates (REPORT.md, "Fits and the prior's lower end").
 --prior linear (command line only) is optional: each rupture's rate uniform from 0 to its bin's target rate R_j,
 drawn in linear space by the exact truncated-normal Gibbs updates; its prior pushes the bin totals far up (REPORT.md,
 "Why not a linearly uniform prior"). --prior halfway (command line only) is optional too: each rate from a 50/50 mix
@@ -148,9 +148,8 @@ aside with it.
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
   one: the chi2 cap, --target cutoff, was removed in October 2026), with the balance term (DOWN_THE_MIDDLE,
-  --down-the-middle) on by default, and with the square-root slab
-  (--slab sqrt, command line only) as the cross-check: where the two agree, a result does not depend on how
-  the lower end of the rates is treated. Tests and smoke runs use these two only; the notebook runs the default alone,
+  --down-the-middle) on by default; no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
+  dropped at the end of October 2026). Tests and smoke runs use the default only; the notebook runs it alone,
   always with swap moves (--swap-cos 0.99), from the best fit and without stored draws. Sharing the fraction on by magnitude
   bin and tectonic domain or slip-rate section, pooled or not, was tried in October 2026 and changed no fit (REPORT.md).
   A spike-and-slab run counts as converged only when the number of ruptures on and every bin's fraction on have

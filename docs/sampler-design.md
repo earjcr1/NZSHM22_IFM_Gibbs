@@ -33,9 +33,9 @@ first given.
   magnitude bin, each rupture off (rate 0) or on, log-uniform from a slab floor at 1e-10 (also the diagnostic cutoff)
   up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty, with the fraction on in each
   bin estimated. The data set the sparsity, the prior puts no pressure on the bin totals, and the products barely
-  depend on the slab floor. Its cross-check is the square-root slab (`--slab sqrt`, run from the command line):
-  the same with an on rupture's rate uniform in √rate (density m^−1/2), which fits as the default does, so where the two
-  agree a result does not depend on how the lower end of the rates is treated. θ = 1 (`binbox-theta:1:0`: per-bin
+  depend on the slab floor. The square-root slab (`--slab sqrt`, run from the command line: the same with an on
+  rupture's rate uniform in √rate, density m^−1/2) was its cross-check until it was dropped at the end of October 2026;
+  it fits as the default does, and at 211,000 ruptures it moved the subsections' event rates. θ = 1 (`binbox-theta:1:0`: per-bin
   log-uniform boxes n_j / (θ ln 10) decades deep, which reached the same pressure-free answer by another route) was the
   alternative until October 2026 and is kept for comparison only: from about 2e5 ruptures its boxes are too deep for
   its sampler to cross.
