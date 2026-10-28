@@ -12,7 +12,7 @@ import sys
 import zipfile
 
 ZIP, ROOT = sys.argv[1], sys.argv[2]          # the bundle zip, and the folder it was unzipped into (…/cru_workflow)
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py']
 DOCS = ['CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md', 'docs/prelim_summary.txt']
 fails = []
 

@@ -306,6 +306,17 @@ So the conservative run's products were already right, and the very conservative
 
 The conservative run gives the same mean residuals and z to the digits shown (two sections fall on the other side of their targets), so more sampling cannot change these: they are the model's, its prior and its likelihood with the balance term. The posterior's slip-rate shortfall lies in the sections with targets under two uncertainties, the weakly constrained ones that spike-and-slab's sparsity leaves low; its MFD excess lies in the nine upper bins; and its paleo shortfall is smaller than the NZSHM22 solution's, which puts every bin above its target instead. How to share that tension is the modelling decision of "Balance between over- and underprediction".
 
+**Isolated sections.** How many other sections share at least one rupture with a section (from the slip-rate rows of G: 0 to 126, median 17) decides whether the posterior keeps events on it. Over all 507 sections that count and the share of draws in which no rupture crossing the section is on have a rank correlation of −0.81:
+
+| other sections sharing a rupture | sections | draws without an event: median | target inside the posterior 16–84% | posterior mean / target: median | target: median | share of the sections' summed residual |
+|---|---|---|---|---|---|---|
+| 0–5 | 117 | 92% | 3% | 0.03 | 0.60 | 49% |
+| 6–20 | 171 | 44% | 40% | 0.37 | 0.64 | 42% |
+| 21–50 | 98 | 11% | 51% | 0.51 | 0.80 | 18% |
+| 51–126 | 121 | 0% | 53% | 1.06 | 1.07 | −10% |
+
+The targets are alike across the groups, so connectivity, not the target's strength, sets this. An isolated section can be served only by its own few ruptures, each of which spike-and-slab's sparsity makes costly to switch on (about ln(1/π) ≈ 6 nats at this run's typical fraction on, more than a weak target repays), whereas a well-connected section collects events from multi-section ruptures that other data keep on. So the slip-rate shortfall above is that of the poorly connected sections: those sharing ruptures with at most 20 others carry 91% of the sections' summed residual (−144.5), the 117 most isolated half of it, and the 121 best connected are slightly overpredicted (mean residual +0.12). `plot_slip_sections.py` draws 30 sections across the range one by one (`spikeslab/fig_slip_sections.png` in the run folder): each section's posterior 16–84% and 2.5–97.5% ranges, median and mean against its target and the NZSHM22 solution's value, with the share of draws without an event and the connectivity below. In the seven most isolated of them the posterior has no event in 91–98% of the draws, where the NZSHM22 solution puts them at 0.30–1.07 times their targets.
+
 **Representatives** (`REPRESENTATIVES = 100`, from the 3,000 pooled kept draws). The weighted mean total rate is within 0.2% of the exact mean and the worst bin within 2.4% (tolerance 2%). 49% of subsection means are within 10%, and the subsections' 16%, 50% and 84% points are within 15% for 68–75% of subsections (tolerance 90%), as in every run so far (with 20 representatives: worst bin 6.9%, 27% of subsection means; with 40: 5.0% and 38%). Calibration set one weight to 0 (`rep_17`), so 99 representatives are in use, and the others range from 0.002 to 0.025 (equal weights would be 0.01): they must be used with their weights. One verdict misleads at this size: it asks every representative to lie inside the posterior's 1–99% ranges of χ² and total rate, which 100 fair draws do for either quantity only 13% of the time (0.98¹⁰⁰); here one total rate fell outside.
 
 **Cost.** 249 minutes for the three replicates (77–85 minutes each; 0.038 s per sweep for 16 chains on 4 threads, swap passes included) and 4 minutes for the checks, tables, representatives and figures: 4 h 14 min on the M2, against the 4.6 h estimated in TESTING.md. The run folder takes 8.0 GB, 2.3 GB of it the replicates' kept draws and 2.6 GB the pooled rate vectors with their copy of them.
@@ -663,6 +674,11 @@ python plot_slip_rates.py spikeslab/rate_vectors theta/rate_vectors --out fig_sl
 
 # paleo-rate targets against the model's predictions, log-log, with each prediction's posterior 16-84% range
 python plot_paleo_rates.py spikeslab/rate_vectors theta/rate_vectors --out fig_paleo_rates.png
+
+# chosen slip-rate sections one by one (30 by default, from the most isolated to the most connected: evenly spaced ranks
+# of the number of other sections sharing a rupture with them; --pick names them instead), each section's posterior
+# distribution, share of draws without an event and connectivity; names from the rupture set (command line only)
+python plot_slip_sections.py spikeslab/rate_vectors --ruptures NZSHM22_InversionSolution-211k/ruptures --reference NZSHM22_InversionSolution-211k/solution/rates.csv
 #   any fit figure with the model's own OpenSHA solution marked (its rates; LABEL defaults to the solution folder's name)
 python plot_slip_rates.py spikeslab/rate_vectors --reference NZSHM22_InversionSolution-211k/solution/rates.csv --out fig_slip_rates.png
 
