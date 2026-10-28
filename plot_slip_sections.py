@@ -24,7 +24,7 @@ Units: each section's measurement uncertainty, as in plot_slip_rates.py, on a lo
 
 Marks, per column: the target (a black line) and the band within one uncertainty of it (grey); the section's posterior
 16-84% range (a thick bar), 2.5-97.5% range (a thin line), median (a dark tick across the bar) and mean (a dot), in a
-colour unlike its neighbours' from SciVisColor's discrete_muted, outlined in grey as several are pale
+colour unlike its neighbours' from Tableau's Color Blind 10, outlined in grey as several are pale
 (cru_common.CATEGORICAL and neighbour_colours: the colours only tell neighbouring columns apart); and the reference
 model's value (a black square, beside it). Values below the axis, including 0, sit on its bottom
 edge as triangles, and a range that reaches the bottom continues to 0. Below, the share of draws in which no rupture
@@ -42,6 +42,12 @@ Writes FIGURE (default: fig_slip_sections.png next to the rate vectors) and, as 
 .txt: per column, the section, its rows and number of subsections, its connectivity (other sections, ruptures, share
 confined to it), the target, the posterior mean, the 2.5%, 16%, 50%, 84% and 97.5% points, the share of draws at 0, the
 reference's value, and the section's name.
+
+Second figure: FIGURE's name with _ruptures (default fig_slip_sections_ruptures.png), one panel per chosen section in
+the same order and colours, counting the ruptures crossing the section by their posterior mean rates (log10, bins a
+quarter of a decade wide, counts on a log scale), with the total of those means, the section's event rate, as a black
+line, and how many of the largest make up 90% of it. Its table view (.txt) gives per section the number of ruptures,
+the total, the largest, the 5%, 50% and 95% points of the log10 means, and the counts per bin.
 """
 import argparse
 import json
@@ -95,7 +101,7 @@ def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
 
 def connectivity(G, rows, sec, S):
     """Per section: how many other sections share at least one rupture with it, how many ruptures cross it, and the
-    share of those that cross no other section."""
+    share of those that cross no other section; and the section x rupture incidence (CSR, the ruptures crossing each)."""
     agg = sp.csr_matrix((np.ones(len(rows)), (sec, np.arange(len(rows)))), shape=(S, len(rows)))
     B = ((agg @ (G[rows] != 0).astype(np.float64)) > 0).astype(np.float64).tocsr()   # section x rupture: crosses it
     C = (B @ B.T).tocsr()
@@ -103,7 +109,7 @@ def connectivity(G, rows, sec, S):
     C.eliminate_zeros()
     n_r = np.asarray(B.sum(1)).ravel()
     alone = B @ (np.asarray(B.sum(0)).ravel() == 1).astype(np.float64)
-    return np.diff(C.indptr), n_r, alone / np.maximum(n_r, 1)
+    return np.diff(C.indptr), n_r, alone / np.maximum(n_r, 1), B
 
 
 def section_names(ruptures, orig, sec, S):
@@ -164,7 +170,7 @@ def main():
     S = int(sec.max()) + 1
     ks = np.bincount(sec, minlength=S)
     ts = np.bincount(sec, weights=t, minlength=S) / ks
-    deg, n_r, alone = connectivity(G, rows, sec, S)
+    deg, n_r, alone, B = connectivity(G, rows, sec, S)
     if a.pick:
         pick = np.array([int(v) for v in a.pick.split(',') if v.strip()])
         if pick.size == 0 or pick.min() < 0 or pick.max() >= S:
@@ -266,15 +272,15 @@ def main():
     fig_w = max(9.0, 0.34 * N + 2.0)
     note = textwrap.fill(note, int((fig_w - 0.5) * 17), break_on_hyphens=False)
     tab = settings_lines(settings, int((fig_w - 1.4) / 0.062500)) if settings else None
-    thin = [pe.Stroke(linewidth=1.8, foreground=MUTED), pe.Normal()]     # outlines: the pale colours stand out
-    thick = [pe.Stroke(linewidth=5.8, foreground=MUTED), pe.Normal()]
-    few = CATEGORICAL[4], CATEGORICAL[6], CATEGORICAL[2]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=MUTED, mew=0.7) for c in few),
+    thin = [pe.Stroke(linewidth=1.3, foreground=MUTED), pe.Normal()]     # outlines: the pale colours stand out
+    thick = [pe.Stroke(linewidth=4.6, foreground=MUTED), pe.Normal()]
+    few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.9, mfc=c, mec=MUTED, mew=0.45) for c in few),
                 'posterior mean' if q is not None else 'value')]
     if q is not None:
-        handles += [(tuple(Line2D([], [], color=c, lw=5.0, solid_capstyle='butt', path_effects=thick) for c in few),
+        handles += [(tuple(Line2D([], [], color=c, lw=4.2, solid_capstyle='butt', path_effects=thick) for c in few),
                      'posterior 16–84% (dark tick: median)'),
-                    (tuple(Line2D([], [], color=c, lw=1.0, path_effects=thin) for c in few), 'posterior 2.5–97.5%')]
+                    (tuple(Line2D([], [], color=c, lw=0.9, path_effects=thin) for c in few), 'posterior 2.5–97.5%')]
     handles += [(Line2D([], [], color=INK, lw=1.0), 'target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
@@ -317,12 +323,12 @@ def main():
                       linewidths=0.4, zorder=3.6), dict(s=22, c=REF, zorder=3.6))
     if q is not None:
         clip = lambda v: np.clip(v, lo, hi)
-        ax.vlines(x, clip(q[0]), clip(q[4]), colors=col, lw=1.0, zorder=2.2, path_effects=thin)
-        ax.vlines(x, clip(q[1]), clip(q[3]), colors=col, lw=5.0, zorder=2.3, path_effects=thick)
+        ax.vlines(x, clip(q[0]), clip(q[4]), colors=col, lw=0.9, zorder=2.2, path_effects=thin)
+        ax.vlines(x, clip(q[1]), clip(q[3]), colors=col, lw=4.2, zorder=2.3, path_effects=thick)
         on = q[2] > lo                                   # the median, as a dark tick across the bar
         ax.hlines(q[2][on], x[on] - 0.09, x[on] + 0.09, colors=INK, lw=1.0, zorder=2.4)
-    scatter_edges(ax, x, ym, edge, top, dict(s=30, c=col, edgecolors=MUTED, linewidths=0.7, zorder=3.5),
-                  dict(s=30, c=col, edgecolors=MUTED, linewidths=0.5, zorder=3.5))
+    scatter_edges(ax, x, ym, edge, top, dict(s=24, c=col, edgecolors=MUTED, linewidths=0.45, zorder=3.5),
+                  dict(s=24, c=col, edgecolors=MUTED, linewidths=0.4, zorder=3.5))
     ax.set_ylabel('section mean prediction\n(in units of its measurement uncertainty)', color=INK2, fontsize=9)
     if q is not None:                                    # how often the section has no event at all
         a0.bar(x, 100 * p0, width=0.6, color=BARS, lw=0, zorder=2)
@@ -366,6 +372,104 @@ def main():
     with open(os.path.splitext(out)[0] + '.txt', 'w') as f:
         f.write(text + '\n')
     print(f'wrote {out} and {os.path.splitext(out)[0]}.txt')
+
+    # the second figure: the ruptures crossing each chosen section, counted by their posterior mean rates
+    m = m_all[keep_c]
+    rates = [m[B.indices[B.indptr[s]:B.indptr[s + 1]]] for s in pick]
+    pos = np.concatenate([r[r > 0] for r in rates] + [[r.sum() for r in rates if r.sum() > 0]])   # with the totals
+    h_lo, h_hi = np.floor(2 * np.log10(pos.min())) / 2, np.ceil(2 * np.log10(pos.max())) / 2
+    bins = np.arange(h_lo, h_hi + 0.125, 0.25)           # quarter decades of log10 rate
+    stats, counts = [], []
+    for r in rates:
+        srt = np.sort(r)[::-1]
+        tot = float(srt.sum())
+        counts.append(np.histogram(np.log10(r[r > 0]), bins=bins)[0])
+        stats.append(dict(n=len(r), zero=int(np.sum(r <= 0)), tot=tot, top=float(srt[0]),
+                          n90=int(np.searchsorted(np.cumsum(srt), 0.9 * tot) + 1) if tot > 0 else 0,
+                          q=np.percentile(np.log10(r[r > 0]), [5, 50, 95]) if (r > 0).any() else np.full(3, np.nan)))
+    out2 = os.path.splitext(out)[0] + '_ruptures.png'
+    lines2 = [f'the ruptures crossing each section of {os.path.basename(out)}, counted by their posterior mean rates ({label}, '
+              f'{path}): log10 bins 0.25 wide from {h_lo:g} to {h_hi:g}; "total" is the sum of those means, the section\'s '
+              'event rate, and "90% from" how many of the largest make up 90% of it',
+              f'{"column":>6s} {"section":>7s} {"ruptures":>8s} {"at 0":>5s} {"total":>10s} {"90% from":>8s} {"largest":>9s} '
+              f'{"log10 rate: 5%":>14s} {"50%":>6s} {"95%":>6s}  name']
+    for j, s in enumerate(pick):
+        st = stats[j]
+        lines2.append(f'{j:6d} {s:7d} {st["n"]:8d} {st["zero"]:5d} {st["tot"]:10.4g} {st["n90"]:8d} {st["top"]:9.3g} '
+                      f'{st["q"][0]:14.2f} {st["q"][1]:6.2f} {st["q"][2]:6.2f}  {names[s]}')
+    lines2 += ['', 'ruptures per bin (each column a bin, by its lower edge in log10 rate per year)',
+               f'{"column":>6s} ' + ' '.join(f'{e:6.2f}' for e in bins[:-1])]
+    lines2 += [f'{j:6d} ' + ' '.join(f'{c:6d}' for c in counts[j]) for j in range(N)]
+    ncol_h = 5
+    nrow_h = -(-N // ncol_h)
+    fw, cell_h = 13.0, 1.8
+    set_in = 0.15 * 2 * len(tab) if tab else 0.0         # the settings table, two lines per group
+    top_h = 0.55 + set_in + 0.3 + 0.45                   # title, settings, subtitle, the first row's panel titles
+    bot_h = 1.05
+    H2 = top_h + nrow_h * cell_h + bot_h
+    fig2, axh = plt.subplots(nrow_h, ncol_h, figsize=(fw, H2), sharex=True, squeeze=False, facecolor=SURFACE)
+    xf = FuncFormatter(lambda v, _: f'{v:g}'.replace('-', '−'))
+    yf = FuncFormatter(lambda v, _: f'{v:,.0f}' if v >= 1 else '')      # counts, as plain numbers
+    for k in range(nrow_h * ncol_h):
+        a_ = axh[k // ncol_h][k % ncol_h]
+        if k >= N:
+            a_.set_visible(False)
+            continue
+        st = stats[k]
+        a_.set_facecolor(SURFACE)
+        for s_ in ('top', 'right'):
+            a_.spines[s_].set_visible(False)
+        for s_ in ('left', 'bottom'):
+            a_.spines[s_].set_color(AXIS)
+            a_.spines[s_].set_linewidth(0.5)
+        a_.tick_params(colors=AXIS, labelcolor=INK2, labelsize=7.5, which='both', length=2.5, width=0.5)
+        a_.grid(True, which='major', color=GRID, lw=0.5, zorder=0)
+        a_.bar(bins[:-1], counts[k], width=0.25, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2)
+        a_.set_yscale('log', nonpositive='clip')
+        a_.set_ylim(0.7, max(3.0, counts[k].max() * 3.0))
+        a_.yaxis.set_major_locator(LogLocator(base=10))
+        a_.yaxis.set_major_formatter(yf)
+        a_.yaxis.set_minor_formatter(NullFormatter())
+        if st['tot'] > 0:                                # the total of the means: the section's event rate
+            a_.axvline(np.log10(st['tot']), color=INK, lw=1.0, zorder=3)
+        a_.set_xlim(h_lo, h_hi)
+        a_.xaxis.set_major_formatter(xf)
+        a_.set_title(f'{labels[k]}\n{st["n"]:,} {"rupture" if st["n"] == 1 else "ruptures"}, '
+                     f'{st["n90"]:,} {"carries" if st["n90"] == 1 else "carry"} 90%'
+                     + (f'; {st["zero"]} at 0' if st['zero'] else ''), loc='left', fontsize=7.5, color=INK, pad=3,
+                     linespacing=1.3)
+        if k % ncol_h == 0:
+            a_.set_ylabel('ruptures', color=INK2, fontsize=8)
+        if k + ncol_h >= N:                              # the lowest panel of its column
+            a_.set_xlabel('log10 posterior mean rate (per year)', color=INK2, fontsize=8)
+            a_.tick_params(labelbottom=True)
+    fig2.text(0.035, 1 - 0.2 / H2, 'Rupture rates of each section, from isolated to well connected' if not a.pick else
+              'Rupture rates of each section', ha='left', va='top', color=INK, fontsize=13, fontweight='bold')
+    y_in = H2 - 0.55
+    for nm, vl in (tab or []):                           # the run's settings, as on the other figures
+        fig2.text(0.8 / fw, y_in / H2, nm, ha='left', va='top', fontsize=7.5, family='monospace', color=MUTED)
+        fig2.text(0.8 / fw, (y_in - 0.15) / H2, vl, ha='left', va='top', fontsize=7.5, family='monospace', color=INK)
+        y_in -= 0.3
+    fig2.text(0.8 / fw, (y_in - 0.05) / H2, f'The ruptures crossing each of the sections of {os.path.basename(out)}, counted '
+              'by their posterior mean rates; panels in that figure\'s order and colours', ha='left', va='top', fontsize=8.5,
+              color=INK2)
+    note2 = textwrap.fill('Counts on a log scale, in bins a quarter of a decade wide. A rupture\'s posterior mean rate is its '
+                          'rate when on times the share of draws in which it is on. The black line is the total of the '
+                          'section\'s ruptures\' means, its event rate; "N carry 90%" counts the largest rates that make up '
+                          '90% of it.', int((fw - 0.5) * 17), break_on_hyphens=False)
+    leg2 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), 'ruptures crossing the section'),
+            (Line2D([], [], color=INK, lw=1.0), 'total of their posterior means: the section\'s event rate')]
+    note_h = 0.12 + 0.15 * (note2.count('\n') + 1)
+    fig2.legend(handles=[h for h, _ in leg2], labels=[l for _, l in leg2], loc='lower center', ncol=2, frameon=False,
+                fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, note_h / H2), handletextpad=0.5, columnspacing=2.0,
+                handlelength=2.6, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+    fig2.text(0.5, 0.08 / H2, note2, ha='center', va='bottom', color=MUTED, fontsize=7.5, linespacing=1.4)
+    fig2.subplots_adjust(left=0.8 / fw, right=1 - 0.2 / fw, top=1 - top_h / H2, bottom=bot_h / H2,
+                         hspace=0.45, wspace=0.18)                # room for each panel's two-line title
+    fig2.savefig(out2, dpi=150, facecolor=SURFACE)
+    with open(os.path.splitext(out2)[0] + '.txt', 'w') as f:
+        f.write('\n'.join(lines2) + '\n')
+    print(f'wrote {out2} and {os.path.splitext(out2)[0]}.txt')
 
 
 if __name__ == '__main__':

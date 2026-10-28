@@ -17,7 +17,7 @@ default it is the rate vectors' folder.
 Sections: a fault section's slip rate is one measurement, copied in the inputs to each of its subsections. The cleaned
 problem records each slip-rate row's section (preliminaries.py --slip-sections; for problems cleaned before that, runs
 of copies are detected here, for display only). Each section's mean prediction (the mean over its subsections) is
-plotted against its target, with its subsections behind it in grey.
+plotted against its target; the table view also lists every subsection.
 
 Units: the input rows are already divided by their uncertainties, which the inputs do not give, so targets and
 predictions are in units of each section's measurement uncertainty (any 1/sqrt(k) weighting applied when cleaning is
@@ -28,11 +28,11 @@ band reaches the bottom wherever the target is below 1: a prediction of 0 is the
 
 Axes: fixed for the problem by its targets and its best fit (all of the targets, and the central 96% of the best fit's
 section means, from prelim_results.npz next to --problem), so that every model's figure for one problem has the same
-axes; without a best fit, they follow what is plotted. Marks: a dot per section mean and per subsection (grey); the
+axes; without a best fit, they follow what is plotted. Marks: a dot per section mean; the
 posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it, below on
 the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as triangles; the
 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets (default 3). Each
-section's dot and bar share a colour, cycling along the targets through the seven of SciVisColor's discrete_muted
+section's dot and bar share a colour, cycling along the targets through the ten of Tableau's Color Blind 10
 (cru_common.CATEGORICAL and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
 never share one; the colours only tell neighbours apart,
 and a section keeps its colour in every model's figure. Sections that share a target (the inputs' slip rates are often
@@ -57,7 +57,6 @@ from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, ne
                         run_predictions, run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-SUBSECTION = '#a9a8a1'                           # context marks: the subsections behind each section mean
 REF = INK                                        # the reference model's marks: black, apart from every series colour
 
 
@@ -236,13 +235,13 @@ def main():
         lo_b, hi_b = axis_span(ts, ys_nn, log=True)
         hi_lin = 1.05 * axis_span(ts, ys_nn, log=False)[1] + 1.0
     else:                                          # cleaned without the best fit: the axes follow what is plotted
-        ally = np.concatenate([np.r_[D['y'], D['ys']] for D in data] + ([ref['ys']] if ref else []))
+        ally = np.concatenate([D['ys'] for D in data] + ([ref['ys']] if ref else []))
         pos = ally[ally >= 1e-3 * t.min()]
         lo_b, hi_b = min(t.min(), pos.min() if pos.size else t.min()), max(t.max(), ally.max())
         hi_lin = 1.05 * max(t.max(), ally.max()) + 1.0
     lo_log, hi_log = lo_b / 1.4, hi_b * 1.4
     edge, top, top_lin = lo_log * 1.12, hi_log / 1.12, hi_lin * 0.985   # where values beyond the axes sit
-    allv = [v for D in data for v in (D['y'], D['ys'])] + ([ref['ys']] if ref else [])
+    allv = [D['ys'] for D in data] + ([ref['ys']] if ref else [])
     clipped = any((v < edge).any() or (v > top).any() or (v > top_lin).any() for v in allv)
     axes_line = (f'axes: ' + ('fixed by the targets and the best fit (NNLS; its central 96% of section means)' if fixed else
                              'from the targets and the predictions shown (no best fit in the cleaning results)')
@@ -251,8 +250,9 @@ def main():
     print(axes_line)
     nrow = len(data)
     bars = any(D['q'] is not None for D in data)
-    note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections; '
-            + ('each section is one measurement, so a single subsection may stray further than the band.' if weighted else
+    note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections, each section\'s '
+            'prediction the mean over its subsections; '
+            + ('each section is one measurement.' if weighted else
                'each subsection is counted as its own measurement (the inputs as given).')
             + ' Colours only tell neighbouring sections apart; sections that share a target are stacked at it.'
             + (' A bar that reaches an axis continues beyond it (on the log scale, below possibly to 0).' if bars else '')
@@ -260,7 +260,7 @@ def main():
                'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * note.count('\n')                      # room for a note of more than one line
-    n_h = 4 + int(bars) + int(clipped) + int(ref is not None)   # the legend's entries (below): one row of up to four
+    n_h = 3 + int(bars) + int(clipped) + int(ref is not None)   # the legend's entries (below): one row of up to four
     lc = n_h if n_h <= 4 else 3
     leg_extra = 0.22 * (-(-n_h // lc) - 1)
     tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
@@ -269,7 +269,7 @@ def main():
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
     halo = [pe.withStroke(linewidth=2.6, foreground=SURFACE)]
-    outline = [pe.Stroke(linewidth=2.0, foreground=MUTED), pe.Normal()]   # the pale colours' bars stand out from the surface
+    outline = [pe.Stroke(linewidth=1.4, foreground=MUTED), pe.Normal()]   # the pale colours' bars stand out from the surface
     for i, D in enumerate(data):
         for j, ax in enumerate(axs[i]):
             log = j == 1
@@ -300,17 +300,15 @@ def main():
             ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=3)
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
-            scatter_edges(ax, t, D['y'], lo_e, hi_e, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
-                          dict(s=14, c=SUBSECTION, alpha=0.7, zorder=1.5))
             if ref is not None:                      # the reference's section means, in front of the posterior's
                 scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', c=REF, edgecolors=SURFACE,
                               linewidths=0.4, zorder=3.4), dict(s=22, c=REF, zorder=3.4))
             if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
-                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.2,
+                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.0,
                           zorder=2.2, path_effects=outline)
-            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=col, edgecolors=MUTED, linewidths=0.6, zorder=2.5),
-                          dict(s=30, c=col, edgecolors=MUTED, linewidths=0.5, zorder=2.5))
+            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=20, c=col, edgecolors=MUTED, linewidths=0.4, zorder=2.5),
+                          dict(s=24, c=col, edgecolors=MUTED, linewidths=0.4, zorder=2.5))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
             pts = [(s, ts[s], min(max(D['ys'][s], lo_e), hi_e)) for s in D['groups']]
             frac = lambda v: ((np.log10(v) - np.log10(lim[0])) / (np.log10(lim[1]) - np.log10(lim[0])) if log
@@ -332,13 +330,12 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = CATEGORICAL[4], CATEGORICAL[6], CATEGORICAL[2]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=MUTED, mew=0.6) for c in few), 'section mean')]
+    few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=MUTED, mew=0.4) for c in few), 'section mean')]
     if bars:
-        handles.append((tuple(Line2D([], [], color=c, lw=1.2, path_effects=outline) for c in few),
+        handles.append((tuple(Line2D([], [], color=c, lw=1.0, path_effects=outline) for c in few),
                         'posterior 16–84% of the section mean'))
-    handles += [(Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7), 'subsection'),
-                (Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
+    handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc=REF, mec=SURFACE),

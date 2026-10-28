@@ -25,11 +25,12 @@ plot_slip_rates.py (slip-rate targets against the mean model's predictions, line
 each section mean's posterior 16-84% range), plot_paleo_rates.py (paleo-rate targets against the model's predictions,
 log-log, with each prediction's posterior 16-84% range; the three ranges come from the predictions the runs next to
 the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions; the slip-rate sections and paleo rows are
-coloured from cru_common.CATEGORICAL (SciVisColor's discrete_muted, outlined in grey as several are pale), cycled
+coloured from cru_common.CATEGORICAL (Tableau's Color Blind 10, outlined in grey as several are pale), cycled
 along the targets so that neighbours differ, neighbour_colours, and the reference model is black), plot_slip_sections.py (chosen slip-rate sections' posterior predictions, one column
 each, by default 30 from the most isolated to the most connected by the number of other sections sharing a rupture
-with them, with each one's share of draws without an event; names from the rupture set's fault_sections.geojson;
-command line only, not in the notebook), randomized_nnls.py (best fits to the data plus fresh draws of their
+with them, with each one's share of draws without an event, and a second figure counting each one's ruptures by
+posterior mean rate; names from the rupture set's fault_sections.geojson; command line only, not in the notebook),
+randomized_nnls.py (best fits to the data plus fresh draws of their
 stated noise, in place of the sampler when the notebook's RANDOMIZED_NNLS is a number of fits: their spread of slip-rate,
 MFD and paleo predictions in figures, in RUN_DIR/rnnls/; the best fit's sampling distribution, not a posterior).
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference
@@ -114,7 +115,7 @@ aside with it.
   removed in October 2026).
 - Slip-rate units: the input rows are divided by their uncertainties, which the inputs do not give, so plot_slip_rates.py
   shows targets and predictions in units of each section's measurement uncertainty (undoing the sqrt(k)), section means
-  against their targets with the subsections behind them (the 1:1 line and the one-uncertainty band are exact; mm/yr
+  against their targets (the 1:1 line and the one-uncertainty band are exact; mm/yr
   would need the uncertainties). plot_paleo_rates.py shows the paleo rows (every row in neither the slip-rate nor the
   bin group whose target is positive, unless --paleo-block names them) the same way, log-log: there the units only move a point along the 1:1
   line, so its distance from the line is the ratio of prediction to target.

@@ -726,13 +726,14 @@ def run_predictions(folder, rows, n_rows, scale, combine=None):
     return (np.concatenate(Y), used) if Y else (None, [])
 
 
-# The colours that tell neighbouring marks apart: SciVisColor's discrete_muted (the colormaps package's SciViz
-# collection, cmaps.discrete_muted: seven colours, each listed twice there), in the cyclic order that best separates
-# neighbours on the light surface, every colour against the next and the last against the first: worst
-# colour-vision-deficient Delta E 12.9 (OKLab x100; the target is 8), worst normal-vision 16.8 (the floor is 15). In the
-# palette's own order the green and the yellow meet (6.6 and 11.4). Five of the seven are below 3:1 contrast on the
-# surface (the yellow 1.1:1) and three nearly grey, so the figures outline their marks and keep their table views.
-CATEGORICAL = ('#c1ccb8', '#878272', '#7ebcc3', '#fff093', '#db9e59', '#aae6aa', '#5b91cc')
+# The colours that tell neighbouring marks apart: Tableau's Color Blind 10 (tableau:tab10_colorblind in the cmap
+# catalog; nearly matplotlib's tableau-colorblind10 style), in the cyclic order that best separates neighbours on the
+# light surface, every colour against the next and the last against the first: worst colour-vision-deficient Delta E
+# 20.2 (OKLab x100; the target is 8), worst normal-vision 22.4 (the floor is 15); in the palette's own order 10.8 and
+# 11.5. Six of the ten are below 3:1 contrast on the surface (the palest grey 1.5:1), so the figures outline their
+# marks and keep their table views.
+CATEGORICAL = ('#006ba4', '#ff8000', '#5f9ed1', '#ffbc79', '#898989', '#cfcfcf', '#c85200', '#a2c8ec', '#595959',
+               '#ababab')
 
 
 def neighbour_colours(x):
