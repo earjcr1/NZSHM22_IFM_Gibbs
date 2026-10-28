@@ -6,10 +6,13 @@
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
 .npz). The mean model is their `mean` column, each rupture's posterior mean rate; since predictions are linear in the
-rates, its prediction for a row is also the posterior mean of that row's prediction. VECTORS may also be a single
-model's, such as the best fit that preliminaries.py writes (nnls_vectors.npz); when every result set is one, the labels
-speak of the model rather than the mean model. Several result sets give one row of panels each (to compare priors,
-say). LABEL names a result set; by default it is the rate vectors' folder.
+rates, its prediction for a row is also the posterior mean of that row's prediction. When the runs that made the rate
+vectors sit next to them (<prior folder>/main_rep0.npz, main_rep1.npz, ..., as the notebook writes them), the
+predictions they recorded for every draw give each section mean's posterior spread, drawn as a bar from its 16% to
+its 84% point. VECTORS may also be a single model's, such as the best fit that preliminaries.py writes
+(nnls_vectors.npz), which has no spread; when every result set is one, the labels speak of the model rather than the
+mean model. Several result sets give one row of panels each (to compare priors, say). LABEL names a result set; by
+default it is the rate vectors' folder.
 
 Sections: a fault section's slip rate is one measurement, copied in the inputs to each of its subsections. The cleaned
 problem records each slip-rate row's section (preliminaries.py --slip-sections; for problems cleaned before that, runs
@@ -26,11 +29,13 @@ band reaches the bottom wherever the target is below 1: a prediction of 0 is the
 Axes: fixed for the problem by its targets and its best fit (all of the targets, and the central 96% of the best fit's
 section means, from prelim_results.npz next to --problem), so that every model's figure for one problem has the same
 axes; without a best fit, they follow what is plotted. Marks: a dot per section mean (blue) and per subsection (grey);
-values beyond the axes (on the log scale, including 0) on their edges as triangles; the 1:1 line; the +-1 band; and the original rows of the --label sections furthest from
-their targets (default 3). Writes FIGURE (default: fig_slip_rates.png next to the first rate vectors) and, as its table
-view, the same name with .txt: the mean model's chi-squared over the slip-rate rows as the likelihood weights them, the
-share of sections (and of subsections) within one and two uncertainties, and per section and per row the target, the
-mean prediction, their difference and their ratio.
+the posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it,
+below on the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as
+triangles; the 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets
+(default 3). Writes FIGURE (default: fig_slip_rates.png next to the first rate vectors) and, as its table view, the
+same name with .txt: the mean model's chi-squared over the slip-rate rows as the likelihood weights them, the share of
+sections (and of subsections) within one and two uncertainties, per section the target, the mean prediction, its
+posterior 16%, 50% and 84% points, their difference and their ratio, and per row the same without the posterior points.
 
 Reference: --reference RATES[:LABEL] marks another model's section means on every panel as aqua squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
@@ -43,7 +48,8 @@ import textwrap
 
 import numpy as np
 
-from cru_common import axis_span, best_fit_rates, load_problem, reference_rates, run_settings, settings_lines, slip_sections
+from cru_common import (axis_span, best_fit_rates, load_problem, reference_rates, run_predictions, run_settings,
+                        settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE = '#2a78d6'                                 # categorical slot 1 of the reference palette
@@ -115,6 +121,8 @@ def main():
     ks = np.bincount(sec, minlength=S)
     weighted = mode != 'none'                            # one measurement per section (rows divided by sqrt(k))
     ts = np.bincount(sec, weights=t, minlength=S) / ks   # each section's target (its copies share it)
+    avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
+    avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
     mem = [np.flatnonzero(sec == s) for s in range(S)]
     n_distinct = len(np.unique(np.round(ts, 9)))
     how = ('one measurement per section (each section\'s rows divided by sqrt(k) in the likelihood)' if weighted else
@@ -136,11 +144,15 @@ def main():
         with np.errstate(divide='ignore', invalid='ignore'):
             ratio_s = np.where(ts > 0, ys / ts, np.nan)
             ratio = np.where(t > 0, y / t, np.nan)
-        data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s,
+        model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
+        Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, P['G'].shape[0], scale, avg)
+        q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None   # each section mean's posterior points
+        data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s, q=q, used=used,
+                         ndraws=0 if Y is None else len(Y),
                          chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(rs) <= 1)), in2=float(np.mean(np.abs(rs) <= 2)),
                          in1r=float(np.mean(np.abs(r) <= 1)), in2r=float(np.mean(np.abs(r) <= 2)),
-                         groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]),
-                         model=str(z['model']) if 'model' in z.files else ''))
+                         groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]), model=model))
+        del Y
     mm = 'model' if all(D['model'] for D in data) else 'mean model'   # single models (a best fit): no mean
     ref = None
     if a.reference:                                      # another model's predictions, marked on every panel
@@ -178,14 +190,19 @@ def main():
     lines = list(head)
     for D in data:
         q = np.nanpercentile(D['ratio_s'], [5, 50, 95])
+        spread = (f'posterior spread of each section mean from the {D["ndraws"]} draws recorded by {", ".join(D["used"])}'
+                  if D['q'] is not None else f'{D["model"]}: a single model, so no posterior spread' if D['model']
+                  else 'no runs found next to the rate vectors, so no posterior spread')
         lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them, '
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
-                  f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); furthest from their targets: '
+                  f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); {spread}; furthest from their targets: '
                   + '; '.join(f'{rows_name(s)} ({D["rs"][s]:+.2f})' for s in D['groups']),
-                  f'{"section":>7s} {"rows":>14s} {"k":>3s} {"target":>9s} {"mean prediction":>16s} {"difference":>11s} {"ratio":>7s}{rc}']
+                  f'{"section":>7s} {"rows":>14s} {"k":>3s} {"target":>9s} {"mean prediction":>16s} {"16%":>9s} {"50%":>9s} '
+                  f'{"84%":>9s} {"difference":>11s} {"ratio":>7s}{rc}']
         for s in range(S):
-            lines.append(f'{s:7d} {rows_span(s):>14s} {ks[s]:3d} {ts[s]:9.4g} {D["ys"][s]:16.4g} '
+            qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, s]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
+            lines.append(f'{s:7d} {rows_span(s):>14s} {ks[s]:3d} {ts[s]:9.4g} {D["ys"][s]:16.4g} {qs} '
                          f'{D["rs"][s]:+11.3f} {D["ratio_s"][s]:7.3f}' + (f' {ref["ys"][s]:10.4g}' if ref else ''))
         lines.append(f'{"row":>7s} {"section":>14s} {"":>3s} {"target":>9s} {"mean prediction":>16s} {"difference":>11s} {"ratio":>7s}{rc}')
         for k in np.argsort(orig, kind='stable'):
@@ -224,14 +241,16 @@ def main():
     text += '\n' + axes_line
     print(axes_line)
     nrow = len(data)
+    bars = any(D['q'] is not None for D in data)
     note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections; '
             + ('each section is one measurement, so a single subsection may stray further than the band.' if weighted else
                'each subsection is counted as its own measurement (the inputs as given).')
+            + (' A bar that reaches an axis continues beyond it (on the log scale, below possibly to 0).' if bars else '')
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; values '
                'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * note.count('\n')                      # room for a note of more than one line
-    n_h = 4 + int(clipped) + int(ref is not None)           # the legend's entries (below): one row of up to four
+    n_h = 4 + int(bars) + int(clipped) + int(ref is not None)   # the legend's entries (below): one row of up to four
     lc = n_h if n_h <= 4 else 3
     leg_extra = 0.22 * (-(-n_h // lc) - 1)
     tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
@@ -272,6 +291,10 @@ def main():
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
             scatter_edges(ax, t, D['y'], lo_e, hi_e, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
                           dict(s=14, c=SUBSECTION, alpha=0.7, zorder=1.5))
+            if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
+                kb = ts > 0 if log else np.ones(S, bool)
+                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), color=BLUE, alpha=0.35,
+                          lw=1.3, zorder=2.2)
             scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=BLUE, alpha=0.85, edgecolors=SURFACE, linewidths=0.5,
                           zorder=2.5), dict(s=30, c=BLUE, alpha=0.9, zorder=2.5))
             if ref is not None:                      # the reference's section means
@@ -298,10 +321,12 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    handles = [Line2D([], [], ls='none', marker='o', ms=5.5, mfc=BLUE, mec=SURFACE, alpha=0.9, label='section mean'),
-               Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7, label='subsection'),
-               Line2D([], [], color=INK, lw=1.0, label='prediction = target'),
-               Patch(facecolor=BAND, edgecolor='none', label='within one uncertainty of the target')]
+    handles = [Line2D([], [], ls='none', marker='o', ms=5.5, mfc=BLUE, mec=SURFACE, alpha=0.9, label='section mean')]
+    if bars:
+        handles.append(Line2D([], [], color=BLUE, alpha=0.35, lw=1.3, label='posterior 16–84% of the section mean'))
+    handles += [Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7, label='subsection'),
+                Line2D([], [], color=INK, lw=1.0, label='prediction = target'),
+                Patch(facecolor=BAND, edgecolor='none', label='within one uncertainty of the target')]
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=5, mfc=AQUA, mec=SURFACE,
                               label=f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))

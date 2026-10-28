@@ -44,14 +44,13 @@ LABEL defaults to the solution folder's name (shortened when long). The table vi
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
 """
 import argparse
-import glob
 import os
-import re
 import textwrap
 
 import numpy as np
 
-from cru_common import axis_span, best_fit_rates, load_problem, reference_rates, run_settings, settings_lines
+from cru_common import (axis_span, best_fit_rates, load_problem, reference_rates, run_predictions, run_settings,
+                        settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
@@ -87,24 +86,6 @@ def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
             ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **kw_edge)
-
-
-def run_predictions(folder, rows, n_rows, scale):
-    """The predictions recorded for every draw by the runs next to the rate vectors (main_rep<k>.npz), for the given
-    rows, pooled over runs and chains, in units of each row's uncertainty; (None, []) if there are none."""
-    Y, used = [], []
-    for f in sorted(glob.glob(os.path.join(folder, 'main_rep*.npz'))):
-        if not re.fullmatch(r'main_rep\d+\.npz', os.path.basename(f)):
-            continue                                     # running summaries and the like
-        with np.load(f) as z:
-            if 'y' not in z.files:
-                continue
-            y = z['y']
-        if y.ndim != 3 or y.shape[2] != n_rows:
-            continue                                     # another problem's run
-        Y.append(np.asarray(y[:, :, rows], np.float64).reshape(-1, len(rows)) / scale)
-        used.append(os.path.basename(f)[:-4])
-    return (np.concatenate(Y), used) if Y else (None, [])
 
 
 def main():

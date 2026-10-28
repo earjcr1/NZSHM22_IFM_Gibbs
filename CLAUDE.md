@@ -19,10 +19,12 @@ replicates), block_fit.py (each row block's fit from a run's recorded prediction
 compare_runs.py (rate-by-rate agreement of two runs, with a figure), summarize_runs.py (log-space summaries of
 replicates or priors, from the running summaries or stored draws), cru_common.py (shared I/O and diagnostics), compare_priors.py (tables comparing runs under different priors),
 select_draws.py (weighted representative draws for hazard), plot_rate_magnitude.py (each rupture's posterior mean
-rate against its magnitude bin, from the rate vectors, with each bin's ruptures counted by decade of mean rate),
-plot_slip_rates.py (slip-rate targets against the mean model's predictions, linear and log, from the rate vectors),
-plot_paleo_rates.py (paleo-rate targets against the model's predictions, log-log, with each prediction's posterior
-16-84% range from the runs' recorded predictions), randomized_nnls.py (best fits to the data plus fresh draws of their
+rate against its magnitude bin, from the rate vectors, with each bin's ruptures counted by decade of mean rate, and
+above it each bin's total over its target with the total's posterior 16-84% range),
+plot_slip_rates.py (slip-rate targets against the mean model's predictions, linear and log, from the rate vectors, with
+each section mean's posterior 16-84% range), plot_paleo_rates.py (paleo-rate targets against the model's predictions,
+log-log, with each prediction's posterior 16-84% range; the three ranges come from the predictions the runs next to
+the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions), randomized_nnls.py (best fits to the data plus fresh draws of their
 stated noise, in place of the sampler when the notebook's RANDOMIZED_NNLS is a number of fits: their spread of slip-rate,
 MFD and paleo predictions in figures, in RUN_DIR/rnnls/; the best fit's sampling distribution, not a posterior).
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference

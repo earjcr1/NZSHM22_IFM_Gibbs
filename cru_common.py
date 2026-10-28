@@ -4,6 +4,7 @@ log of everything it prints.
 Problem convention throughout: minimise ||G m - d||^2 / (2 sigma^2) with lo <= m <= hi, i.e. the target
 density is exp(-||G m - d||^2 / (2 sigma^2) - beta . m) on the box (beta = 0 is the flat prior).
 """
+import glob
 import io
 import json
 import os
@@ -700,6 +701,29 @@ def axis_span(targets, best, log, q=(2.0, 98.0)):
     if b.size:
         lo, hi = min(lo, float(np.percentile(b, q[0]))), max(hi, float(np.percentile(b, q[1])))
     return lo, hi
+
+
+def run_predictions(folder, rows, n_rows, scale, combine=None):
+    """The predictions recorded for every draw by the runs next to the rate vectors (main_rep<k>.npz), for the given
+    rows, pooled over runs and chains, each row's divided by scale (in units of its uncertainty, say); with combine, a
+    (rows x m) matrix, their combinations instead (section means, say), taken one chain at a time so that the rows'
+    draws are never all held at once. Returns (draws, the runs used), or (None, []) if there are none. The fit figures
+    draw their posterior 16-84% bars from them."""
+    Y, used = [], []
+    for f in sorted(glob.glob(os.path.join(folder, 'main_rep*.npz'))):
+        if not re.fullmatch(r'main_rep\d+\.npz', os.path.basename(f)):
+            continue                                     # running summaries and the like
+        with np.load(f) as z:
+            if 'y' not in z.files:
+                continue
+            y = z['y']
+        if y.ndim != 3 or y.shape[2] != n_rows:
+            continue                                     # another problem's run
+        for c in range(y.shape[0]):
+            yc = np.asarray(y[c][:, rows], np.float64) / scale
+            Y.append(yc if combine is None else yc @ combine)
+        used.append(os.path.basename(f)[:-4])
+    return (np.concatenate(Y), used) if Y else (None, [])
 
 
 # --------------------------------------------------------------------------- row groups: magnitude bins and slip rates

@@ -22,18 +22,26 @@ rise with magnitude if the bins are in order.
 Axes: the magnitude axis follows the bins; the rate axis is fixed for the problem by its targets and its best fit (from
 the band below --diag-floor up to the largest of the bin targets, the best fit's rates and its bin totals; the best fit
 from prelim_results.npz next to --problem), so that every model's figure for one problem has the same axes; without a
-best fit, the rate axis follows what is plotted. Rates above the axis sit on its top edge.
+best fit, the rate axis follows what is plotted. Rates above the axis sit on its top edge. The top panel's axis, each
+bin's total over its target, is fixed the same way, by three of the largest bin uncertainty either side of 1 and the best
+fit's ratios; ratios beyond it sit on its edges as triangles.
 
 Marks: a dot per rupture at log10 of its mean rate, with means below 10^--diag-floor (1e-10, the notebook's FLOOR),
 including exactly 0, in a band at the bottom; a line across each bin at its target total rate R_j (with the
 notebook's soft top, also every rupture's soft upper limit); and a dot for the bin's total
 of the means, which is the posterior mean of the bin's total. Penalised ruptures (rate 0 by construction) are left
-out.
+out. Above, a shorter panel shows each bin's total over its target, with the target at 1 and the band within one
+uncertainty of it (at the level the likelihood gives the bins, MFD_UNCERTAINTY), where a bin total's posterior spread is
+visible: when the runs that made the rate vectors sit next to them (<prior folder>/main_rep0.npz, main_rep1.npz, ...,
+as the notebook writes them), the predictions they recorded for every draw give each bin total's posterior 16-84%
+range, drawn as a bar in both panels (in the lower one, at the inputs' uncertainty level, mostly hidden by the dot; a
+bar that reaches an axis continues beyond it). A single model's rate vectors (a best fit) have no spread.
 
 Each panel's subtitle gives the model's chi-squared over the magnitude-bin rows, as the likelihood weights them.
 
 Writes FIGURE (default: fig_rate_magnitude.png next to the first rate vectors) and, as its table view, the same name
-with .txt: the chi-squared, then per bin, the number of ruptures, the target, the total of the means and their ratio, the 10%, 50% and 90%
+with .txt: the chi-squared, then per bin, the number of ruptures, the target, the total of the means and their ratio,
+the bin total's posterior 16%, 50% and 84% points (for all bins, the total rate's), the 10%, 50% and 90%
 points and the largest of log10 of the mean rates, and how many lie below the floor; then, per bin, how many ruptures
 have a mean rate below the floor (including 0), in each decade from the floor up to 1e-2, and at 1e-2 or above, so
 that every rupture is counted once. Means in the lowest decades come from ruptures switched on in few draws, so their
@@ -51,7 +59,8 @@ import textwrap
 import numpy as np
 from scipy.stats import spearmanr
 
-from cru_common import best_fit_rates, load_problem, magnitude_bins, reference_rates, run_settings, settings_lines
+from cru_common import (best_fit_rates, load_problem, magnitude_bins, reference_rates, run_predictions, run_settings,
+                        settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
@@ -83,6 +92,16 @@ def log_label(v):
     return f'{v:g}'.replace('-', MINUS)
 
 
+def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
+    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above)."""
+    low, high = v < lo, v > hi
+    mid = ~(low | high)
+    ax.scatter(x[mid], v[mid], **kw)
+    for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
+        if sel.any():
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **kw_edge)
+
+
 def main():
     ap = argparse.ArgumentParser(description='Rates by magnitude (see the module docstring).')
     ap.add_argument('sets', nargs='+', metavar='VECTORS[:LABEL]', help='rate vectors (<prior folder>/rate_vectors)')
@@ -112,6 +131,8 @@ def main():
     rows, R, orig, lo = magnitude_bins(P, a.bins_block, a.lowest_bin, w)
     B = len(rows)
     bin_of = np.asarray((Gr[rows] != 0).astype(np.int8).argmax(0)).ravel()      # each rupture is in exactly one bin
+    coef = np.array([Gr.data[Gr.indptr[r]] for r in rows])   # each bin row: 1 / its uncertainty, for every rupture in it
+    rel = 1.0 / P['d'][rows]                         # each bin's relative uncertainty, as the likelihood weighs it
     rng_name = lambda k: f'{lo[k]:.2f}-{lo[k] + w:.2f}'
     gaps = int(orig[-1] - orig[0] + 1 - B)
     head = [f'magnitude bins: {B} bin rows (original rows {orig[0]}-{orig[-1]}'
@@ -140,9 +161,13 @@ def main():
         pen = int(np.sum(z['penalised'])) if 'penalised' in z.files else n_raw - n
         m = m_all[keep_c]
         tot = np.bincount(bin_of, weights=m, minlength=B)
-        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen,
+        model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
+        T, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, Gr.shape[0], coef)
+        q = np.percentile(np.c_[T, T.sum(1)], [16, 50, 84], axis=0) if T is not None else None   # bin totals, then all
+        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen, q=q, used=used,
+                         ndraws=0 if T is None else len(T),
                          chi2=float(np.sum((Gr[rows] @ m - P['d'][rows]) ** 2)),   # over the bin rows, as weighted
-                         model=str(z['model']) if 'model' in z.files else ''))
+                         model=model))
     single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
     mean_ = '' if single else 'mean '
     ref = None
@@ -171,10 +196,14 @@ def main():
             lines.append(f'{rng_name(k):<11s} {R[k]:11.3e} {ref["tot"][k]:11.3e} {ref["tot"][k] / R[k]:6.3f}')
     for D in data:
         Lm = np.log10(np.maximum(D['m'], 10.0 ** floor))
+        spread = (f'posterior spread of each bin total from the {D["ndraws"]} draws recorded by {", ".join(D["used"])}'
+                  if D['q'] is not None else f'{D["model"]}: a single model, so no posterior spread' if D['model']
+                  else 'no runs found next to the rate vectors, so no posterior spread')
         lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s chi2 over the {B} '
                   f'magnitude-bin rows, as the likelihood weights them, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
-                  '(rate 0 by construction) not shown',
+                  f'(rate 0 by construction) not shown; {spread}',
                   f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
+                  f'{"total: 16%":>11s} {"50%":>10s} {"84%":>10s} '
                   f'{"log10 rate: 10%" if single else "log10 mean: 10%":>16s} {"50%":>7s} {"90%":>7s} {"max":>7s} '
                   f'{"below " + f"1e{floor:g}":>12s}']
         for k in list(range(B)) + [None]:
@@ -182,8 +211,10 @@ def main():
             tgt = R[k] if k is not None else R.sum()
             tt = D['tot'][k] if k is not None else D['tot'].sum()
             q = np.percentile(Lm[sel], [10, 50, 90])
+            qt = (f'{D["q"][0, B if k is None else k]:11.3e} {D["q"][1, B if k is None else k]:10.3e} '
+                  f'{D["q"][2, B if k is None else k]:10.3e}' if D['q'] is not None else f'{"-":>11s} {"-":>10s} {"-":>10s}')
             lines.append(f'{(rng_name(k) if k is not None else "all"):<11s} {int(sel.sum()):8d} {tgt:11.3e} {tt:14.3e} '
-                         f'{tt / tgt:6.3f} {clip(q[0]):>16s} {clip(q[1]):>7s} {clip(q[2]):>7s} {clip(Lm[sel].max()):>7s} '
+                         f'{tt / tgt:6.3f} {qt} {clip(q[0]):>16s} {clip(q[1]):>7s} {clip(q[2]):>7s} {clip(Lm[sel].max()):>7s} '
                          f'{int(D["below"][sel].sum()):12d}')
         with np.errstate(divide='ignore'):                # a mean of 0 is below the floor
             idx = np.where(D['below'], 0, np.maximum(np.digitize(np.log10(D['m']), dec), 1))
@@ -209,42 +240,66 @@ def main():
     x = lo[bin_of] + w * g.uniform(0.08, 0.92, n)
     jy = g.uniform(-0.28, 0.28, n)
     band_c = floor - 1.0
-    nn = best_fit_rates(a.problem)                   # the best fit fixes the rate axis, the same for every model
+    nn = best_fit_rates(a.problem)                   # the best fit fixes the axes, the same for every model
     fixed = nn is not None and len(nn) == n
     if fixed:
-        top = np.log10(max(R.max(), nn.max(), np.bincount(bin_of, weights=nn, minlength=B).max()))
+        nn_tot = np.bincount(bin_of, weights=nn, minlength=B)
+        top = np.log10(max(R.max(), nn.max(), nn_tot.max()))
         any_below = True                             # the band below the floor keeps its room, empty or not
-    else:                                            # cleaned without the best fit: the axis follows what is plotted
+        r_lo, r_hi = min(1 - 3 * rel.max(), (nn_tot / R).min()), max(1 + 3 * rel.max(), (nn_tot / R).max())
+    else:                                            # cleaned without the best fit: the axes follow what is plotted
         top = max(np.log10(max(D['m'].max(), D['tot'].max(), R.max())) for D in data)
         if ref is not None and ref['tot'].max() > 0:
             top = max(top, np.log10(ref['tot'].max()))
         any_below = any(D['below'].any() for D in data)
+        shown = np.concatenate([D['tot'] / R for D in data] + [D['q'][k, :B] / R for D in data if D['q'] is not None
+                                                               for k in (0, 2)] + ([ref['tot'] / R] if ref is not None else []))
+        r_lo, r_hi = min(1 - 3 * rel.max(), shown.min()), max(1 + 3 * rel.max(), shown.max())
     top = np.ceil(2.0 * (top + 0.25)) / 2.0
     bottom = floor - 1.5 if any_below else floor - 0.3
     cap = top - 0.06                                 # rates above the axis sit on its top edge
     lg = lambda v: np.minimum(np.log10(v), cap)
+    pad = 0.05 * (r_hi - r_lo)                       # the upper panel: each bin's total over its target
+    r_lo, r_hi = max(0.0, r_lo - pad), r_hi + pad
+    r_edge, r_top = r_lo + 0.4 * pad, r_hi - 0.4 * pad   # where ratios beyond its axis sit
+    bars = any(D['q'] is not None for D in data)
     k_panels = len(data)
     fig_w = 8.6 if k_panels == 1 else 0.6 + 6.3 * k_panels
     tab = settings_lines(settings, int((fig_w - 0.8) / 0.062500)) if settings else None
     more_top = max(0.0, 2 * len(tab) * 10.5 - 10.0) / 72 if tab else 0.0   # room for the settings table
-    H = 6.0 + more_top
-    fig, axs = plt.subplots(1, k_panels, figsize=(fig_w, H), sharey=True, squeeze=False,
-                            facecolor=SURFACE)
+    pens = sorted({D['pen'] for D in data})
+    foot = textwrap.fill('Bins counted up in the bin rows original order. Upper panel: each bin\'s total over its target, '
+                         'with the band within one uncertainty of it, at the level the likelihood gives the bins'
+                         + ('; bars: the posterior 16–84% of each bin total (one that reaches an axis continues beyond it)'
+                            if bars else '') + '. '
+                         + ('Axes fixed by the targets and the best fit, the same for every model of these inputs. '
+                            if fixed else '')
+                         + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
+                            'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
+    n_h = 4 + int(bars) + int(ref is not None) + int(any_below)   # the legend's entries
+    lc = n_h if n_h <= 4 else 2 if k_panels == 1 else 3          # columns: two under a single panel
+    more = 0.168 * foot.count('\n') + 0.22 * max(0, -(-n_h // lc) - 2)   # room for a longer footnote or legend, in inches
+    top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top, 1.3, 0.22, 3.9, 1.2 + more   # figure layout, in inches
+    H = top_in + ratio_in + gap_in + main_in + bot_in
+    fig, axs = plt.subplots(2, k_panels, figsize=(fig_w, H), sharex='col', sharey='row', squeeze=False,
+                            gridspec_kw=dict(height_ratios=[ratio_in, main_in]), facecolor=SURFACE)
     edges = lo[0] + w * np.arange(int(round((lo[-1] + w - lo[0]) / w)) + 1)
     majors = [e for e in edges if abs(round(e * 10) % 2) < 1e-9 or w != 0.1]
-    for ax, D in zip(axs[0], data):
-        ax.set_facecolor(SURFACE)
-        for s in ('top', 'right'):
-            ax.spines[s].set_visible(False)
-        for s in ('left', 'bottom'):
-            ax.spines[s].set_color(AXIS)
-            ax.spines[s].set_linewidth(0.5)
+    for ar, ax, D in zip(axs[0], axs[1], data):
+        for a_ in (ar, ax):
+            a_.set_facecolor(SURFACE)
+            for s in ('top', 'right'):
+                a_.spines[s].set_visible(False)
+            for s in ('left', 'bottom'):
+                a_.spines[s].set_color(AXIS)
+                a_.spines[s].set_linewidth(0.5)
+            a_.grid(True, which='both', axis='x', color=GRID, lw=0.5, zorder=0)
+            a_.grid(True, which='major', axis='y', color=GRID, lw=0.5, zorder=0)
+            a_.tick_params(colors=AXIS, labelcolor=INK2, labelsize=8.5, which='both', length=3, width=0.5)
         ax.set_xticks(edges, minor=True)
         ax.set_xticks(majors)
         ax.set_xticklabels([f'{e:.1f}' for e in majors])
-        ax.grid(True, which='both', axis='x', color=GRID, lw=0.5, zorder=0)
-        ax.grid(True, which='major', axis='y', color=GRID, lw=0.5, zorder=0)
-        ax.tick_params(colors=AXIS, labelcolor=INK2, labelsize=8.5, which='both', length=3, width=0.5)
+        ar.tick_params(labelbottom=False)
         ax.set_xlim(lo[0] - 0.4 * w, lo[-1] + 1.4 * w)
         ax.set_ylim(bottom, top)
         b = D['below']
@@ -254,52 +309,64 @@ def main():
         if b.any():
             ax.scatter(x[b], band_c + jy[b], s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2)
         ax.hlines(np.log10(R), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
+        if D['q'] is not None:                       # posterior 16-84% of each bin total; on this axis mostly behind the dot
+            ax.vlines(lo + 0.5 * w, lg(np.maximum(D['q'][0, :B], 10.0 ** bottom)),
+                      lg(np.maximum(D['q'][2, :B], 10.0 ** bottom)), colors=ORANGE, alpha=0.5, lw=2.2, zorder=3.5)
         ok = D['tot'] > 0
         ax.scatter(lo[ok] + 0.5 * w, lg(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
         if ref is not None:                          # the reference's bin totals, beside the bin's own
             okr = ref['tot'] > 0
             ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=AQUA, edgecolors=SURFACE,
                        linewidths=1.0, zorder=4)
+        ar.set_ylim(r_lo, r_hi)                      # the upper panel: the same, over each bin's target
+        ar.bar(lo + 0.5 * w, 2 * rel, bottom=1 - rel, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
+        ar.hlines(np.ones(B), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
+        if D['q'] is not None:
+            ar.vlines(lo + 0.5 * w, np.clip(D['q'][0, :B] / R, r_lo, r_hi), np.clip(D['q'][2, :B] / R, r_lo, r_hi),
+                      colors=ORANGE, alpha=0.5, lw=2.2, zorder=3.5)
+        scatter_edges(ar, lo + 0.5 * w, D['tot'] / R, r_edge, r_top,
+                      dict(s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4), dict(s=30, c=ORANGE, zorder=4))
+        if ref is not None:
+            scatter_edges(ar, lo + 0.78 * w, ref['tot'] / R, r_edge, r_top,
+                          dict(s=26, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=1.0, zorder=4),
+                          dict(s=26, c=AQUA, zorder=4))
         nb = int(b.sum())
         nz = int((D['m'] == 0).sum())
         if tab:
-            draw_settings(ax, tab, 20)
+            draw_settings(ar, tab, 20)
         else:
-            ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20)
-        ax.annotate(f'χ² {D["chi2"]:.1f} over the {B} magnitude bins; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
+            ar.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20)
+        ar.annotate(f'χ² {D["chi2"]:.1f} over the {B} magnitude bins; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
                     color=INK2, fontsize=8.5)
         ax.set_xlabel(f'Magnitude bin (each rupture at a random magnitude within its {w:g} bin)', color=INK2, fontsize=9)
     ticks = list(range(int(np.ceil(floor)), int(np.floor(top)) + 1))
-    axs[0][0].set_yticks(ticks + ([band_c] if any_below else []))
-    axs[0][0].set_yticklabels([log_label(t) for t in ticks] + ([f'< {log_label(floor)}'] if any_below else []))
-    axs[0][0].set_ylabel('log10 of the ' + ('' if single else 'posterior mean ') + 'rate (per year)', color=INK2, fontsize=9)
+    axs[1][0].set_yticks(ticks + ([band_c] if any_below else []))
+    axs[1][0].set_yticklabels([log_label(t) for t in ticks] + ([f'< {log_label(floor)}'] if any_below else []))
+    axs[1][0].set_ylabel('log10 of the ' + ('' if single else 'posterior mean ') + 'rate (per year)', color=INK2, fontsize=9)
+    axs[0][0].set_ylabel('bin total / target', color=INK2, fontsize=9)
+    fig.align_ylabels(axs[:, 0])
     handles = [Line2D([], [], ls='none', marker='o', ms=4, mfc=BLUE, mec=BLUE, alpha=0.6, label=f'rupture: {mean_}rate'),
                Line2D([], [], color=INK, lw=1.0, label='bin target R_j (total rate)'),
                Line2D([], [], ls='none', marker='o', ms=6.5, mfc=ORANGE, mec=SURFACE, mew=1.0,
                       label='bin total' + ('' if single else ' of the means'))]
+    if bars:
+        handles.append(Line2D([], [], color=ORANGE, alpha=0.5, lw=2.2, label='posterior 16–84% of the bin total'))
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=AQUA, mec=SURFACE, mew=1.0,
                               label=f'bin total of {ref["label"]} (χ² {ref["chi2"]:.1f})'))
+    handles.append(Patch(facecolor=BAND, edgecolor='none', label='upper panel: within one uncertainty of the target'))
     if any_below:
         handles.append(Patch(facecolor=BAND, edgecolor='none', label=f'band: {mean_}below 1e{floor:g}, including 0'))
     fig.suptitle(('Rate' if single else 'Posterior mean rate') + ' of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
                  color=INK, fontsize=13, fontweight='bold', y=1 - 0.15 / H)
-    lc = len(handles) if len(handles) <= 4 else 3
     handles = [h for c in range(lc) for h in handles[c::lc]]     # legend columns filled so it reads row by row
-    pens = sorted({D['pen'] for D in data})
-    foot = textwrap.fill('Bins counted up in the bin rows original order. '
-                         + ('Rate axis fixed by the targets and the best fit, the same for every model of these inputs. '
-                            if fixed else '')
-                         + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
-                            'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
-    more = 0.028 * foot.count('\n')                  # room for a footnote of more than one line
     fig.legend(handles=handles, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
-               bbox_to_anchor=(0.5, 0.045 + more), handletextpad=0.5, columnspacing=1.6)
-    fig.text(0.5, 0.012, foot, ha='center', va='bottom', color=MUTED, fontsize=8, linespacing=1.4)
-    fig.subplots_adjust(left=0.07 if k_panels > 1 else 0.075, right=0.985, top=1 - (0.9 + more_top) / H,
-                        bottom=(1.2 + 6.0 * more) / H, wspace=0.06)
+               bbox_to_anchor=(0.5, (0.27 + 0.168 * foot.count('\n')) / H), handletextpad=0.5, columnspacing=1.6)
+    fig.text(0.5, 0.072 / H, foot, ha='center', va='bottom', color=MUTED, fontsize=8, linespacing=1.4)
+    fig.subplots_adjust(left=0.07 if k_panels > 1 else 0.075, right=0.985, top=1 - top_in / H, bottom=bot_in / H,
+                        wspace=0.06, hspace=gap_in / ((ratio_in + main_in) / 2))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     with open(os.path.splitext(out)[0] + '.txt', 'w') as f:
         f.write(text + '\n')
