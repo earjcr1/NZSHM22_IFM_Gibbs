@@ -47,7 +47,7 @@ have a mean rate below the floor (including 0), in each decade from the floor up
 that every rupture is counted once. Means in the lowest decades come from ruptures switched on in few draws, so their
 counts depend on run length.
 
-Reference: --reference RATES[:LABEL] marks another model's bin totals on every panel as aqua squares, beside each bin's
+Reference: --reference RATES[:LABEL] marks another model's bin totals on every panel as dark grey squares, beside each bin's
 own total, such as the model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds
 the solution folder); LABEL defaults to the solution folder's name (shortened when long). The table view adds its bin totals and their ratios
 to the targets. Its rates on ruptures that cleaning removed are left out of its totals, and the table says how much.
@@ -64,7 +64,7 @@ from cru_common import (best_fit_rates, load_problem, magnitude_bins, reference_
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
-AQUA = '#1baf7a'                             # categorical slot 3 (slots 1-3 validate all-pairs): the reference
+REF = INK2                                   # the reference model's marks: dark grey, apart from every series colour
 MINUS = '−'
 
 
@@ -316,7 +316,7 @@ def main():
         ax.scatter(lo[ok] + 0.5 * w, lg(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
         if ref is not None:                          # the reference's bin totals, beside the bin's own
             okr = ref['tot'] > 0
-            ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=AQUA, edgecolors=SURFACE,
+            ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=REF, edgecolors=SURFACE,
                        linewidths=1.0, zorder=4)
         ar.set_ylim(r_lo, r_hi)                      # the upper panel: the same, over each bin's target
         ar.bar(lo + 0.5 * w, 2 * rel, bottom=1 - rel, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
@@ -328,8 +328,8 @@ def main():
                       dict(s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4), dict(s=30, c=ORANGE, zorder=4))
         if ref is not None:
             scatter_edges(ar, lo + 0.78 * w, ref['tot'] / R, r_edge, r_top,
-                          dict(s=26, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=1.0, zorder=4),
-                          dict(s=26, c=AQUA, zorder=4))
+                          dict(s=26, marker='s', c=REF, edgecolors=SURFACE, linewidths=1.0, zorder=4),
+                          dict(s=26, c=REF, zorder=4))
         nb = int(b.sum())
         nz = int((D['m'] == 0).sum())
         if tab:
@@ -354,7 +354,7 @@ def main():
     if bars:
         handles.append(Line2D([], [], color=ORANGE, alpha=0.5, lw=2.2, label='posterior 16–84% of the bin total'))
     if ref is not None:
-        handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=AQUA, mec=SURFACE, mew=1.0,
+        handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=REF, mec=SURFACE, mew=1.0,
                               label=f'bin total of {ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles.append(Patch(facecolor=BAND, edgecolor='none', label='upper panel: within one uncertainty of the target'))
     if any_below:

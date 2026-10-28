@@ -29,7 +29,7 @@ Writes into --out:
                              fall inside the fits' ranges
 Each figure has its table view next to it (.txt): per section, bin or row, the target, the best fit, and the fits'
 median, 16%, 84%, 2.5% and 97.5% points. --reference RATES[:LABEL] also marks another model's predictions on every
-figure, as aqua squares, and adds them to the tables: such as the model's own OpenSHA solution, its
+figure, as dark grey squares, and adds them to the tables: such as the model's own OpenSHA solution, its
 solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder).
 """
 import os
@@ -50,7 +50,7 @@ from preliminaries import nnls_lawson_hanson
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'   # the fit
 BAND, BAND2, BLUE = '#ebeae5', '#f2f1ec', '#2a78d6'      # figures' palette (plot_slip_rates.py, plot_paleo_rates.py)
-AQUA = '#1baf7a'                                 # categorical slot 3 (slots 1-3 validate all-pairs): --reference
+REF = INK2                                       # --reference's marks: dark grey, apart from every series colour
 Q = (2.5, 16.0, 50.0, 84.0, 97.5)                 # the fits' percentiles shown and tabulated
 
 # ------------------------------------------------------------------------------------------------------------ the fits
@@ -149,16 +149,16 @@ def _reference(ax, x, v, floor=None, size=24, ceil=None):
     """A reference solution's values (--reference) as squares; values below floor or above ceil sit on them."""
     low = (v < floor) if floor is not None else np.zeros(len(v), bool)
     high = (v > ceil) if ceil is not None else np.zeros(len(v), bool)
-    ax.scatter(x[~(low | high)], v[~(low | high)], s=size, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.6, zorder=3.4)
+    ax.scatter(x[~(low | high)], v[~(low | high)], s=size, marker='s', c=REF, edgecolors=SURFACE, linewidths=0.6, zorder=3.4)
     for sel, at, mk in ((low, floor, 'v'), (high, ceil, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), s=size + 4, marker=mk, c=AQUA, linewidths=0, zorder=3.4,
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), s=size + 4, marker=mk, c=REF, linewidths=0, zorder=3.4,
                        clip_on=False)
 
 
 def _ref_handles(ref, extra=''):
     from matplotlib.lines import Line2D
-    return [Line2D([], [], ls='none', marker='s', ms=5, mfc=AQUA, mec=SURFACE, label=ref['label'] + extra)] if ref else []
+    return [Line2D([], [], ls='none', marker='s', ms=5, mfc=REF, mec=SURFACE, label=ref['label'] + extra)] if ref else []
 
 
 def _ref_head(ref, what):

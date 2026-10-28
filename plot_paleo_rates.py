@@ -34,11 +34,13 @@ Marks: a dot per paleo row at its target and mean prediction; the posterior 16-8
 runs are found (a bar reaching an axis continues beyond it, below possibly to 0); predictions beyond the axes,
 including 0, on their edges as triangles; the 1:1 line; the
 bands; and the original row numbers of the --label rows furthest from their targets in units of uncertainty (default
-4). Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
+4). Each row's dot and bar share a colour, cycling through the reference palette's eight colours along the targets
+(cru_common.neighbour_colours), so that neighbouring rows never share one; the colours only tell neighbours apart, and
+a row keeps its colour in every model's figure. Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
 
-Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as aqua squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as dark grey squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -49,13 +51,12 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (axis_span, best_fit_rates, load_problem, reference_rates, run_predictions, run_settings,
-                        settings_lines)
+from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, neighbour_colours, reference_rates,
+                        run_predictions, run_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
-BLUE = '#2a78d6'                                 # categorical slot 1 of the reference palette
-AQUA = '#1baf7a'                                 # categorical slot 3 (slots 1-3 validate all-pairs): the reference
+REF = INK2                                       # the reference model's marks: dark grey, apart from every series colour
 
 
 def parse_set(s):
@@ -79,13 +80,16 @@ def draw_settings(ax, tab, y, size=7.5):
 
 
 def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
-    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above)."""
+    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above). The
+    colour c may be one per point."""
     low, high = v < lo, v > hi
     mid = ~(low | high)
-    ax.scatter(x[mid], v[mid], **kw)
+    pick = lambda d, sel: {k: (np.asarray(c)[sel] if k == 'c' and np.ndim(c) == 1 and len(c) == len(x) else c)
+                           for k, c in d.items()}
+    ax.scatter(x[mid], v[mid], **pick(kw, mid))
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **kw_edge)
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **pick(kw_edge, sel))
 
 
 def main():
@@ -201,10 +205,12 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patheffects as pe
+    from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
+    col = neighbour_colours(t)                       # each row's colour, unlike its neighbours'
     nn = best_fit_rates(a.problem)                   # the best fit's predictions fix the axes, the same for every model
     fixed = nn is not None and len(nn) == Gp.shape[1]
     if fixed:
@@ -228,7 +234,8 @@ def main():
     ncol = len(data)
     note = ('In units of each row\'s uncertainty: on log axes that moves a point only along the 1:1 line, so its distance '
             'from the line is the ratio of prediction to target. A target is one over its relative uncertainty, so the '
-            'best-measured sites lie furthest right. A bar that reaches an axis continues beyond it (below, possibly to 0).'
+            'best-measured sites lie furthest right. A bar that reaches an axis continues beyond it (below, possibly to 0). '
+            'Colours only tell neighbouring rows apart.'
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; '
                'predictions beyond them sit on the edges.' if fixed else ''))
     top_in, sub_in, panel_in, side_in = 0.45, 0.85, 5.0, 0.75     # figure layout, in inches
@@ -269,13 +276,13 @@ def main():
         ax.fill_between(xs, np.maximum(xs - 2.0, lo), xs + 2.0, color=BAND2, lw=0, zorder=0.4)
         ax.fill_between(xs, np.maximum(xs - 1.0, lo), xs + 1.0, color=BAND, lw=0, zorder=0.5)
         ax.plot((lo, hi), (lo, hi), color=INK, lw=1.0, zorder=2)
+        if ref is not None:                          # the reference's predictions, beneath the posterior's
+            scatter_edges(ax, t, ref['y'], edge, top, dict(s=26, marker='s', c=REF, edgecolors=SURFACE, linewidths=0.6,
+                          zorder=2.1), dict(s=28, c=REF, zorder=2.1))
         if D['q'] is not None:                       # posterior 16-84% of each prediction, within the axes
-            ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), color=BLUE, alpha=0.45, lw=1.6, zorder=2.2)
-        scatter_edges(ax, t, D['y'], edge, top, dict(s=36, c=BLUE, edgecolors=SURFACE, linewidths=0.8, zorder=3),
-                      dict(s=32, c=BLUE, zorder=3))
-        if ref is not None:                          # the reference's predictions
-            scatter_edges(ax, t, ref['y'], edge, top, dict(s=30, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.6,
-                          zorder=3.2), dict(s=30, c=AQUA, zorder=3.2))
+            ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), colors=col, alpha=0.7, lw=1.6, zorder=2.2)
+        scatter_edges(ax, t, D['y'], edge, top, dict(s=36, c=col, edgecolors=SURFACE, linewidths=0.8, zorder=3),
+                      dict(s=32, c=col, zorder=3))
         # labels in a column in the empty corner on their points' side of the 1:1 line (lower right for points predicted
         # below their targets, upper left for those above), each near its point's height, with leader lines
         frac = lambda v: (np.log10(v) - np.log10(lo)) / (np.log10(hi) - np.log10(lo))
@@ -315,23 +322,25 @@ def main():
                         va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         ax.annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 12), textcoords='offset points',
                     va='bottom', color=INK2, fontsize=8.5, linespacing=1.35)
-    handles = [Line2D([], [], ls='none', marker='o', ms=6, mfc=BLUE, mec=SURFACE, label='prediction' if mm == 'model' else 'mean prediction')]
+    few = CATEGORICAL[:3]                                # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=6, mfc=c, mec=SURFACE) for c in few),
+                'prediction' if mm == 'model' else 'mean prediction')]
     if any(D['q'] is not None for D in data):
-        handles.append(Line2D([], [], color=BLUE, alpha=0.45, lw=1.6, label='posterior 16–84% of the prediction'))
+        handles.append((tuple(Line2D([], [], color=c, alpha=0.7, lw=1.6) for c in few), 'posterior 16–84% of the prediction'))
     if ref is not None:
-        handles.append(Line2D([], [], ls='none', marker='s', ms=5.5, mfc=AQUA, mec=SURFACE,
-                              label=f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
-    handles += [Line2D([], [], color=INK, lw=1.0, label='prediction = target'),
-                Patch(facecolor=BAND, edgecolor='none', label='within one uncertainty'),
-                Patch(facecolor=BAND2, edgecolor='none', label='within two')]
+        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc=REF, mec=SURFACE), f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
+    handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
+                (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty'),
+                (Patch(facecolor=BAND2, edgecolor='none'), 'within two')]
     if clipped:
-        handles.append(Line2D([], [], ls='none', marker='v', ms=5, mfc=BLUE, mec=BLUE, label='beyond the axes (on their edges)'))
+        handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))
     h_in = fig.get_size_inches()[1]
     fig.suptitle('Paleo rates: targets against the model\'s predictions', x=0.03, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
     order = [h for c in range(lc) for h in handles[c::lc]]          # legend columns filled so it reads row by row
-    fig.legend(handles=order, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
-               bbox_to_anchor=(0.5, leg_y / h_in), handletextpad=0.5, columnspacing=1.8)
+    fig.legend(handles=[h for h, _ in order], labels=[l for _, l in order], loc='lower center', ncol=lc, frameon=False,
+               fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, leg_y / h_in), handletextpad=0.5, columnspacing=1.8,
+               handlelength=2.6, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
     fig.text(0.5, 0.08 / h_in, note, ha='center', va='bottom', color=MUTED,
              fontsize=7.5, linespacing=1.4)
     fig.subplots_adjust(left=side_in / fig_w, right=1 - 0.25 / fig_w, top=1 - (top_in + sub_in) / h_in, bottom=bot_in / h_in,

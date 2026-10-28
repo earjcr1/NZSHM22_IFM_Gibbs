@@ -28,16 +28,20 @@ band reaches the bottom wherever the target is below 1: a prediction of 0 is the
 
 Axes: fixed for the problem by its targets and its best fit (all of the targets, and the central 96% of the best fit's
 section means, from prelim_results.npz next to --problem), so that every model's figure for one problem has the same
-axes; without a best fit, they follow what is plotted. Marks: a dot per section mean (blue) and per subsection (grey);
-the posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it,
-below on the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as
-triangles; the 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets
-(default 3). Writes FIGURE (default: fig_slip_rates.png next to the first rate vectors) and, as its table view, the
+axes; without a best fit, they follow what is plotted. Marks: a dot per section mean and per subsection (grey); the
+posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it, below on
+the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as triangles; the
+1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets (default 3). Each
+section's dot and bar share a colour, cycling through the reference palette's eight colours along the targets
+(cru_common.neighbour_colours), so that neighbouring sections never share one; the colours only tell neighbours apart,
+and a section keeps its colour in every model's figure. Sections that share a target (the inputs' slip rates are often
+round numbers: at 211k, 403 of 507 sections share theirs) stay stacked at it, one bar over another. Writes FIGURE
+(default: fig_slip_rates.png next to the first rate vectors) and, as its table view, the
 same name with .txt: the mean model's chi-squared over the slip-rate rows as the likelihood weights them, the share of
 sections (and of subsections) within one and two uncertainties, per section the target, the mean prediction, its
 posterior 16%, 50% and 84% points, their difference and their ratio, and per row the same without the posterior points.
 
-Reference: --reference RATES[:LABEL] marks another model's section means on every panel as aqua squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's section means on every panel as dark grey squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -48,13 +52,12 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (axis_span, best_fit_rates, load_problem, reference_rates, run_predictions, run_settings,
-                        settings_lines, slip_sections)
+from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, neighbour_colours, reference_rates,
+                        run_predictions, run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-BLUE = '#2a78d6'                                 # categorical slot 1 of the reference palette
 SUBSECTION = '#a9a8a1'                           # context marks: the subsections behind each section mean
-AQUA = '#1baf7a'                                 # categorical slot 3 (slots 1-3 validate all-pairs): the reference
+REF = INK2                                       # the reference model's marks: dark grey, apart from every series colour
 
 
 def parse_set(s):
@@ -78,13 +81,16 @@ def draw_settings(ax, tab, y, size=7.5):
 
 
 def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
-    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above)."""
+    """Points within lo-hi at their values; those beyond, on the axis's edge as triangles (down below, up above). The
+    colour c may be one per point."""
     low, high = v < lo, v > hi
     mid = ~(low | high)
-    ax.scatter(x[mid], v[mid], **kw)
+    pick = lambda d, sel: {k: (np.asarray(c)[sel] if k == 'c' and np.ndim(c) == 1 and len(c) == len(x) else c)
+                           for k, c in d.items()}
+    ax.scatter(x[mid], v[mid], **pick(kw, mid))
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **kw_edge)
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **pick(kw_edge, sel))
 
 
 def main():
@@ -123,6 +129,7 @@ def main():
     ts = np.bincount(sec, weights=t, minlength=S) / ks   # each section's target (its copies share it)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
+    col = neighbour_colours(ts)                          # each section's colour, unlike its neighbours'
     mem = [np.flatnonzero(sec == s) for s in range(S)]
     n_distinct = len(np.unique(np.round(ts, 9)))
     how = ('one measurement per section (each section\'s rows divided by sqrt(k) in the likelihood)' if weighted else
@@ -216,6 +223,7 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patheffects as pe
+    from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
@@ -245,6 +253,7 @@ def main():
     note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections; '
             + ('each section is one measurement, so a single subsection may stray further than the band.' if weighted else
                'each subsection is counted as its own measurement (the inputs as given).')
+            + ' Colours only tell neighbouring sections apart; sections that share a target are stacked at it.'
             + (' A bar that reaches an axis continues beyond it (on the log scale, below possibly to 0).' if bars else '')
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; values '
                'beyond them sit on the edges.' if fixed else ''))
@@ -291,15 +300,15 @@ def main():
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
             scatter_edges(ax, t, D['y'], lo_e, hi_e, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
                           dict(s=14, c=SUBSECTION, alpha=0.7, zorder=1.5))
+            if ref is not None:                      # the reference's section means, beneath the posterior's
+                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', c=REF, edgecolors=SURFACE,
+                              linewidths=0.4, zorder=2.0), dict(s=22, c=REF, zorder=2.0))
             if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
-                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), color=BLUE, alpha=0.35,
-                          lw=1.3, zorder=2.2)
-            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=BLUE, alpha=0.85, edgecolors=SURFACE, linewidths=0.5,
-                          zorder=2.5), dict(s=30, c=BLUE, alpha=0.9, zorder=2.5))
-            if ref is not None:                      # the reference's section means
-                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=24, marker='s', c=AQUA, edgecolors=SURFACE, linewidths=0.5,
-                              zorder=2.6), dict(s=28, c=AQUA, zorder=2.6))
+                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], alpha=0.7,
+                          lw=1.2, zorder=2.2)
+            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=col, alpha=0.95, edgecolors=SURFACE, linewidths=0.6,
+                          zorder=2.5), dict(s=30, c=col, alpha=0.95, zorder=2.5))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
             pts = [(s, ts[s], min(max(D['ys'][s], lo_e), hi_e)) for s in D['groups']]
             frac = lambda v: ((np.log10(v) - np.log10(lim[0])) / (np.log10(lim[1]) - np.log10(lim[0])) if log
@@ -321,24 +330,27 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    handles = [Line2D([], [], ls='none', marker='o', ms=5.5, mfc=BLUE, mec=SURFACE, alpha=0.9, label='section mean')]
+    few = CATEGORICAL[:3]                                # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=SURFACE) for c in few), 'section mean')]
     if bars:
-        handles.append(Line2D([], [], color=BLUE, alpha=0.35, lw=1.3, label='posterior 16–84% of the section mean'))
-    handles += [Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7, label='subsection'),
-                Line2D([], [], color=INK, lw=1.0, label='prediction = target'),
-                Patch(facecolor=BAND, edgecolor='none', label='within one uncertainty of the target')]
+        handles.append((tuple(Line2D([], [], color=c, alpha=0.7, lw=1.2) for c in few),
+                        'posterior 16–84% of the section mean'))
+    handles += [(Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7), 'subsection'),
+                (Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
+                (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
-        handles.append(Line2D([], [], ls='none', marker='s', ms=5, mfc=AQUA, mec=SURFACE,
-                              label=f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
+        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc=REF, mec=SURFACE),
+                        f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
     if clipped:
-        handles.append(Line2D([], [], ls='none', marker='v', ms=5, mfc=BLUE, mec=BLUE, alpha=0.8,
-                              label='beyond the axes (on their edges)'))
+        handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))
     h_in = fig.get_size_inches()[1]
     fig.suptitle(f'Slip-rate targets against the {mm}\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
     handles = [h for c in range(lc) for h in handles[c::lc]]     # legend columns filled so it reads row by row
-    fig.legend(handles=handles, loc='lower center', ncol=lc, frameon=False, fontsize=8.5, labelcolor=INK2,
-               bbox_to_anchor=(0.5, (0.36 + extra) / h_in), handletextpad=0.5, columnspacing=1.6)
+    fig.legend(handles=[h for h, _ in handles], labels=[l for _, l in handles], loc='lower center', ncol=lc,
+               frameon=False, fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, (0.36 + extra) / h_in),
+               handletextpad=0.5, columnspacing=1.6, handlelength=2.6,
+               handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
     fig.text(0.5, 0.12 / h_in, note, ha='center', va='baseline' if not extra else 'bottom', color=MUTED, fontsize=8,
              linespacing=1.4)
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.55) / h_in, bottom=bot_in / h_in, wspace=0.22,
