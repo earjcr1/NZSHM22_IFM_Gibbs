@@ -726,11 +726,13 @@ def run_predictions(folder, rows, n_rows, scale, combine=None):
     return (np.concatenate(Y), used) if Y else (None, [])
 
 
-# The reference palette's eight categorical colours (the data-viz method's validated default), in the order validated
-# on the light surface for every colour against the next, and the last against the first: worst colour-vision-deficient
-# Delta E 9.1 (OKLab x100; the target is 8), worst normal-vision 19.6 (the floor is 15). Slots 3-5 (aqua, yellow,
-# magenta) are below 3:1 contrast on the surface, so their marks keep a ring and the figures keep their table views.
-CATEGORICAL = ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948')
+# The colours that tell neighbouring marks apart: SciVisColor's discrete_muted (the colormaps package's SciViz
+# collection, cmaps.discrete_muted: seven colours, each listed twice there), in the cyclic order that best separates
+# neighbours on the light surface, every colour against the next and the last against the first: worst
+# colour-vision-deficient Delta E 12.9 (OKLab x100; the target is 8), worst normal-vision 16.8 (the floor is 15). In the
+# palette's own order the green and the yellow meet (6.6 and 11.4). Five of the seven are below 3:1 contrast on the
+# surface (the yellow 1.1:1) and three nearly grey, so the figures outline their marks and keep their table views.
+CATEGORICAL = ('#c1ccb8', '#878272', '#7ebcc3', '#fff093', '#db9e59', '#aae6aa', '#5b91cc')
 
 
 def neighbour_colours(x):

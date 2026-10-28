@@ -23,9 +23,10 @@ drawn in the order given.
 Units: each section's measurement uncertainty, as in plot_slip_rates.py, on a log scale.
 
 Marks, per column: the target (a black line) and the band within one uncertainty of it (grey); the section's posterior
-16-84% range (a thick bar), 2.5-97.5% range (a thin line), median (a pale tick across the bar) and mean (a dot), in a
-colour unlike its neighbours' (cru_common.neighbour_colours: the colours only tell neighbouring columns apart); and
-the reference model's value (a dark grey square, beside it). Values below the axis, including 0, sit on its bottom
+16-84% range (a thick bar), 2.5-97.5% range (a thin line), median (a dark tick across the bar) and mean (a dot), in a
+colour unlike its neighbours' from SciVisColor's discrete_muted, outlined in grey as several are pale
+(cru_common.CATEGORICAL and neighbour_colours: the colours only tell neighbouring columns apart); and the reference
+model's value (a black square, beside it). Values below the axis, including 0, sit on its bottom
 edge as triangles, and a range that reaches the bottom continues to 0. Below, the share of draws in which no rupture
 crossing the section is on (its prediction exactly 0), and the connectivity.
 
@@ -54,7 +55,7 @@ from cru_common import (CATEGORICAL, load_problem, neighbour_colours, reference_
                         settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-REF = INK2                                       # the reference model's marks: dark grey, apart from every series colour
+REF = INK                                        # the reference model's marks: black, apart from every series colour
 BARS = '#a9a8a1'                                 # the lower panels' bars: context, not a series
 QS = (2.5, 16.0, 50.0, 84.0, 97.5)               # the posterior points drawn and tabulated
 
@@ -89,7 +90,7 @@ def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
     ax.scatter(x[mid], v[mid], **pick(kw, mid))
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **pick(kw_edge, sel))
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, **{'linewidths': 0, **pick(kw_edge, sel)})
 
 
 def connectivity(G, rows, sec, S):
@@ -239,6 +240,7 @@ def main():
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    import matplotlib.patheffects as pe
     from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch, Rectangle
@@ -264,12 +266,15 @@ def main():
     fig_w = max(9.0, 0.34 * N + 2.0)
     note = textwrap.fill(note, int((fig_w - 0.5) * 17), break_on_hyphens=False)
     tab = settings_lines(settings, int((fig_w - 1.4) / 0.062500)) if settings else None
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=SURFACE) for c in CATEGORICAL[:3]),
+    thin = [pe.Stroke(linewidth=1.8, foreground=MUTED), pe.Normal()]     # outlines: the pale colours stand out
+    thick = [pe.Stroke(linewidth=5.8, foreground=MUTED), pe.Normal()]
+    few = CATEGORICAL[4], CATEGORICAL[6], CATEGORICAL[2]    # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=MUTED, mew=0.7) for c in few),
                 'posterior mean' if q is not None else 'value')]
     if q is not None:
-        handles += [(tuple(Line2D([], [], color=c, lw=5.0, solid_capstyle='butt') for c in CATEGORICAL[:3]),
-                     'posterior 16–84% (pale tick: median)'),
-                    (tuple(Line2D([], [], color=c, lw=1.0) for c in CATEGORICAL[:3]), 'posterior 2.5–97.5%')]
+        handles += [(tuple(Line2D([], [], color=c, lw=5.0, solid_capstyle='butt', path_effects=thick) for c in few),
+                     'posterior 16–84% (dark tick: median)'),
+                    (tuple(Line2D([], [], color=c, lw=1.0, path_effects=thin) for c in few), 'posterior 2.5–97.5%')]
     handles += [(Line2D([], [], color=INK, lw=1.0), 'target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
@@ -309,15 +314,15 @@ def main():
     ax.hlines(tsel, x - w, x + w, colors=INK, lw=1.0, zorder=3)
     if ref is not None:                                  # the reference's values, beside the posterior's
         scatter_edges(ax, x + 0.24, ref['ys'], edge, top, dict(s=20, marker='s', c=REF, edgecolors=SURFACE,
-                      linewidths=0.4, zorder=2.1), dict(s=22, c=REF, zorder=2.1))
+                      linewidths=0.4, zorder=3.6), dict(s=22, c=REF, zorder=3.6))
     if q is not None:
         clip = lambda v: np.clip(v, lo, hi)
-        ax.vlines(x, clip(q[0]), clip(q[4]), colors=col, lw=1.0, zorder=2.2)
-        ax.vlines(x, clip(q[1]), clip(q[3]), colors=col, lw=5.0, zorder=2.3)
-        on = q[2] > lo                                   # the median, as a pale tick across the bar
-        ax.hlines(q[2][on], x[on] - 0.09, x[on] + 0.09, colors=SURFACE, lw=1.2, zorder=2.4)
-    scatter_edges(ax, x, ym, edge, top, dict(s=30, c=col, edgecolors=SURFACE, linewidths=0.8, zorder=3.5),
-                  dict(s=30, c=col, zorder=3.5))
+        ax.vlines(x, clip(q[0]), clip(q[4]), colors=col, lw=1.0, zorder=2.2, path_effects=thin)
+        ax.vlines(x, clip(q[1]), clip(q[3]), colors=col, lw=5.0, zorder=2.3, path_effects=thick)
+        on = q[2] > lo                                   # the median, as a dark tick across the bar
+        ax.hlines(q[2][on], x[on] - 0.09, x[on] + 0.09, colors=INK, lw=1.0, zorder=2.4)
+    scatter_edges(ax, x, ym, edge, top, dict(s=30, c=col, edgecolors=MUTED, linewidths=0.7, zorder=3.5),
+                  dict(s=30, c=col, edgecolors=MUTED, linewidths=0.5, zorder=3.5))
     ax.set_ylabel('section mean prediction\n(in units of its measurement uncertainty)', color=INK2, fontsize=9)
     if q is not None:                                    # how often the section has no event at all
         a0.bar(x, 100 * p0, width=0.6, color=BARS, lw=0, zorder=2)

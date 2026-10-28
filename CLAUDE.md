@@ -25,8 +25,8 @@ plot_slip_rates.py (slip-rate targets against the mean model's predictions, line
 each section mean's posterior 16-84% range), plot_paleo_rates.py (paleo-rate targets against the model's predictions,
 log-log, with each prediction's posterior 16-84% range; the three ranges come from the predictions the runs next to
 the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions; the slip-rate sections and paleo rows are
-coloured from cru_common.CATEGORICAL, cycled along the targets so that neighbours differ, neighbour_colours, and
-the reference model is dark grey), plot_slip_sections.py (chosen slip-rate sections' posterior predictions, one column
+coloured from cru_common.CATEGORICAL (SciVisColor's discrete_muted, outlined in grey as several are pale), cycled
+along the targets so that neighbours differ, neighbour_colours, and the reference model is black), plot_slip_sections.py (chosen slip-rate sections' posterior predictions, one column
 each, by default 30 from the most isolated to the most connected by the number of other sections sharing a rupture
 with them, with each one's share of draws without an event; names from the rupture set's fault_sections.geojson;
 command line only, not in the notebook), randomized_nnls.py (best fits to the data plus fresh draws of their

@@ -32,8 +32,9 @@ axes; without a best fit, they follow what is plotted. Marks: a dot per section 
 posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it, below on
 the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as triangles; the
 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets (default 3). Each
-section's dot and bar share a colour, cycling through the reference palette's eight colours along the targets
-(cru_common.neighbour_colours), so that neighbouring sections never share one; the colours only tell neighbours apart,
+section's dot and bar share a colour, cycling along the targets through the seven of SciVisColor's discrete_muted
+(cru_common.CATEGORICAL and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
+never share one; the colours only tell neighbours apart,
 and a section keeps its colour in every model's figure. Sections that share a target (the inputs' slip rates are often
 round numbers: at 211k, 403 of 507 sections share theirs) stay stacked at it, one bar over another. Writes FIGURE
 (default: fig_slip_rates.png next to the first rate vectors) and, as its table view, the
@@ -41,7 +42,7 @@ same name with .txt: the mean model's chi-squared over the slip-rate rows as the
 sections (and of subsections) within one and two uncertainties, per section the target, the mean prediction, its
 posterior 16%, 50% and 84% points, their difference and their ratio, and per row the same without the posterior points.
 
-Reference: --reference RATES[:LABEL] marks another model's section means on every panel as dark grey squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's section means on every panel as black squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -57,7 +58,7 @@ from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, ne
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 SUBSECTION = '#a9a8a1'                           # context marks: the subsections behind each section mean
-REF = INK2                                       # the reference model's marks: dark grey, apart from every series colour
+REF = INK                                        # the reference model's marks: black, apart from every series colour
 
 
 def parse_set(s):
@@ -90,7 +91,7 @@ def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
     ax.scatter(x[mid], v[mid], **pick(kw, mid))
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **pick(kw_edge, sel))
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, **{'linewidths': 0, **pick(kw_edge, sel)})
 
 
 def main():
@@ -268,6 +269,7 @@ def main():
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
     halo = [pe.withStroke(linewidth=2.6, foreground=SURFACE)]
+    outline = [pe.Stroke(linewidth=2.0, foreground=MUTED), pe.Normal()]   # the pale colours' bars stand out from the surface
     for i, D in enumerate(data):
         for j, ax in enumerate(axs[i]):
             log = j == 1
@@ -300,15 +302,15 @@ def main():
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
             scatter_edges(ax, t, D['y'], lo_e, hi_e, dict(s=9, c=SUBSECTION, alpha=0.55, zorder=1.5),
                           dict(s=14, c=SUBSECTION, alpha=0.7, zorder=1.5))
-            if ref is not None:                      # the reference's section means, beneath the posterior's
+            if ref is not None:                      # the reference's section means, in front of the posterior's
                 scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', c=REF, edgecolors=SURFACE,
-                              linewidths=0.4, zorder=2.0), dict(s=22, c=REF, zorder=2.0))
+                              linewidths=0.4, zorder=3.4), dict(s=22, c=REF, zorder=3.4))
             if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
-                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], alpha=0.7,
-                          lw=1.2, zorder=2.2)
-            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=col, alpha=0.95, edgecolors=SURFACE, linewidths=0.6,
-                          zorder=2.5), dict(s=30, c=col, alpha=0.95, zorder=2.5))
+                ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.2,
+                          zorder=2.2, path_effects=outline)
+            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=26, c=col, edgecolors=MUTED, linewidths=0.6, zorder=2.5),
+                          dict(s=30, c=col, edgecolors=MUTED, linewidths=0.5, zorder=2.5))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
             pts = [(s, ts[s], min(max(D['ys'][s], lo_e), hi_e)) for s in D['groups']]
             frac = lambda v: ((np.log10(v) - np.log10(lim[0])) / (np.log10(lim[1]) - np.log10(lim[0])) if log
@@ -330,10 +332,10 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = CATEGORICAL[:3]                                # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=SURFACE) for c in few), 'section mean')]
+    few = CATEGORICAL[4], CATEGORICAL[6], CATEGORICAL[2]    # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.5, mfc=c, mec=MUTED, mew=0.6) for c in few), 'section mean')]
     if bars:
-        handles.append((tuple(Line2D([], [], color=c, alpha=0.7, lw=1.2) for c in few),
+        handles.append((tuple(Line2D([], [], color=c, lw=1.2, path_effects=outline) for c in few),
                         'posterior 16–84% of the section mean'))
     handles += [(Line2D([], [], ls='none', marker='o', ms=3.5, mfc=SUBSECTION, mec=SUBSECTION, alpha=0.7), 'subsection'),
                 (Line2D([], [], color=INK, lw=1.0), 'prediction = target'),

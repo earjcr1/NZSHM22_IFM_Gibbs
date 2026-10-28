@@ -34,13 +34,13 @@ Marks: a dot per paleo row at its target and mean prediction; the posterior 16-8
 runs are found (a bar reaching an axis continues beyond it, below possibly to 0); predictions beyond the axes,
 including 0, on their edges as triangles; the 1:1 line; the
 bands; and the original row numbers of the --label rows furthest from their targets in units of uncertainty (default
-4). Each row's dot and bar share a colour, cycling through the reference palette's eight colours along the targets
-(cru_common.neighbour_colours), so that neighbouring rows never share one; the colours only tell neighbours apart, and
-a row keeps its colour in every model's figure. Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
+4). Each row's dot and bar share a colour, cycling along the targets through the seven of SciVisColor's discrete_muted
+(cru_common.CATEGORICAL and neighbour_colours; outlined in grey, as several are pale), so that neighbouring rows never
+share one; the colours only tell neighbours apart, and a row keeps its colour in every model's figure. Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
 
-Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as dark grey squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as black squares, such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -56,7 +56,7 @@ from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, ne
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
-REF = INK2                                       # the reference model's marks: dark grey, apart from every series colour
+REF = INK                                        # the reference model's marks: black, apart from every series colour
 
 
 def parse_set(s):
@@ -89,7 +89,7 @@ def scatter_edges(ax, x, v, lo, hi, kw, kw_edge):
     ax.scatter(x[mid], v[mid], **pick(kw, mid))
     for sel, at, mk in ((low, lo, 'v'), (high, hi, '^')):
         if sel.any():
-            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, linewidths=0, **pick(kw_edge, sel))
+            ax.scatter(x[sel], np.full(int(sel.sum()), at), marker=mk, clip_on=False, **{'linewidths': 0, **pick(kw_edge, sel)})
 
 
 def main():
@@ -252,6 +252,7 @@ def main():
     bot_in = leg_y + 0.24 * leg_rows + 0.68                          # and the axis labels above the legend
     fig, axs = plt.subplots(1, ncol, figsize=(fig_w, top_in + sub_in + panel_in + bot_in), squeeze=False, facecolor=SURFACE)
     halo = [pe.withStroke(linewidth=2.6, foreground=SURFACE)]
+    outline = [pe.Stroke(linewidth=2.4, foreground=MUTED), pe.Normal()]   # the pale colours' bars stand out from the surface
     fmt = FuncFormatter(lambda v, _: f'{v:g}')
     xs = np.logspace(np.log10(t.min() / 1.25), np.log10(min(hi, 1.25 * t.max())), 400)   # where the targets are
     for j, D in enumerate(data):
@@ -276,13 +277,14 @@ def main():
         ax.fill_between(xs, np.maximum(xs - 2.0, lo), xs + 2.0, color=BAND2, lw=0, zorder=0.4)
         ax.fill_between(xs, np.maximum(xs - 1.0, lo), xs + 1.0, color=BAND, lw=0, zorder=0.5)
         ax.plot((lo, hi), (lo, hi), color=INK, lw=1.0, zorder=2)
-        if ref is not None:                          # the reference's predictions, beneath the posterior's
+        if ref is not None:                          # the reference's predictions, in front of the posterior's
             scatter_edges(ax, t, ref['y'], edge, top, dict(s=26, marker='s', c=REF, edgecolors=SURFACE, linewidths=0.6,
-                          zorder=2.1), dict(s=28, c=REF, zorder=2.1))
+                          zorder=3.2), dict(s=28, c=REF, zorder=3.2))
         if D['q'] is not None:                       # posterior 16-84% of each prediction, within the axes
-            ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), colors=col, alpha=0.7, lw=1.6, zorder=2.2)
-        scatter_edges(ax, t, D['y'], edge, top, dict(s=36, c=col, edgecolors=SURFACE, linewidths=0.8, zorder=3),
-                      dict(s=32, c=col, zorder=3))
+            ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), colors=col, lw=1.6, zorder=2.2,
+                      path_effects=outline)
+        scatter_edges(ax, t, D['y'], edge, top, dict(s=36, c=col, edgecolors=MUTED, linewidths=0.7, zorder=3),
+                      dict(s=32, c=col, edgecolors=MUTED, linewidths=0.5, zorder=3))
         # labels in a column in the empty corner on their points' side of the 1:1 line (lower right for points predicted
         # below their targets, upper left for those above), each near its point's height, with leader lines
         frac = lambda v: (np.log10(v) - np.log10(lo)) / (np.log10(hi) - np.log10(lo))
@@ -322,11 +324,12 @@ def main():
                         va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         ax.annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 12), textcoords='offset points',
                     va='bottom', color=INK2, fontsize=8.5, linespacing=1.35)
-    few = CATEGORICAL[:3]                                # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=6, mfc=c, mec=SURFACE) for c in few),
+    few = CATEGORICAL[4], CATEGORICAL[6], CATEGORICAL[2]    # the legend shows a few of the colours
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=6, mfc=c, mec=MUTED, mew=0.7) for c in few),
                 'prediction' if mm == 'model' else 'mean prediction')]
     if any(D['q'] is not None for D in data):
-        handles.append((tuple(Line2D([], [], color=c, alpha=0.7, lw=1.6) for c in few), 'posterior 16–84% of the prediction'))
+        handles.append((tuple(Line2D([], [], color=c, lw=1.6, path_effects=outline) for c in few),
+                        'posterior 16–84% of the prediction'))
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc=REF, mec=SURFACE), f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
