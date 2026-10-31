@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Nominal static checks of the bundle: inventory, parsing, leftovers, defaults, options and imports.
+"""Nominal static checks of the code set: inventory, parsing, leftovers, defaults, options and imports.
 
-    python tools/static_checks.py cru_workflow_bundle.zip UNZIPPED/cru_workflow
+    python tools/static_checks.py [ROOT]
 
-The first argument is the bundle zip (its entries under cru_workflow/), the second the folder it was unzipped into.
-Update SCRIPTS, the inventory and the default checks below whenever the code set or a default changes."""
+ROOT is the repository's folder, holding the notebook, docs/ (with CLAUDE.md) and tools/ (default: the folder above this
+script's). Update SCRIPTS, the inventory and the default checks below whenever the code set or a default changes."""
 import ast
 import json
+import os
 import re
+import subprocess
 import sys
-import zipfile
 
-ZIP, ROOT = sys.argv[1], sys.argv[2]          # the bundle zip, and the folder it was unzipped into (…/cru_workflow)
+ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py']
-DOCS = ['CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md', 'docs/prelim_summary.txt']
+TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
+DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
 
 
@@ -23,17 +25,22 @@ def check(ok, msg):
         fails.append(msg)
 
 
-src = {s: open(f'{ROOT}/{s}').read() for s in SCRIPTS}
+src = {s: open(f'{ROOT}/tools/{s}').read() for s in SCRIPTS}        # the scripts, in tools/ beside the dev tools
 nb = json.load(open(f'{ROOT}/cru_workflow.ipynb'))
 cells = [(i, ''.join(c['source'])) for i, c in enumerate(nb['cells']) if c['cell_type'] == 'code']
 md = [(i, ''.join(c['source'])) for i, c in enumerate(nb['cells']) if c['cell_type'] == 'markdown']
 
 print('1. Inventory')
-names = sorted(n[len('cru_workflow/'):] for n in zipfile.ZipFile(ZIP).namelist() if not n.endswith('/'))
-expected = sorted(SCRIPTS + ['cru_workflow.ipynb', 'CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md',
-                             'docs/prelim_summary.txt', 'docs/prelim.png'])
-check(names == expected, f'{len(names)} files: {", ".join(names)}' + ('' if names == expected else
-      f'; missing {sorted(set(expected) - set(names))}, extra {sorted(set(names) - set(expected))}'))
+expected = sorted(['tools/' + s for s in SCRIPTS + TOOLS] + ['cru_workflow.ipynb'] + DOCS)
+missing = [f for f in expected if not os.path.isfile(f'{ROOT}/{f}')]
+stray = sorted(f for f in os.listdir(ROOT) if f.endswith('.py'))      # scripts outside tools/, where the notebook looks
+check(not missing and not stray, f'{len(expected)} files in place: the scripts and tools in tools/, the notebook, and docs/ '
+      '(CLAUDE.md among them)' + (f'; missing {missing}' if missing else '') + (f'; scripts outside tools/: {stray}' if stray else ''))
+try:                                           # for information: anything else under git
+    tracked = subprocess.run(['git', '-C', ROOT, 'ls-files'], capture_output=True, text=True, check=True).stdout.splitlines()
+    print(f'     also under git: {", ".join(sorted(set(tracked) - set(expected))) or "nothing"}')
+except (OSError, subprocess.CalledProcessError):
+    pass
 
 print('2. Parsing')
 trees = {}
@@ -53,9 +60,9 @@ check(not bad, f'all {len(cells)} notebook code cells parse ({len(md)} markdown 
 
 print('3. Leftovers (every hit, to judge its context)')
 texts = {s: src[s] for s in SCRIPTS}
-texts.update({d: open(f'{ROOT}/{d}').read() for d in DOCS})
+texts.update({d: open(f'{ROOT}/{d}').read() for d in DOCS if os.path.isfile(f'{ROOT}/{d}')})
 texts.update({f'notebook cell {i}': c for i, c in cells + md})
-pat = re.compile(r'SLAB_FLOOR|DIAG_FLOOR|spikeslab:-12|1e-12 by default|FLOOR = -12|default -12|\(1e-12\)')
+pat = re.compile(r'SLAB_FLOOR|DIAG_FLOOR|1e-10 by default|FLOOR = -10|default -10|-10 by default|−10 by default|\(1e-10\)')   # the default before -12
 nhits = 0
 for name, t in texts.items():
     for ln, line in enumerate(t.split('\n'), 1):
@@ -122,15 +129,15 @@ check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('
 check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
       "gibbs.py --prior halfway (command line only), with its exact test in the full self-test set")
 _cfg_keys = re.findall(r'(\w+)=', ''.join(c for _, c in cells if 'CONFIG = dict(' in c))
-check(re.findall(r'^DOWN_THE_MIDDLE = (\w+)', cells[0][1], re.M) == ['True'] and 'down_the_middle' in _cfg_keys
+check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ["'zero-model'"] and 'down_the_middle' in _cfg_keys
       and any("if DOWN_THE_MIDDLE:\n        args += ['--down-the-middle']" in c for _, c in cells)
       and "'--down-the-middle', nargs='?', const='equal', default=None, choices=['equal', 'zero-model']" in src['gibbs.py']
       and 'balance_rows' in src['gibbs.py'] and "weights='equal'" in src['cru_common.py']
       and any("if DOWN_THE_MIDDLE == 'zero-model':\n            args += ['zero-model']" in c for _, c in cells)
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
-      'notebook DOWN_THE_MIDDLE = True, recorded, and passed to gibbs.py --down-the-middle, with \'zero-model\' its per-type '
-      'weights (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
-check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
+      'notebook DOWN_THE_MIDDLE = \'zero-model\' (each type\'s own weight), recorded, and passed to gibbs.py --down-the-middle; '
+      'True its common weight (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
+check(sum(c.count('*ref_args()') for _, c in cells) == 6 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
       'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
@@ -149,13 +156,13 @@ check(re.findall(r'^RANDOMIZED_NNLS = (\d+)', cells[0][1], re.M) == ['0'] and 'r
       'cells are skipped')
 for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     d = argdefault(trees[s], '--diag-floor')
-    check(d == -10, f'{s} --diag-floor default {d!r}')
+    check(d == -12, f'{s} --diag-floor default {d!r}')
 m = re.findall(r"spike_mode:.*\n.*\n\s*W, se, top = float\(sp_\[0\] or (-?\d+)\)", src['gibbs.py'])
-check(m == ['-10'], f'gibbs.py spike-and-slab default slab floor {m}')
+check(m == ['-12'], f'gibbs.py spike-and-slab default slab floor {m}')
 cfg = cells[0][1]
-check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-10'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
+check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-12'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
       f"notebook FLOOR = {re.findall(r'^FLOOR = (-?[0-9]+)', cfg, re.M)}, no SLAB_FLOOR or DIAG_FLOOR setting")
-for script in ('preliminaries.py', 'gibbs.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
+for script in ('preliminaries.py', 'gibbs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     cc = [i for i, c in cells if 'sh(' in c and f"'{script}'" in c
           and not (c.count(f"'{script}'") == 1 and re.search(rf"sh\(\s*'{script}',\s*'--selftest'(,\s*'\w+')?\)", c))]
     ok = bool(cc) and all('--diag-floor={FLOOR}' in c for i, c in cells if i in cc)

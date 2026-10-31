@@ -3,7 +3,7 @@
     python tools/fig_mfd_levels.py AS_GIVEN_RUN_DIR TWO_MEASUREMENTS_RUN_DIR OUT.png
 
 AS_GIVEN_RUN_DIR needs spikeslab/ runs; TWO_MEASUREMENTS_RUN_DIR needs spikeslab/ and theta/ runs (main_rep0, main_rep1).
-The scripts are found in CRU_CODE, or in the folder above this one."""
+The scripts are found in CRU_CODE, or beside this one, in tools/."""
 import os
 import sys
 import numpy as np
@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-sys.path.insert(0, os.environ.get('CRU_CODE', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))   # the scripts' folder
+sys.path.insert(0, os.environ.get('CRU_CODE', os.path.dirname(os.path.abspath(__file__))))   # the scripts' folder
 from cru_common import load_problem, load_stream, magnitude_bins
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'

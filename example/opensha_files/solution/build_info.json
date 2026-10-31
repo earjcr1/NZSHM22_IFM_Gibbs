@@ -1,0 +1,18 @@
+{
+  "buildTime": 1786319988737,
+  "buildTimeHuman": "Mon Aug 10 11:59:48 NZST 2026",
+  "gitHash": "2055f468d8cd24917225e6c2b22a1191d96c5f0e",
+  "branch": "fix/rup-normalization-2024",
+  "remoteUrl": "https://github.com/GNS-Science/opensha",
+  "openshaVersion": "25.4.2",
+  "creationTime": 1791268126828,
+  "creationTimeHuman": "Tue Oct 06 19:28:46 NZDT 2026",
+  "extra": [
+    {
+      "gitHash": "b2754a2559aad9b4e5806084b4be67a82e7250d0",
+      "buildTime": "Mon Aug 10 12:00:01 NZST 2026",
+      "remoteUrl": "https://github.com/GNS-Science/nzshm-opensha",
+      "branch": "tags/release/b2754a2"
+    }
+  ]
+}

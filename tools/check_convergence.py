@@ -2,11 +2,11 @@
 """Convergence checks of a result set's replicate runs, with the verdict, PASS or CHECK, against the preset's targets.
 
     python check_convergence.py RUN [RUN ...] --preset quick|conservative|very_conservative [--problem cru_clean.npz]
-                                [--diag-floor -10] [--out REPORT] [--save STATS]
+                                [--diag-floor -12] [--out REPORT] [--save STATS]
 
 RUN is a gibbs.py run (its --out, e.g. spikeslab/main_rep0), one per replicate of the result set. Each run is read from
 its stored draws (<run>_samples.npy) when it has them, otherwise from the running summaries it wrote
-(<run>_stream.npz), which give the same R-hat and effective draws. Log rates below 10^--diag-floor (1e-10, the
+(<run>_stream.npz), which give the same R-hat and effective draws. Log rates below 10^--diag-floor (1e-12, the
 notebook's FLOOR) count as equal for every prior.
 
 Prints, and writes to REPORT (default: convergence_report.txt next to the first run):
@@ -121,8 +121,8 @@ def main():
     ap.add_argument('--preset', required=True, choices=list(NEED), help='the run lengths the runs were made with, for the '
                     'verdict\'s targets')
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem the runs sampled, for the fit check')
-    ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as equal in R-hat '
-                    'and effective draws (default -10; the notebook passes its FLOOR)')
+    ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 rate below which rates count as equal in R-hat '
+                    'and effective draws (default -12; the notebook passes its FLOOR)')
     ap.add_argument('--out', default=None, help='the report (default: convergence_report.txt next to the first run)')
     ap.add_argument('--save', default=None, help='per-rupture R-hat and effective draws (default: convergence.npz next to '
                     'the report)')

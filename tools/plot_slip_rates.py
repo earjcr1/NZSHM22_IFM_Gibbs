@@ -42,7 +42,7 @@ same name with .txt: the mean model's chi-squared over the slip-rate rows as the
 sections (and of subsections) within one and two uncertainties, per section the target, the mean prediction, its
 posterior 16%, 50% and 84% points, their difference and their ratio, and per row the same without the posterior points.
 
-Reference: --reference RATES[:LABEL] marks another model's section means on every panel as black squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's section means on every panel as open black squares (triangles on the edges), such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -301,8 +301,9 @@ def main():
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=3)
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
             if ref is not None:                      # the reference's section means, in front of the posterior's
-                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', c=REF, edgecolors=SURFACE,
-                              linewidths=0.4, zorder=3.4), dict(s=22, c=REF, zorder=3.4))
+                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', facecolors='none', edgecolors=REF,
+                              linewidths=0.7, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.7,
+                              zorder=3.4))
             if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
                 ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.0,
@@ -338,7 +339,7 @@ def main():
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc=REF, mec=SURFACE),
+        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.7),
                         f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
     if clipped:
         handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))

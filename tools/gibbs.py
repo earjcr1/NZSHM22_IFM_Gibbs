@@ -10,7 +10,7 @@ exponential proposal in the tails, so conditionals sitting hundreds of sds beyon
     python gibbs.py --selftest
 
 Under the log-rate priors (--prior), each rate is drawn exactly by a slice sampler in log rate. The default is
-spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from the slab floor (1e-10)
+spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from the slab floor (1e-12)
 up to a soft top at its bin's target rate, and the fraction on in each bin is estimated. --slab sqrt makes an on
 rupture's rate uniform in sqrt(rate) instead (density m^-1/2, not 1/m), the cross-check on how the lower end of the
 rates is treated. --prior binbox-theta:1:0 (per-bin log-uniform boxes whose depths put no pressure on the bin totals,
@@ -259,19 +259,35 @@ static inline void col_dots(int64_t kg, const double *data, const int32_t *indic
     dt[0] = d0; dt[1] = d1; dt[2] = d2; dt[3] = d3;
 }
 
+/* The band (--band): every banded row's residual r_j kept within [RLO_j, RHI_j] (unbanded rows: -inf, +inf).  With the
+   other rates fixed, x_i moves r_j by g (x_i - xi) on each row of its column, so the band allows x_i in [*lo, *hi].  The
+   current value xi is always inside (a guard against rounding at a band's edge). */
+static inline void band_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
+                               const double *RLO, const double *RHI, double xi, double *lo, double *hi) {
+    double a = -INFINITY, b = INFINITY;
+    for (int64_t p = p0; p < p1; p++) {
+        const double g = data[p]; const int32_t j = indices[p];
+        if (g > 0.0) { a = fmax(a, (RLO[j] - r[j]) / g); b = fmin(b, (RHI[j] - r[j]) / g); }
+        else if (g < 0.0) { a = fmax(a, (RHI[j] - r[j]) / g); b = fmin(b, (RLO[j] - r[j]) / g); }
+    }
+    *lo = fmin(xi + a, xi); *hi = fmax(xi + b, xi);
+}
+
 /* K chains, chain-major: X[k*n + i], R[k*N + j] (R = G X - d, kept current), rng[4k..4k+3]; Gaussian likelihood.
    pkind 0: prior exp(-beta.m) on [lo, hi] (beta = 0: flat).  pkind 1: log-box prior (beta ignored), drawn by slice
    sampling z = log m.  The chains move through the ruptures together, but each is updated exactly as if it ran alone
    (its own residual, random numbers and order of operations), so the output does not depend on how chains are grouped.
    LLO, LHI, SC: per-rupture constants from kernel_consts.  gam: spike-and-slab's slab tilt (0: log-uniform).  MIX: the
-   halfway prior's constants (pkind 1), or NULL. */
+   halfway prior's constants (pkind 1), or NULL.  RLO, RHI: the band (each row's residual kept within them), or NULL:
+   each update is then drawn from its conditional restricted to the rates the band allows (band_bounds), and under
+   spike-and-slab an "off" state the band forbids is never taken, nor an "on" one outside it. */
 void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices,
                const double *data, const double *inv_csq, const double *lo, const double *hi,
                const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t nsweeps,
                int64_t pkind, double zlo, double zhi, double kedge, double slw,
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
-               double gam, const double *MIX)
+               double gam, const double *MIX, const double *RLO, const double *RHI)
 {
     const double s2 = sigma * sigma;
     for (int64_t sw = 0; sw < nsweeps; sw++) {
@@ -292,7 +308,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 double *x = X + k * n, *r = R + k * N;
                 uint64_t *s = rng + 4 * k;
                 const double xi = x[i], dot = dt[q];
-                double xn;
+                double xn, blo = -INFINITY, bhi = INFINITY;     /* the rates the band allows x_i */
+                if (RLO && !empty) band_bounds(data, indices, p0, p1, r, RLO, RHI, xi, &blo, &bhi);
                 if (pkind == 3) {             /* spike-and-slab: x_i is 0 (off) or its slab value (on) */
                     lbctx c;
                     c.pk = 1; c.muz = 0.0; c.kz = 0.0; c.gam = gam; c.mA = 0.0; c.mB = 0.0;
@@ -305,6 +322,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         const double z0 = log(xi);
                         c.m0 = xi; c.lp0 = lb_prior(&c, z0);
                         if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
+                        if (RLO) {            /* the band: the slice within the rates it allows (z0 always among them) */
+                            if (blo > 0.0) c.zmin = fmin(fmax(c.zmin, log(blo)), z0);
+                            c.zmax = fmax(fmin(c.zmax, log(bhi)), z0);
+                        }
                         m = exp(lb_slice(s, &c, z0, slw));
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
                         m = slab_draw_m(s, &c, SC + 4 * i);
@@ -315,6 +336,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     if (!empty) { const double d0 = dot - xi * aa; lr -= (2.0 * m * d0 + m * m * aa) / (2.0 * s2); }
                     const double pon = lr >= 0.0 ? 1.0 / (1.0 + exp(-lr)) : exp(lr) / (1.0 + exp(lr));
                     xn = (unif(s) < pon) ? m : 0.0;
+                    if (RLO) {                /* the band: a state outside it has probability 0 */
+                        const int mok = m >= blo && m <= bhi, zok = blo <= 0.0;
+                        if (mok && !zok) xn = m; else if (!mok && zok) xn = 0.0; else if (!mok) xn = xi;
+                    }
                     SM[k * n + i] = m;
                 } else if (pkind >= 1) {
                     lbctx c;
@@ -325,6 +350,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     c.zmin = LLO[i];
                     c.zmax = LHI[i];
                     const double z0 = log(xi > DBL_MIN ? xi : DBL_MIN);
+                    if (RLO) {                /* the band: the slice within the rates it allows (z0 always among them) */
+                        if (blo > 0.0) c.zmin = fmin(fmax(c.zmin, log(blo)), z0);
+                        c.zmax = fmax(fmin(c.zmax, log(bhi)), z0);
+                    }
                     c.m0 = exp(z0); c.lp0 = lb_prior(&c, z0);
                     c.mu = 0.0; c.inv2s2 = 0.0;
                     if (!empty) {
@@ -337,9 +366,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 } else {
                     const double v = inv_csq[i], sd = sigma * sqrt(v);
                     const double mu = xi - dot * v - s2 * v * beta[i];
-                    const double a = (lo[i] - mu) / sd, b = (hi[i] - mu) / sd;
-                    if (a >= 0.0)      xn = lo[i] + sd * tn_tail_off(s, a, b - a);
-                    else if (b <= 0.0) xn = hi[i] - sd * tn_tail_off(s, -b, b - a);
+                    const double li = fmax(lo[i], blo), hi_ = fmin(hi[i], bhi);   /* the band's limits, if any */
+                    const double a = (li - mu) / sd, b = (hi_ - mu) / sd;
+                    if (a >= 0.0)      xn = li + sd * tn_tail_off(s, a, b - a);
+                    else if (b <= 0.0) xn = hi_ - sd * tn_tail_off(s, -b, b - a);
                     else               xn = mu + sd * tn_mid(s, a, b);
                 }
                 if (xn < lo[i]) xn = lo[i]; else if (xn > hi[i]) xn = hi[i];
@@ -362,10 +392,27 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
 
 /* Swap moves: for each listed pair (i, j), propose exchanging m_i and m_j (an involution, so the Metropolis ratio
    is target(new)/target(old)).  Change of ||r||^2: 2 dl (G_i - G_j).r + dl^2 ||G_i - G_j||^2 with dl = m_j - m_i.
-   The log-box prior is the same for every rate, so it cancels; an exponential prior contributes -dl (beta_i - beta_j). */
+   The log-box prior is the same for every rate, so it cancels; an exponential prior contributes -dl (beta_i - beta_j).
+   With the band (RLO, RHI; or NULL), an exchange that would leave a row outside it is rejected: the target is 0 there. */
+static int swap_in_band(const int64_t *indptr, const int32_t *indices, const double *data, int64_t i, int64_t j,
+                        double dl, const double *r, const double *RLO, const double *RHI)
+{
+    int64_t p = indptr[i], q = indptr[j];                /* the two columns' rows, merged (each sorted) */
+    const int64_t pe = indptr[i + 1], qe = indptr[j + 1];
+    while (p < pe || q < qe) {
+        int32_t row; double dv;
+        if (q >= qe || (p < pe && indices[p] < indices[q])) { row = indices[p]; dv = data[p] * dl; p++; }
+        else if (p >= pe || indices[q] < indices[p]) { row = indices[q]; dv = -data[q] * dl; q++; }
+        else { row = indices[p]; dv = data[p] * dl - data[q] * dl; p++; q++; }
+        const double rn = r[row] + dv;
+        if (rn < RLO[row] || rn > RHI[row]) return 0;
+    }
+    return 1;
+}
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
-              const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc)
+              const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
+              const double *RLO, const double *RHI)
 {
     const double s2 = sigma * sigma;
     for (int64_t k = 0; k < K; k++) {
@@ -382,7 +429,7 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const double dl = mj - mi;
             const double dchi = 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
             const double dlp = -dl * (beta[i] - beta[j]);
-            if (log(unif(s)) < -0.5 * dchi / s2 + dlp) {
+            if (log(unif(s)) < -0.5 * dchi / s2 + dlp && (!RLO || swap_in_band(indptr, indices, data, i, j, dl, r, RLO, RHI))) {
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
                 for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) r[indices[p]] -= data[p] * dl;
                 x[i] = mj; x[j] = mi; acc++;
@@ -515,11 +562,11 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P]
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 4
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -554,6 +601,7 @@ class Target:
         self.mixw = 0.0                            # the halfway prior (pkind 1): the linear part's share (0: none)
         self.n_data = self.N                       # the data rows; any rows after them are the balance term's
         self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
+        self.rlo = self.rhi = None                 # --band: each row's residual kept within [rlo, rhi] (set_band)
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
             self.pkind = 1
@@ -587,6 +635,21 @@ class Target:
             if self.kedge == 0:
                 X = np.minimum(X, np.exp(self.zhi))
         return np.ascontiguousarray(X)
+
+    def set_band(self, F, rows):
+        """The band: each of these rows' predictions kept within a factor F of its target, d/F to F d (the target must be
+        positive); in residuals r = prediction - d, from d/F - d to F d - d.  Other rows are unbounded."""
+        rows = np.asarray(rows)
+        if (self.d[rows] <= 0).any():
+            raise ValueError('the band needs positive targets')
+        self.rlo, self.rhi = np.full(self.N, -np.inf), np.full(self.N, np.inf)
+        self.rlo[rows], self.rhi[rows] = self.d[rows] / F - self.d[rows], F * self.d[rows] - self.d[rows]
+        self.band = dict(F=float(F), rows=rows, tol=np.where(np.isfinite(self.rlo), 1e-9 * np.abs(self.d), 0.0))
+
+    def band_outside(self, R):
+        """Per chain, how many rows of the band its residuals R leave outside it (beyond rounding)."""
+        tol = self.band['tol']
+        return np.sum((R < self.rlo - tol) | (R > self.rhi + tol), axis=1)
 
     def residual(self, X):
         if np.count_nonzero(X) > 0.05 * X.size:
@@ -639,7 +702,8 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       ctypes.c_void_p(SM.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
-                      None if KC[3] is None else _ptr(KC[3]))
+                      None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
+                      None if T.rhi is None else _ptr(T.rhi))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -660,7 +724,8 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
         lib.swap_run(T.N, T.n, k1 - k0, _ptr(T.indptr), _ptr(T.indices), _ptr(T.data), _ptr(T.csq), len(pi),
                      _ptr(pi), _ptr(pj), _ptr(gij), _ptr(T.beta), T.sigma,
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
-                     ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8))
+                     ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
+                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -782,6 +847,22 @@ def _lb_slice_py(g, c, z0, w):
             R = z1
 
 
+def _band_bounds_np(T, r, rows, vals, xi):
+    """NumPy twin of band_bounds: the rates x_i can take with every banded row of its column inside the band."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        a = np.where(vals > 0, (T.rlo[rows] - r) / vals, (T.rhi[rows] - r) / vals)
+        b = np.where(vals > 0, (T.rhi[rows] - r) / vals, (T.rlo[rows] - r) / vals)
+    a, b = a[vals != 0], b[vals != 0]
+    return min(xi + (a.max() if a.size else -np.inf), xi), max(xi + (b.min() if b.size else np.inf), xi)
+
+
+def _band_slice_limits(c, blo, bhi, z0):
+    """The slice's range within the rates the band allows (z0 always among them), as in the kernel."""
+    if blo > 0:
+        c['zmin'] = min(max(c['zmin'], np.log(blo)), z0)
+    c['zmax'] = max(min(c['zmax'], np.log(bhi) if bhi < np.inf else np.inf), z0)
+
+
 def _sweep_logbox_numpy(T, X, R, g, i, MUZ=None, KZ=None):
     p0, p1 = T.indptr[i], T.indptr[i + 1]
     empty = p1 == p0 or T.inv_csq[i] <= 0
@@ -801,6 +882,8 @@ def _sweep_logbox_numpy(T, X, R, g, i, MUZ=None, KZ=None):
             dot = float(R[k, rows] @ vals)
             aa = T.csq[i]
             c.update(mu=xi - dot / aa, inv2s2=0.5 * aa / T.sigma ** 2)
+            if T.rlo is not None:
+                _band_slice_limits(c, *_band_bounds_np(T, R[k, rows], rows, vals, xi), z0)
         xn = min(max(np.exp(_lb_slice_py(g, c, z0, T.slw)), lo), hi)
         if xn != xi and not empty:
             R[k, rows] += vals * (xn - xi)
@@ -850,12 +933,17 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
                  zmin=np.log(lo) if lo > 0 else -np.inf, zmax=np.log(hi), mu=0.0, inv2s2=0.0, pk=1, muz=0.0, kz=0.0, m0=1.0,
                  gam=T.gam)
         dot = aa = 0.0
+        blo, bhi = -np.inf, np.inf                       # the rates the band allows x_i
         if not empty:
             dot, aa = float(R[k, rows] @ vals), T.csq[i]
+            if T.rlo is not None:
+                blo, bhi = _band_bounds_np(T, R[k, rows], rows, vals, xi)
         if xi > 0:
             c['m0'] = xi
             if not empty:
                 c.update(mu=xi - dot / aa, inv2s2=0.5 * aa / s2)
+            if T.rlo is not None:
+                _band_slice_limits(c, blo, bhi, np.log(xi))
             m = np.exp(_lb_slice_py(g, c, np.log(xi), T.slw))
         else:
             m = np.exp(_slab_draw_py(g, c))
@@ -863,11 +951,24 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
         if not empty:
             lr -= (2.0 * m * (dot - xi * aa) + m * m * aa) / (2.0 * s2)
         pon = 1.0 / (1.0 + np.exp(-lr)) if lr >= 0 else np.exp(lr) / (1.0 + np.exp(lr))
-        xn = min(max(m if _u01(g) < pon else 0.0, lo), hi)
+        xn = m if _u01(g) < pon else 0.0
+        if T.rlo is not None:                            # the band: a state outside it has probability 0
+            mok, zok = blo <= m <= bhi, blo <= 0.0
+            xn = m if (mok and not zok) else 0.0 if (zok and not mok) else xi if not mok else xn
+        xn = min(max(xn, lo), hi)
         SM[k, i] = m
         if xn != xi and not empty:
             R[k, rows] += vals * (xn - xi)
         X[k, i] = xn
+
+
+def _swap_in_band(T, r, ri, vi, rj, vj, dl):
+    """NumPy twin of swap_in_band: whether exchanging the two rates keeps every banded row inside the band."""
+    rows = np.union1d(ri, rj)
+    rn = r[rows].copy()
+    rn[np.searchsorted(rows, ri)] += vi * dl
+    rn[np.searchsorted(rows, rj)] -= vj * dl
+    return bool(np.all((rn >= T.rlo[rows]) & (rn <= T.rhi[rows])))
 
 
 def swaps_numpy(T, X, R, g, nacc):
@@ -884,7 +985,7 @@ def swaps_numpy(T, X, R, g, nacc):
             dl = mj - mi
             dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
             dlp = -dl * (T.beta[i] - T.beta[j])
-            if np.log(_u01(g)) < -0.5 * dchi / s2 + dlp:
+            if np.log(_u01(g)) < -0.5 * dchi / s2 + dlp and (T.rlo is None or _swap_in_band(T, R[k], ri, vi, rj, vj, dl)):
                 R[k, ri] += vi * dl
                 R[k, rj] -= vj * dl
                 X[k, i], X[k, j] = mj, mi
@@ -913,14 +1014,18 @@ def sweeps_numpy(T, X, R, g, nsweeps, MUZ=None, KZ=None, SM=None, LOD=None):
             sd = T.sigma * np.sqrt(v)
             xi = X[:, i].copy()
             mu = xi - (R[:, rows] @ vals) * v - s2 * v * be
-            a, b = (lo - mu) / sd, (hi - mu) / sd
+            li, hi_ = np.full(len(xi), lo), np.full(len(xi), hi)
+            if T.rlo is not None:                        # the band's limits on each chain's x_i
+                bb = np.array([_band_bounds_np(T, R[k, rows], rows, vals, xi[k]) for k in range(len(xi))])
+                li, hi_ = np.maximum(li, bb[:, 0]), np.minimum(hi_, bb[:, 1])
+            a, b = (li - mu) / sd, (hi_ - mu) / sd
             xn = np.empty_like(mu)
             tl, th = a >= 0, b <= 0
             md = ~(tl | th)
             if tl.any():
-                xn[tl] = lo + sd * _tail_off_np(g, a[tl], (b - a)[tl])
+                xn[tl] = li[tl] + sd * _tail_off_np(g, a[tl], (b - a)[tl])
             if th.any():
-                xn[th] = hi - sd * _tail_off_np(g, -b[th], (b - a)[th])
+                xn[th] = hi_[th] - sd * _tail_off_np(g, -b[th], (b - a)[th])
             if md.any():
                 xn[md] = mu[md] + sd * _mid_np(g, a[md], b[md])
             np.clip(xn, lo, hi, out=xn)
@@ -1068,6 +1173,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         raise NotImplementedError('transfer moves need the C kernel')
     if transfers and T.pkind == 2:
         raise NotImplementedError('transfer moves are not implemented for the hierarchical prior')
+    if T.rlo is not None and (transfers or T.pkind == 2):
+        raise NotImplementedError('the band is not implemented for transfer moves or the hierarchical prior')
     H = T.hier
     MUZ, KZ = np.zeros((K, T.n)), np.zeros(K)
     if H is not None:
@@ -1078,6 +1185,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     if SS is not None:
         SM = np.ascontiguousarray(np.where(X > 0, X, np.exp(T.zhi)))
     R = T.residual(X)
+    if T.rlo is not None and T.band_outside(R).any():
+        raise ValueError(f'the start leaves {T.band_outside(R).max()} rows outside the band (a factor {T.band["F"]:g} of '
+                         'their targets); start inside it')
     rng = seed_states(seed, K)
     g = np.random.default_rng(seed)
     if SS is not None:                                   # per-bin inclusion probabilities: exact Beta updates
@@ -1174,6 +1284,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         Rd = R if nd == T.N else R[:, :nd]                   # the data rows (after them, the balance term's)
         y = Rd + T.d[:nd]
         tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
+        if T.rlo is not None:                                # rows outside the band: always 0, a check
+            tr.setdefault('band_outside', np.zeros((K, n_rec), np.int64))[:, rec] = T.band_outside(R)
         if nd < T.N:                                         # the balance term, and each type's relative shortfall
             tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:] ** 2, 1) / T.sigma ** 2
             tr.setdefault('balance_s', np.zeros((K, n_rec, T.N - nd)))[:, rec] = R[:, nd:] / np.sqrt(T.balance['A'])
@@ -1677,6 +1789,116 @@ def selftest_swaps(backends=('c', 'numpy')):
     return ok
 
 
+def selftest_band(backends=('c', 'numpy')):
+    """The band (--band): the self-tests' small problems with every prediction kept within a factor F of its target, against
+    grid integrals restricted to the band: spike-and-slab (P(on) and E[log10 m | on], F = 1.3, where the band forbids the
+    first rate's off state), a log-box prior with swap
+    moves between near-duplicate columns (E[log10 m], F = 2) and the linear prior's truncated normals (E[m], F = 1.25);
+    with each, how far the exact answer without the band lies, and that no recorded draw leaves the band."""
+    from scipy.special import betaln
+    print('the band: spike-and-slab, a log-box prior with swaps and the linear prior vs grid integrals within the band')
+    ok = True
+    inside = lambda Y, d, F: np.all((Y >= d / F) & (Y <= d * F), axis=-1)
+
+    def z(x, e):
+        return (x.mean() - e) / (x.std() / np.sqrt(max(1.0, ess(x))))
+    # spike-and-slab: the selftest_spikeslab problem
+    Gs, d, sig, lo10, su, a_, b_, F = np.array([[1.0, 0.7], [0.5, 1.0]]), np.array([0.6, 0.3]), 0.1, \
+        np.array([-3.0, -5.0]), np.array([0.05, 0.15]), 1.0, 1.0, 1.3
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        w = np.full(len(ui), ui[1] - ui[0])
+        w[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * w
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def exact(band):
+        def Lb(m1, m2):
+            Y = np.stack(np.broadcast_arrays(m1 + 0.7 * m2, 0.5 * m1 + m2), -1)
+            L = np.exp(-0.5 * np.sum((Y - d) ** 2, -1) / sig ** 2)
+            return L * inside(Y, d, F) if band else L
+        L1, L2, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+        w00, w10, w01, w11 = pg[0] * Lb(0.0, 0.0), pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2), pg[2] * L12.sum()
+        W = w00 + w10 + w01 + w11
+        return ([(w10 + w11) / W, (w01 + w11) / W],
+                [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+                 (pg[1] * (gw[1] * u[1]) @ L2 + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)])
+    (p_on, e_u), (p_free, e_free) = exact(True), exact(False)
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), d, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.set_band(F, [0, 1])
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.4, 0.1], (K, 1)), sw, sw // 10, 1, be, 1, 7, monitor=(0, 1), verbose=False,
+                    keep_samples=False)                  # a start inside the band
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= int(tr['band_outside'].max()) == 0 and bool(inside(Mo @ Gs.T, d, F).all())
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            p, e_on = on.mean(), ess(on)
+            sd_p = np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / e_on)
+            zp, zf = (p - p_on[i]) / sd_p, (p - p_free[i]) / sd_p
+            if p_on[i] > 1 - 1e-12:                  # the band forbids this rate's off state: never off
+                zp = 0.0 if p == 1.0 else np.inf
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, e_on * p)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} spike-and-slab rate {i}: P(on) {p:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}; without the band '
+                  f'{p_free[i]:.4f}, z {zf:+.1f}); E[log10 m | on] {uu.mean():.4f} (exact {e_u[i]:.4f}, z {zu:+.2f}; without '
+                  f'{e_free[i]:.4f})')
+    # a log-box prior with swap moves: the selftest_swaps problem
+    G2, d2, s2, se, F2 = np.array([[1.0, 0.98], [0.5, 0.53]]), np.array([0.4, 0.2]), 0.09, 0.5, 2.0
+    ug = np.linspace(-3.0 - 6 * se, 0.0, 2001)
+    U1, U2 = np.meshgrid(ug, ug, indexing='ij')
+    fe = lambda x: np.where(x < -3.0, np.exp(-(x + 3.0) ** 2 / (2 * se ** 2)), 1.0)
+    Y = np.stack([G2[0, 0] * 10 ** U1 + G2[0, 1] * 10 ** U2, G2[1, 0] * 10 ** U1 + G2[1, 1] * 10 ** U2], -1)
+    Pg = np.exp(-np.sum((Y - d2) ** 2, -1) / (2 * s2)) * fe(U1) * fe(U2)
+    ex_free = [np.sum(Pg * U1) / Pg.sum(), np.sum(Pg * U2) / Pg.sum()]
+    Pg = Pg * inside(Y, d2, F2)
+    ex = [np.sum(Pg * U1) / Pg.sum(), np.sum(Pg * U2) / Pg.sum()]
+    pairs = (np.array([0]), np.array([1]), np.array([G2[:, 0] @ G2[:, 1]]))
+    for be in backends:
+        T = Target(G2, d2, 0.3, 0.0, 1.0, logbox=(-3, 0, 0.5), pairs=pairs)
+        T.set_band(F2, [0, 1])
+        tr = sample(T, np.tile([0.4, 1e-3], (4, 1)), 40000 if be == 'c' else 8000, 1000, 1, backend=be, monitor=[0, 1],
+                    verbose=False, keep_samples=False, swaps=True)
+        x = np.log10(tr['mon'][:, 1000:])
+        ok &= int(tr['band_outside'].max()) == 0 and bool(inside(10 ** x @ G2.T, d2, F2).all())
+        zs = [z(x[..., j], ex[j]) for j in (0, 1)]
+        ok &= all(abs(v) < 4 for v in zs)
+        print(f'   {be:5s} log-box + swaps: E[log10 m] ({x[..., 0].mean():+.4f}, {x[..., 1].mean():+.4f}) exact ({ex[0]:+.4f}, '
+              f'{ex[1]:+.4f}) z = ({zs[0]:+.2f}, {zs[1]:+.2f}); without the band ({ex_free[0]:+.4f}, {ex_free[1]:+.4f}); '
+              f'swap acceptance {tr["swap_rate"].mean():.2f}')
+    # the linear prior: the selftest_linear problem
+    G3, d3, sig3, top, F3 = np.array([[1.0, 0.7], [0.5, 1.0]]), np.array([0.6, 0.45]), 0.1, np.array([0.3, 1.0]), 1.25
+    ul = [np.linspace(0.0, t, 3001) for t in top]
+    A, B = np.meshgrid(ul[0], ul[1], indexing='ij')
+    Y = np.stack([A + 0.7 * B, 0.5 * A + B], -1)
+    Pg = np.exp(-np.sum((Y - d3) ** 2, -1) / (2 * sig3 ** 2))
+    ex_free = [np.sum(Pg * A) / Pg.sum(), np.sum(Pg * B) / Pg.sum()]
+    Pg = Pg * inside(Y, d3, F3)
+    ex = [np.sum(Pg * A) / Pg.sum(), np.sum(Pg * B) / Pg.sum()]
+    for be in backends:
+        T = Target(sp.csc_matrix(G3), d3, sig3, 0.0, top)
+        T.set_band(F3, [0, 1])
+        K, sw = (8, 40000) if be == 'c' else (4, 8000)
+        tr = sample(T, np.full((K, 2), 0.3), sw, 1000, 1, be, 1, 13, monitor=(0, 1), verbose=False, keep_samples=False)
+        x = tr['mon'][:, 1000:]
+        ok &= int(tr['band_outside'].max()) == 0 and bool(inside(x @ G3.T, d3, F3).all())
+        zs = [z(x[..., j], ex[j]) for j in (0, 1)]
+        ok &= all(abs(v) < 4 for v in zs)
+        print(f'   {be:5s} linear: E[m] ({x[..., 0].mean():.4f}, {x[..., 1].mean():.4f}) exact ({ex[0]:.4f}, {ex[1]:.4f}) '
+              f'z = ({zs[0]:+.2f}, {zs[1]:+.2f}); without the band ({ex_free[0]:.4f}, {ex_free[1]:.4f})')
+    print('SELFTEST (band)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
+
+
 def selftest_hier(backends=('c', 'numpy')):
     """Hierarchical lognormal prior: (1) rate updates with fixed hyperparameters vs a grid in log rate;
     (2) with the likelihood switched off, the full sampler must reproduce the hyperpriors."""
@@ -1738,6 +1960,34 @@ def selftest_hier(backends=('c', 'numpy')):
     return ok
 
 
+def band_start(G, d, rows, F, m0, hi, verbose=True):
+    """A start inside the band from m0 (rates, 0 <= m <= hi): the least-squares fit to the data with a penalty, growing
+    in steps, on predictions outside a band a little narrower than the band (a factor F^0.9), so that the result lies
+    strictly inside it; None if the steps end with rows still outside the band."""
+    from scipy.optimize import minimize
+    G = sp.csr_matrix(G)
+    Gt = G.T.tocsr()
+    rows = np.asarray(rows)
+    f_in = F ** 0.9
+    lo, hi_y = np.full(len(d), -np.inf), np.full(len(d), np.inf)
+    lo[rows], hi_y[rows] = d[rows] / f_in, d[rows] * f_in
+    out = lambda y: int(np.sum((y[rows] < d[rows] / F) | (y[rows] > d[rows] * F)))
+    m = np.clip(np.asarray(m0, np.float64), 0.0, hi)
+    bounds = list(zip(np.zeros(len(m)), np.broadcast_to(hi, len(m))))
+    for lam in (1e2, 1e4, 1e6, 1e8):
+        def fg(x):
+            y = G @ x
+            e, v = y - d, np.minimum(y - lo, 0.0) + np.maximum(y - hi_y, 0.0)
+            return 0.5 * e @ e + 0.5 * lam * v @ v, Gt @ (e + lam * v)
+        m = minimize(fg, m, jac=True, method='L-BFGS-B', bounds=bounds, options=dict(maxiter=20000, maxfun=40000)).x
+        n_out = out(G @ m)
+        if verbose:
+            print(f'   penalty {lam:g}: chi2 {np.sum((G @ m - d) ** 2):.1f}, {n_out} rows outside the band', flush=True)
+        if n_out == 0:
+            return m
+    return None
+
+
 def rupture_bins(P, rows, block):
     """Each rupture's magnitude bin: the index, in rows, of the bin row holding it."""
     Gr = P['G'].tocsr()
@@ -1760,7 +2010,7 @@ def main():
     ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz; not after preliminaries.py --no-nnls), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
-                         "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
+                         "slab floor 1e-12 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
                          "fraction on in each bin estimated under a Beta(1, 1) prior; --slab sqrt: a slab uniform in sqrt(rate)); "
                          "spikeslab:A:TOP:a:b "
                          "for slab floor 10^A, TOP = soft, hard or a factor F (hard top at F x R_j), and a Beta(a, b) prior; "
@@ -1805,6 +2055,11 @@ def main():
                     help='a rate counts as data-pinned if its pilot 95th percentile x ||G_i|| x spread / sigma exceeds this')
     ap.add_argument('--transfers', default=None,
                     help='transfer-direction library from build_transfers.py: one pass of exact transfer moves per recorded draw')
+    ap.add_argument('--band', type=float, default=None, metavar='F',
+                    help='keep the prediction of every data row with a positive target (slip-rate, MFD-bin and paleo rows; '
+                         'each subsection its own row) within a factor F of its target, from d/F to F d: a hard constraint on '
+                         'the rates, for any prior (10: an order of magnitude either way). A start outside it is first moved '
+                         'inside by a penalized least-squares fit')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
     ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
@@ -1813,8 +2068,8 @@ def main():
     ap.add_argument('--out', default='gibbs_run')
     ap.add_argument('--no-samples', action='store_true', help='do not write the (chains, draws, n) float32 sample file; the running '
                     'summaries in <out>_stream.npz are written either way')
-    ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as equal in the running '
-                    'R-hat and effective-draw summaries (default -10; the notebook passes its FLOOR)')
+    ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 rate below which rates count as equal in the running '
+                    'R-hat and effective-draw summaries (default -12; the notebook passes its FLOOR)')
     ap.add_argument('--keep-draws', type=int, default=0, help='keep this many whole draws per run (divided evenly among the chains, '
                     'evenly spaced over the recorded draws after burn-in) in <out>_kept.npy, float32, with their chain and '
                     'record numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
@@ -1843,6 +2098,7 @@ def main():
         ok &= selftest_linear()
         ok &= selftest_halfway()
         ok &= selftest_balance()
+        ok &= selftest_band()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -1894,9 +2150,9 @@ def main():
         halfway_mode = a.prior.startswith('halfway')
         theta_mode = a.prior.startswith('binbox-theta')
         floor_mode = a.prior.startswith('binbox-floor') or spike_mode or halfway_mode  # a common floor 10^W for every bin
-        if spike_mode:                                   # spikeslab:A:TOP:a:b (slab floor 10^A, A = -10 by default)
+        if spike_mode:                                   # spikeslab:A:TOP:a:b (slab floor 10^A, A = -12 by default)
             sp_ = (a.prior.split(':') + [None] * 5)[1:5]
-            W, se, top = float(sp_[0] or -10), 0.0, str(sp_[1] or 'soft').lower()
+            W, se, top = float(sp_[0] or -12), 0.0, str(sp_[1] or 'soft').lower()
             ss_a, ss_b = float(sp_[2] or 1), float(sp_[3] or 1)
         elif halfway_mode:                               # halfway:A:TOP:W (floor 10^A, A = -10; W the uniform part's share)
             hw = (a.prior.split(':') + [None] * 4)[1:4]
@@ -2014,6 +2270,16 @@ def main():
     T.n_data = P['G'].shape[0]                     # the data rows; the balance term's rows follow them
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
+    band_rows = None
+    if a.band is not None:                         # the band: every data row with a positive target
+        if not a.band > 1:
+            raise SystemExit(f'--band {a.band:g}: give a factor above 1 (10: an order of magnitude either way)')
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--band is not implemented for transfer moves or the hierarchical prior')
+        band_rows = np.flatnonzero(P['d'] > 0)
+        T.set_band(a.band, band_rows)
+        print(f'band: the predictions of {len(band_rows)} of the {T.n_data} data rows (those with a positive target) kept '
+              f'within a factor {a.band:g} of their targets; any start outside it is moved inside first')
     if a.init == 'nnls':
         with np.load(fprelim) as pr0:
             if 'm_nnls' not in pr0.files:
@@ -2024,6 +2290,21 @@ def main():
     else:
         X0 = np.load(a.init)['final_X'] if a.init.endswith('.npz') else np.load(a.init)
         X0 = np.tile(X0, (a.chains, 1)) if X0.ndim == 1 else X0[np.arange(a.chains) % X0.shape[0]]
+    if band_rows is not None:                      # a start outside the band: moved inside it first
+        Gd = sp.csr_matrix(P['G'])
+        y0 = (Gd @ X0.T).T
+        n_out = np.sum((y0[:, band_rows] < P['d'][band_rows] / a.band) | (y0[:, band_rows] > P['d'][band_rows] * a.band), 1)
+        if n_out.any():
+            hi_m = T.hi * (scale if scale is not None else 1.0)
+            print(f'band: the start leaves {n_out.max()} rows outside it; a penalized least-squares fit from it:')
+            ms = band_start(Gd, P['d'], band_rows, a.band, X0[int(np.argmax(n_out))], hi_m)
+            if ms is None:
+                raise SystemExit('band: no start inside it was found; the band may admit no model of these inputs')
+            X0 = np.tile(ms, (a.chains, 1))
+            Xs = T.init(X0 if scale is None else X0 / scale)
+            left = T.band_outside(T.residual(Xs[:1]))[0]
+            if left:                               # e.g. rates below the slab floor, switched off by the prior
+                raise SystemExit(f'band: the start found leaves {left} rows outside it once the prior\'s support is applied')
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)

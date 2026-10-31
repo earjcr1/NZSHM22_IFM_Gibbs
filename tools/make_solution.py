@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""make_solution.py -- a rate vector as the solution of an OpenSHA fault system solution.
+"""make_solution.py -- a rate vector as the rates of an OpenSHA fault system solution.
 
     python make_solution.py nnls/nnls_vectors.npz --ruptures DATA/NZSHM22_InversionSolution-211k --out nnls
     python make_solution.py spikeslab/rate_vectors.npz --column mean --ruptures DATA/NZSHM22_InversionSolution-211k \
-        --out spikeslab/mean_solution
+        --out spikeslab
 
 The rupture set (--ruptures: an OpenSHA solution folder for the same model, or its ruptures/ folder) describes the
-ruptures; a solution adds their annual rates. Writes OUT/solution/: rates.csv ('Rupture Index,Annual Rate', one row per rupture of
-the rupture set, numbers as OpenSHA writes them), modules.json and, if the rupture set has it,
-sub_seismo_on_fault_mfds.csv with its module (Sub-Seismogenic On-Fault MFDs; the NZSHM22 solutions carry the rupture
-set's copy). OpenSHA's build information and the simulated annealing's progress are not written: they describe how
-OpenSHA made its own solution. --zip FILE also writes a complete solution archive (README, modules.json, the rupture
-set's files and this solution) that OpenSHA loads.
+ruptures; a solution adds their annual rates. Writes OUT/rates.csv ('Rupture Index,Annual Rate', one row per rupture of
+the rupture set, numbers as OpenSHA writes them), as in an OpenSHA solution's solution/rates.csv. --zip FILE also
+writes a complete solution archive that OpenSHA loads: README, modules.json, the rupture set's files, and solution/
+with these rates, its modules.json and, if the rupture set has it, sub_seismo_on_fault_mfds.csv with its module
+(Sub-Seismogenic On-Fault MFDs; the NZSHM22 solutions carry the rupture set's copy). OpenSHA's build information and
+the simulated annealing's progress are not written: they describe how OpenSHA made its own solution.
 
 The rate vectors are those of preliminaries.py (nnls_vectors.npz or .csv: the best fit) or make_tables.py
 (rate_vectors.npz or .csv: mean, median, mode, the quantiles and the representatives rep_01, rep_02, ...): one rate per
@@ -27,7 +27,6 @@ OUT/solution_report.txt."""
 import argparse
 import json
 import os
-import shutil
 import sys
 import zipfile
 from decimal import Decimal
@@ -174,7 +173,7 @@ def main():
                     "..., rep_01, rep_02, ... (default: best_fit if the .csv has it, otherwise mean)")
     ap.add_argument('--ruptures', required=True, help="the rupture set: an OpenSHA solution folder for the same model (e.g. "
                     "NZSHM22_InversionSolution-211k), or its ruptures/ folder (indices.csv, properties.csv, ...)")
-    ap.add_argument('--out', required=True, help='folder for the solution (OUT/solution/) and its report')
+    ap.add_argument('--out', required=True, help='folder for the rates (OUT/rates.csv) and the report')
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem the rates belong to, for the checks '
                     '(default cru_clean.npz)')
     ap.add_argument('--slip-block', default='S')
@@ -214,24 +213,15 @@ def main():
     print(f'== checks against {a.problem} ({len(P["keep_cols"]):,} ruptures kept, {int((~kept).sum()):,} removed, all at 0)')
     check_alignment(P, mag, ptr, idx, a.slip_block, a.bins_block, a.lowest_bin, a.bin_width)
 
-    sol = os.path.join(a.out, 'solution')
-    os.makedirs(sol, exist_ok=True)
-    with open(os.path.join(sol, 'rates.csv'), 'w', newline='\n') as f:
+    rates = os.path.join(a.out, 'rates.csv')
+    with open(rates, 'w', newline='\n') as f:
         f.write('Rupture Index,Annual Rate\n')
         f.writelines(f'{i},{java_double(x, single)}\n' for i, x in enumerate(v))
-    modules = []
-    sub = os.path.join(rs, SUBSEISMO)
-    if os.path.exists(sub):
-        shutil.copyfile(sub, os.path.join(sol, SUBSEISMO))
-        modules.append(SUBSEISMO_MODULE)
-    elif os.path.exists(os.path.join(sol, SUBSEISMO)):   # an earlier solution's copy, for another rupture set
-        os.remove(os.path.join(sol, SUBSEISMO))
-    with open(os.path.join(sol, 'modules.json'), 'w') as f:
-        f.write(json.dumps(modules, indent=2) + '\n')
-    written = ['rates.csv', 'modules.json'] + ([SUBSEISMO] if modules else [])
-    print(f'== wrote {sol}/: {", ".join(written)}' + ('' if modules else f' (the rupture set has no {SUBSEISMO})'))
+    print(f'== wrote {rates}')
     if a.zip:
         top = os.path.dirname(rs)
+        sub = os.path.join(rs, SUBSEISMO)
+        modules = [SUBSEISMO_MODULE] if os.path.exists(sub) else []
         with zipfile.ZipFile(a.zip, 'w', zipfile.ZIP_DEFLATED) as z:
             for name, text in (('README', README), ('modules.json', json.dumps(TOP_MODULES, indent=2) + '\n')):
                 p = os.path.join(top, name)                  # the rupture set's package's own copies, if beside it
@@ -242,9 +232,12 @@ def main():
             for name in sorted(os.listdir(rs)):
                 if not name.startswith('.') and os.path.isfile(os.path.join(rs, name)):
                     z.write(os.path.join(rs, name), 'ruptures/' + name)
-            for name in written:
-                z.write(os.path.join(sol, name), 'solution/' + name)
-        print(f'== wrote {a.zip}: a complete solution archive ({os.path.getsize(a.zip) / 1e6:.0f} MB)')
+            z.write(rates, 'solution/rates.csv')
+            z.writestr('solution/modules.json', json.dumps(modules, indent=2) + '\n')
+            if modules:
+                z.write(sub, 'solution/' + SUBSEISMO)
+        print(f'== wrote {a.zip}: a complete solution archive ({os.path.getsize(a.zip) / 1e6:.0f} MB)'
+              + ('' if modules else f'; the rupture set has no {SUBSEISMO}'))
 
 
 if __name__ == '__main__':

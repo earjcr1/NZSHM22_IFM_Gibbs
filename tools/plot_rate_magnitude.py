@@ -2,7 +2,7 @@
 """Rates by magnitude: log10 of each rupture's posterior mean rate against its magnitude bin.
 
     python plot_rate_magnitude.py VECTORS[:LABEL] [VECTORS[:LABEL] ...] [--problem cru_clean.npz] [--out FIGURE]
-                                  [--lowest-bin 6.8] [--bin-width 0.1] [--diag-floor -10]
+                                  [--lowest-bin 6.8] [--bin-width 0.1] [--diag-floor -12]
                                   [--bins-block MFD] [--slip-block S] [--reference RATES[:LABEL]]
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
@@ -26,7 +26,7 @@ best fit, the rate axis follows what is plotted. Rates above the axis sit on its
 bin's total over its target, is fixed the same way, by three of the largest bin uncertainty either side of 1 and the best
 fit's ratios; ratios beyond it sit on its edges as triangles.
 
-Marks: a dot per rupture at log10 of its mean rate, with means below 10^--diag-floor (1e-10, the notebook's FLOOR),
+Marks: a dot per rupture at log10 of its mean rate, with means below 10^--diag-floor (1e-12, the notebook's FLOOR),
 including exactly 0, in a band at the bottom; a line across each bin at its target total rate R_j (with the
 notebook's soft top, also every rupture's soft upper limit); and a dot for the bin's total
 of the means, which is the posterior mean of the bin's total. Penalised ruptures (rate 0 by construction) are left
@@ -110,8 +110,8 @@ def main():
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='lower magnitude edge of the lowest bin row left after '
                     'cleaning (default 6.8)')
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
-    ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which means go in the bottom band '
-                    '(default -10; the notebook passes FLOOR)')
+    ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 rate below which means go in the bottom band '
+                    '(default -12; the notebook passes FLOOR)')
     ap.add_argument('--bins-block', default='MFD')
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates, whose bin totals "

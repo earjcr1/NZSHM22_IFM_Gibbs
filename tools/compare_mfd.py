@@ -5,11 +5,11 @@ population, and the products (subsection totals, exceedance probabilities) with 
     python tools/compare_mfd.py RUN_DIR_A:PRIOR:LABEL RUN_DIR_B:PRIOR:LABEL
 
 RUN_DIR is a notebook RUN_DIR (cru_clean.npz at its top, runs in PRIOR/main_rep0 and main_rep1, made without stored
-draws or with). The scripts are found in CRU_CODE, or in the folder above this one."""
+draws or with). The scripts are found in CRU_CODE, or beside this one, in tools/."""
 import os
 import sys
 import numpy as np
-sys.path.insert(0, os.environ.get('CRU_CODE', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))   # the scripts' folder
+sys.path.insert(0, os.environ.get('CRU_CODE', os.path.dirname(os.path.abspath(__file__))))   # the scripts' folder
 from cru_common import load_problem, load_stream, magnitude_bins
 
 

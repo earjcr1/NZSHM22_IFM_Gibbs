@@ -8,12 +8,12 @@
 # MFD_UNCERTAINTY = 'two-measurements') and logs/. A few minutes on one core; compare the numbers with TESTING.md, then delete RUNS_DIR. The quick preset and the default
 # settings are set here, whatever the notebook's configuration cell holds; PYTHON names the interpreter (python3).
 set -u
-CODE=$(cd "$(dirname "$0")/.." && pwd)                 # the scripts' folder (tools/ sits inside it)
+CODE=$(cd "$(dirname "$0")/.." && pwd)                 # the notebook's folder (the scripts are in its tools/)
 DATA=$(cd "$1" && pwd)
 mkdir -p "$2" && RUNS=$(cd "$2" && pwd)
 L=$RUNS/logs; NB=$CODE/cru_workflow.ipynb; R=$CODE/tools/run_nb.py; PY=${PYTHON:-python3}
 PIN=("PRESET='quick'" "SLIP_SECTIONS='auto'" FLOOR=-10 BLOCKS=None DOWN_THE_MIDDLE=True
-     RANDOMIZED_NNLS=0)                                              # the settings TESTING.md's reference values were measured under
+     RANDOMIZED_NNLS=0 BAND=None)                                              # the settings TESTING.md's reference values were measured under
 mkdir -p "$L"
 mark() { echo "$1 $(date +%T)" >> "$L/progress.txt"; }
 step() { local name=$1; shift; [ -f "$L/done_$name" ] && return; mark "$name start"; "$@" > "$L/$name.txt" 2>&1; local rc=$?

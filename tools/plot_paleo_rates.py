@@ -40,7 +40,7 @@ share one; the colours only tell neighbours apart, and a row keeps its colour in
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
 
-Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as black squares, such as the
+Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as open black squares (triangles on the edges), such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
 predictions. Its rates on ruptures that cleaning removed are left out of its predictions, and the table says how much.
@@ -278,8 +278,8 @@ def main():
         ax.fill_between(xs, np.maximum(xs - 1.0, lo), xs + 1.0, color=BAND, lw=0, zorder=0.5)
         ax.plot((lo, hi), (lo, hi), color=INK, lw=1.0, zorder=2)
         if ref is not None:                          # the reference's predictions, in front of the posterior's
-            scatter_edges(ax, t, ref['y'], edge, top, dict(s=26, marker='s', c=REF, edgecolors=SURFACE, linewidths=0.6,
-                          zorder=3.2), dict(s=28, c=REF, zorder=3.2))
+            scatter_edges(ax, t, ref['y'], edge, top, dict(s=26, marker='s', facecolors='none', edgecolors=REF,
+                          linewidths=0.8, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.8, zorder=3.2))
         if D['q'] is not None:                       # posterior 16-84% of each prediction, within the axes
             ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), colors=col, lw=1.3, zorder=2.2,
                       path_effects=outline)
@@ -331,7 +331,8 @@ def main():
         handles.append((tuple(Line2D([], [], color=c, lw=1.3, path_effects=outline) for c in few),
                         'posterior 16–84% of the prediction'))
     if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc=REF, mec=SURFACE), f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
+        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.8),
+                        f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty'),
                 (Patch(facecolor=BAND2, edgecolor='none'), 'within two')]
