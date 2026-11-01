@@ -7,7 +7,7 @@ What to test and check before routine use: @TESTING.md
 Workflow notebook: cru_workflow.ipynb (the configuration, then one call per step: it drives the scripts below end to
 end and computes nothing itself; it finds them in tools/ beside it, CODE_DIR).
 Code, all in tools/: preliminaries.py (clean, with soft zero-forcing rows forcing their ruptures to 0 like the penalty rows; diagnostics;
-NNLS, skipped with --no-nnls (the notebook always computes it and starts its chains from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
+NNLS, always computed (about 25 s at 211k; the chains start from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
 nnls_vectors.npz, which the notebook draws with the three fit-figure scripts below, and nnls_vectors.csv, a table with
 rate_vectors.csv's rows), make_solution.py (a rate vector as an OpenSHA fault system solution's rates.csv, after
 checking that the model's OpenSHA rupture set describes the same ruptures; --zip FILE also writes a complete archive
@@ -85,7 +85,8 @@ came with it): every data row with a positive target (each subsection's slip-rat
 keeps its prediction within d/F to F d, a hard constraint for any prior (Target.set_band; the kernel's band_bounds
 restricts each update, under spike-and-slab a forbidden off or on state is never taken, swaps that would leave the band
 are rejected; selftest_band in the full self-test set; without it every run is bit-identical). A start outside it is
-moved in by band_start (penalized least squares, about 4 minutes at 211k), kept beside the problem as
+moved in by band_start (penalized least squares, each rate in units of 1/||G_i||, stopped once inside
+F^0.95; about 1.5 minutes at 211k), kept beside the problem as
 <problem>_band<F>_start.npz and reused when the problem, band, start and bounds match (band_start_key). The best fit
 and randomized_nnls.py ignore it (REPORT.md, "The band").
 Kept for comparison only, and no longer tested: binbox-theta:1:0 (theta = 1: per-bin log-uniform boxes below R_j,

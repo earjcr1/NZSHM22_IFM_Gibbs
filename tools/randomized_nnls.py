@@ -14,7 +14,7 @@ well; and a rate near 0 comes out exactly 0 whenever the noise pushes it below.
 
 The fits run in --workers processes, one thread each (about 10 s per fit at 211,000 ruptures on an M2). Fit k's noise
 comes from the k-th seed spawned from --seed, so the results do not depend on the number of workers. The unperturbed
-best fit comes from prelim_results.npz next to --problem, or is computed here if cleaning skipped it (--no-nnls).
+best fit comes from prelim_results.npz next to --problem, or is computed here if that holds none.
 
 Writes into --out:
   rnnls_fits.npz             each fit's predictions (as the likelihood sees the rows), its chi2 against its own and the

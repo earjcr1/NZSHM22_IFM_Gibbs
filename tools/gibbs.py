@@ -316,7 +316,11 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 uint64_t *s = rng + 4 * k;
                 const double xi = x[i], dot = dt[q];
                 double xn, blo = -INFINITY, bhi = INFINITY;     /* the rates the band allows x_i */
-                if (RLO && !empty) band_bounds(data, indices, p0, p1, r, RLO, RHI, xi, &blo, &bhi);
+                /* the band's limits on x_i; under spike-and-slab an off rupture (x_i = 0, so its lower limit is at
+                   most 0) can leave the band only by switching on, so its limits are found only then (below): the
+                   same decisions and random numbers, without a pass over the column for each of the many off ruptures */
+                const int off = (pkind == 3 && xi == 0.0);
+                if (RLO && !empty && !off) band_bounds(data, indices, p0, p1, r, RLO, RHI, xi, &blo, &bhi);
                 if (pkind == 3) {             /* spike-and-slab: x_i is 0 (off) or its slab value (on) */
                     lbctx c;
                     c.pk = 1; c.muz = 0.0; c.kz = 0.0; c.gam = gam; c.mA = 0.0; c.mB = 0.0;
@@ -343,7 +347,12 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     if (!empty) { const double d0 = dot - xi * aa; lr -= (2.0 * m * d0 + m * m * aa) / (2.0 * s2); }
                     const double pon = lr >= 0.0 ? 1.0 / (1.0 + exp(-lr)) : exp(lr) / (1.0 + exp(lr));
                     xn = (unif(s) < pon) ? m : 0.0;
-                    if (RLO) {                /* the band: a state outside it has probability 0 */
+                    if (RLO && off) {         /* the band, from off: switching on to m is allowed if m is inside */
+                        if (xn > 0.0 && !empty) {
+                            band_bounds(data, indices, p0, p1, r, RLO, RHI, xi, &blo, &bhi);
+                            if (m > bhi) xn = 0.0;
+                        }
+                    } else if (RLO) {         /* the band: a state outside it has probability 0 */
                         const int mok = m >= blo && m <= bhi, zok = blo <= 0.0;
                         if (mok && !zok) xn = m; else if (!mok && zok) xn = 0.0; else if (!mok) xn = xi;
                     }
@@ -1969,24 +1978,41 @@ def selftest_hier(backends=('c', 'numpy')):
 
 def band_start(G, d, rows, F, m0, hi, verbose=True):
     """A start inside the band from m0 (rates, 0 <= m <= hi): the least-squares fit to the data with a penalty, growing
-    in steps, on predictions outside a band a little narrower than the band (a factor F^0.9), so that the result lies
-    strictly inside it; None if the steps end with rows still outside the band."""
+    in steps, on predictions outside a band a little narrower than the band (a factor F^0.9), stopped as soon as every
+    row lies within F^0.95 of its target, so strictly inside the band (the start needs only to be inside it; how well it
+    fits matters only to the first sweeps of burn-in). Each rate is measured in units of 1 / ||G_i|| for the
+    optimizer, which has the same minimum but converges several times faster (column norms span two orders of
+    magnitude or more). None if the steps end with rows still outside the band."""
     from scipy.optimize import minimize
     G = sp.csr_matrix(G)
-    Gt = G.T.tocsr()
+    c = 1.0 / np.maximum(np.sqrt(np.asarray(G.multiply(G).sum(0)).ravel()), 1e-300)   # each rate's unit
+    Gs = G @ sp.diags(c)
+    Gst = Gs.T.tocsr()
     rows = np.asarray(rows)
     f_in = F ** 0.9
     lo, hi_y = np.full(len(d), -np.inf), np.full(len(d), np.inf)
     lo[rows], hi_y[rows] = d[rows] / f_in, d[rows] * f_in
-    out = lambda y: int(np.sum((y[rows] < d[rows] / F) | (y[rows] > d[rows] * F)))
-    m = np.clip(np.asarray(m0, np.float64), 0.0, hi)
-    bounds = list(zip(np.zeros(len(m)), np.broadcast_to(hi, len(m))))
+    out = lambda y, f=F: int(np.sum((y[rows] < d[rows] / f) | (y[rows] > d[rows] * f)))
+    u = np.clip(np.asarray(m0, np.float64), 0.0, hi) / c
+    bounds = list(zip(np.zeros(len(u)), np.broadcast_to(hi, len(u)) / c))
     for lam in (1e2, 1e4, 1e6, 1e8):
         def fg(x):
-            y = G @ x
+            y = Gs @ x
             e, v = y - d, np.minimum(y - lo, 0.0) + np.maximum(y - hi_y, 0.0)
-            return 0.5 * e @ e + 0.5 * lam * v @ v, Gt @ (e + lam * v)
-        m = minimize(fg, m, jac=True, method='L-BFGS-B', bounds=bounds, options=dict(maxiter=20000, maxfun=40000)).x
+            return 0.5 * e @ e + 0.5 * lam * v @ v, Gst @ (e + lam * v)
+        inside = {}
+
+        def stop(xk):                                    # inside the band with a margin: done
+            if out(Gs @ xk, F ** 0.95) == 0:
+                inside['x'] = np.array(xk)
+                raise StopIteration
+        try:
+            res = minimize(fg, u, jac=True, method='L-BFGS-B', bounds=bounds, callback=stop,
+                           options=dict(maxiter=20000, maxfun=40000))
+            u = inside.get('x', res.x)
+        except StopIteration:                            # an older SciPy passes it on instead of stopping
+            u = inside['x']
+        m = u * c
         n_out = out(G @ m)
         if verbose:
             print(f'   penalty {lam:g}: chi2 {np.sum((G @ m - d) ** 2):.1f}, {n_out} rows outside the band', flush=True)
@@ -2024,7 +2050,7 @@ def main():
     ap.add_argument('--sweeps', type=int, default=4000)
     ap.add_argument('--burn', type=int, default=1000)
     ap.add_argument('--thin', type=int, default=4)
-    ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz; not after preliminaries.py --no-nnls), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
+    ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
                          "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
@@ -2303,7 +2329,8 @@ def main():
     if a.init == 'nnls':
         with np.load(fprelim) as pr0:
             if 'm_nnls' not in pr0.files:
-                raise SystemExit(f'--init nnls: {fprelim} holds no best fit (cleaning ran with --no-nnls); use --init zero')
+                raise SystemExit(f'--init nnls: {fprelim} holds no best fit (cleaned by an older version?); clean again, or use '
+                                 '--init zero')
             X0 = np.tile(pr0['m_nnls'], (a.chains, 1))
     elif a.init == 'zero':
         X0 = np.zeros((a.chains, n))

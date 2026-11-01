@@ -33,8 +33,7 @@ Writes the cleaned problem (--out), all diagnostics (prelim_results.npz), a summ
 plot_slip_rates.py, plot_paleo_rates.py and make_solution.py; nnls_vectors.csv: the same as a table with the rows of
 rate_vectors.csv, one per rupture of the inputs, columns rupture, penalised and best_fit, removed ruptures 0); for
 --out other than cru_clean.npz these names get the --out stem as a prefix. Copies left beside --out by the layout
-before nnls/ are removed. --no-nnls skips the best fit: then there are no nnls_vectors files and no best fit in
-prelim_results.npz, so gibbs.py starts elsewhere.
+before nnls/ are removed.
 Nothing here forms a dense copy of G or anything n x n: the near-duplicate search compares each column only with the
 columns that can pass its cosine threshold (an exact pruning), the best fit works on the sparse G with an updated QR
 factorization, and the resolution diagonal takes G a block of columns at a time. At 2e5 ruptures (2,395 rows) the
@@ -376,9 +375,6 @@ def main():
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
     ap.add_argument('--no-duplicates', action='store_true', help='skip the near-duplicate search (about 13 s at 2e5 '
                     'ruptures); gibbs.py --swap-cos then finds no pairs')
-    ap.add_argument('--no-nnls', action='store_true', help='skip the best nonnegative fit (NNLS; about 25 s at 2e5 ruptures): '
-                    'then no nnls_vectors files (nnls/), no best-fit columns in the tables, and gibbs.py needs --init zero (or '
-                    'another start)')
     ap.add_argument('--keep-soft-penalties', action='store_true',
                     help='keep the rows after the slip-rate rows that have a target of 0 and a single entry (soft zero-forcing '
                          'penalties, 1e4 in the NZSHM22 inputs) as the inputs give them, instead of forcing their ruptures to 0 '
@@ -647,51 +643,46 @@ def main():
             say(f'   {k:10s}: {v["pairs"]:7d} pairs, {v["cols_in_groups"]:6d} columns in {v["groups"]:5d} groups, largest group {v["largest"]}')
         say(f'   exactly proportional pairs (cos > 1 - 1e-12): {dup["exact_proportional_pairs"]}')
 
-    # ---- best fit (optional)
-    m_nnls = r = chi2_min = None
-    if args.no_nnls:
-        say('== best fit: skipped (--no-nnls)')
-    else:
-        t = time.time()
-        m_nnls, its = nnls_lawson_hanson(G, d)
-        r = G @ m_nnls - d
-        grad = G.T @ r / sig ** 2
-        chi2_min = float(r @ r) / sig ** 2
-        say(f'== best fit (Lawson-Hanson NNLS, {its} outer iterations, {time.time() - t:.1f}s)')
-        say(f'   chi^2_min = {chi2_min:.2f} for N = {N} rows, {n_data} non-empty (chi^2/N = {chi2_min / N:.3f}); nonzeros {np.sum(m_nnls > 0)}; '
-            f'max m = {m_nnls.max():.3g} (hi = {args.hi:g} {"binds!" if m_nnls.max() > args.hi else "does not bind"}); sum m = {m_nnls.sum():.4g}')
-        for b, nm in enumerate(bnames):
-            k = block == b
-            say(f'   block {nm:9s}: chi^2 = {r[k] @ r[k] / sig ** 2:7.2f} over {k.sum():3d} rows, max |r|/sigma = {abs(r[k]).max() / sig:.2f}')
-        tol = 1e-9 * np.abs(G.T @ d).max() / sig ** 2       # nnls_lawson_hanson's default stopping tolerance, as a gradient
-        say(f'   KKT: min gradient on zero set = {grad[m_nnls == 0].min():.3g} (>= 0 required, to within the stopping tolerance '
-            f'{tol:.2g}), max |gradient| on support = {abs(grad[m_nnls > 0]).max():.2g}')
-        if args.bins_block in bnames:                        # the best fit's bin totals: the data's own tension, with no prior
-            brow = np.flatnonzero(block == bnames.index(args.bins_block))
-            Gb = sp.csr_matrix(G)[brow]
-            coef = np.array([Gb.data[Gb.indptr[k]] for k in range(len(brow))])
-            tgt, tot = d[brow] / coef, (Gb @ m_nnls) / coef
-            rr = tot / tgt - 1
-            say(f'   magnitude bins in the best fit: totals {100 * rr.min():+.1f}% to {100 * rr.max():+.1f}% of their targets (median '
-                f'{100 * np.median(rr):+.1f}%), within {np.abs(rr * d[brow]).max():.2f} of their uncertainties; total {tot.sum():.4g} '
-                f'against {tgt.sum():.4g} ({100 * (tot.sum() / tgt.sum() - 1):+.1f}%)')
+    # ---- best fit (the chains start from it)
+    t = time.time()
+    m_nnls, its = nnls_lawson_hanson(G, d)
+    r = G @ m_nnls - d
+    grad = G.T @ r / sig ** 2
+    chi2_min = float(r @ r) / sig ** 2
+    say(f'== best fit (Lawson-Hanson NNLS, {its} outer iterations, {time.time() - t:.1f}s)')
+    say(f'   chi^2_min = {chi2_min:.2f} for N = {N} rows, {n_data} non-empty (chi^2/N = {chi2_min / N:.3f}); nonzeros {np.sum(m_nnls > 0)}; '
+        f'max m = {m_nnls.max():.3g} (hi = {args.hi:g} {"binds!" if m_nnls.max() > args.hi else "does not bind"}); sum m = {m_nnls.sum():.4g}')
+    for b, nm in enumerate(bnames):
+        k = block == b
+        say(f'   block {nm:9s}: chi^2 = {r[k] @ r[k] / sig ** 2:7.2f} over {k.sum():3d} rows, max |r|/sigma = {abs(r[k]).max() / sig:.2f}')
+    tol = 1e-9 * np.abs(G.T @ d).max() / sig ** 2       # nnls_lawson_hanson's default stopping tolerance, as a gradient
+    say(f'   KKT: min gradient on zero set = {grad[m_nnls == 0].min():.3g} (>= 0 required, to within the stopping tolerance '
+        f'{tol:.2g}), max |gradient| on support = {abs(grad[m_nnls > 0]).max():.2g}')
+    if args.bins_block in bnames:                        # the best fit's bin totals: the data's own tension, with no prior
+        brow = np.flatnonzero(block == bnames.index(args.bins_block))
+        Gb = sp.csr_matrix(G)[brow]
+        coef = np.array([Gb.data[Gb.indptr[k]] for k in range(len(brow))])
+        tgt, tot = d[brow] / coef, (Gb @ m_nnls) / coef
+        rr = tot / tgt - 1
+        say(f'   magnitude bins in the best fit: totals {100 * rr.min():+.1f}% to {100 * rr.max():+.1f}% of their targets (median '
+            f'{100 * np.median(rr):+.1f}%), within {np.abs(rr * d[brow]).max():.2f} of their uncertainties; total {tot.sum():.4g} '
+            f'against {tgt.sum():.4g} ({100 * (tot.sum() / tgt.sum() - 1):+.1f}%)')
 
     np.savez(f_res, cn=cn, s_cond=s_cond, collective=collective, cap=cap, spread=spread, sv=sv, R=R, ev_n=ev_n,
-             **({} if m_nnls is None else dict(m_nnls=m_nnls, r_nnls=r, chi2_min=chi2_min)), block=block,
+             m_nnls=m_nnls, r_nnls=r, chi2_min=chi2_min, block=block,
              dup_i=dup['pairs_i'] if dup else np.zeros(0, int), dup_j=dup['pairs_j'] if dup else np.zeros(0, int),
              dup_cos=dup['pairs_cos'] if dup else np.zeros(0))
-    if m_nnls is not None:
-        m_orig = np.zeros(A.shape[1])                    # the best fit as rate vectors (original rupture numbering, removed
-        m_orig[keep_c] = m_nnls                          # ruptures 0), for the fit figures (plot_*.py)
-        pen = np.ones(A.shape[1], int)
-        pen[keep_c] = 0
-        os.makedirs(d_nnls, exist_ok=True)
-        np.savez(f_vec, mean=m_orig, penalised=pen, model='best fit (NNLS)')
-        with open(f_csv, 'w', newline='') as fh:         # and as a table with the rows of make_tables.py's rate_vectors.csv
-            wr = csv.writer(fh)
-            wr.writerow(['rupture', 'penalised', 'best_fit'])
-            wr.writerows([i, pen[i], f'{m_orig[i]:.6e}'] for i in range(len(m_orig)))
-    for f in (old_vec, old_csv) + (() if m_nnls is not None else (f_vec, f_csv)):
+    m_orig = np.zeros(A.shape[1])                        # the best fit as rate vectors (original rupture numbering, removed
+    m_orig[keep_c] = m_nnls                              # ruptures 0), for the fit figures (plot_*.py)
+    pen = np.ones(A.shape[1], int)
+    pen[keep_c] = 0
+    os.makedirs(d_nnls, exist_ok=True)
+    np.savez(f_vec, mean=m_orig, penalised=pen, model='best fit (NNLS)')
+    with open(f_csv, 'w', newline='') as fh:             # and as a table with the rows of make_tables.py's rate_vectors.csv
+        wr = csv.writer(fh)
+        wr.writerow(['rupture', 'penalised', 'best_fit'])
+        wr.writerows([i, pen[i], f'{m_orig[i]:.6e}'] for i in range(len(m_orig)))
+    for f in (old_vec, old_csv):
         if os.path.exists(f):                            # an earlier cleaning's best fit would not match this problem
             os.remove(f)
     open(f_sum, 'w').write('\n'.join(LOG) + '\n')
@@ -713,20 +704,16 @@ def main():
     ax[0, 1].set_xlabel('k'); ax[0, 1].set_ylabel('singular value'); ax[0, 1].set_title(f'Spectrum of G (rank {rank})')
     ax[1, 0].hist(np.log10(np.clip(R, 1e-6, 1)), 60)
     ax[1, 0].set_xlabel(r'$\log_{10} R_{ii}$'); ax[1, 0].set_ylabel('parameters'); ax[1, 0].set_title('Resolution diagonal')
-    if r is None:
-        ax[1, 1].text(0.5, 0.5, 'best fit skipped (--no-nnls)', ha='center', va='center', transform=ax[1, 1].transAxes)
-        ax[1, 1].set_axis_off()
-    else:
-        for b, nm in enumerate(bnames):
-            k = np.flatnonzero(block == b)
-            ax[1, 1].plot(k, r[k] / sig, '.', ms=3, label=nm)
-        ax[1, 1].axhline(0, color='k', lw=.5)
-        ax[1, 1].set_xlabel('row (cleaned index)'); ax[1, 1].set_ylabel(r'residual $(Gm-d)/\sigma$'); ax[1, 1].set_ylim(-3, 2)
-        ax[1, 1].set_title(rf'NNLS best fit, $\chi^2_{{min}}$ = {chi2_min:.1f}'); ax[1, 1].legend(fontsize=8)
+    for b, nm in enumerate(bnames):
+        k = np.flatnonzero(block == b)
+        ax[1, 1].plot(k, r[k] / sig, '.', ms=3, label=nm)
+    ax[1, 1].axhline(0, color='k', lw=.5)
+    ax[1, 1].set_xlabel('row (cleaned index)'); ax[1, 1].set_ylabel(r'residual $(Gm-d)/\sigma$'); ax[1, 1].set_ylim(-3, 2)
+    ax[1, 1].set_title(rf'NNLS best fit, $\chi^2_{{min}}$ = {chi2_min:.1f}'); ax[1, 1].legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(f_png, dpi=120)
     say(f'== done in {time.time() - t0:.1f}s: {args.out}, {f_res}, {f_sum}, {f_png}'
-        + ('' if m_nnls is None else f', {f_vec}, {f_csv}'))
+        + f', {f_vec}, {f_csv}')
 
 
 if __name__ == '__main__':

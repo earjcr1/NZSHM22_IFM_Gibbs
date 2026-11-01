@@ -227,10 +227,10 @@ check(argdefault(trees['gibbs.py'], '--target') == 'MISSING' and argdefault(tree
       'gibbs.py has no --target or --chi2max option and no acceptable-set mode (the Gaussian likelihood is the only one)')
 check(not any('TARGET' in c or "'--target'" in c for _, c in cells) and keys is not None and 'target' not in keys,
       'notebook has no TARGET setting, passes no --target, and records no target')
-check(not any("'--no-nnls'" in c for _, c in cells), 'the notebook always computes the best fit (it never passes --no-nnls)')
 pre_opts = {a.value for n in ast.walk(trees['preliminaries.py']) if isinstance(n, ast.Call) and getattr(n.func, 'attr', '') == 'add_argument'
             for a in n.args if isinstance(a, ast.Constant)}
-check({'--no-nnls', '--keep-soft-penalties'} <= pre_opts, 'preliminaries.py has --no-nnls and --keep-soft-penalties')
+check('--keep-soft-penalties' in pre_opts and '--no-nnls' not in pre_opts,
+      'preliminaries.py has --keep-soft-penalties and always computes the best fit (no --no-nnls)')
 dense_g = re.findall(r'\bG[a-z]?\.toarray\(\)', src['preliminaries.py'])        # a whole G made dense: 4 GB at 2e5, 11 at 5e5
 check(not dense_g and 'qr_insert' in src['preliminaries.py'], 'preliminaries.py makes no dense copy of G (the best fit updates a QR '
       'factorization)' + (f'; found {", ".join(dense_g)}' if dense_g else ''))

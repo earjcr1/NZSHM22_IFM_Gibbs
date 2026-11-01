@@ -17,7 +17,7 @@ Writes, in DIR (default: the first run's folder):
 - subsections_posterior.csv and bins_posterior.csv: per slip-rate row and per magnitude-bin row, the 5%, 50% and 95%
   points of the total rate of the ruptures it holds, the best fit's total (from preliminaries.py's diagnostics) and the
   share of the posterior-mean total carried by rates below their own detection scale sigma/||G_i|| (best_fit_total is
-  nan if cleaning skipped the best fit, preliminaries.py --no-nnls);
+  nan if the cleaning results hold no best fit, as an older version's might);
 - rate_vectors.csv and .npz: per rupture of the original problem (penalised ruptures flagged and 0), the posterior
   mean, median, mode and 2.275%, 15.865%, 84.135% and 97.725% values.
 Prints the bins' totals against their targets, the undetectable shares and the files written, and writes the same to
@@ -217,9 +217,9 @@ def main():
         best_b, best_s = np.asarray(inc_b @ m_best).ravel(), np.asarray(inc_s @ m_best).ravel()
         rb = best_b / targets
         best_txt = f'; best fit {np.median(rb):.3f} (range {rb.min():.3f} to {rb.max():.3f}), the reference with no prior'
-    else:                                                # cleaning ran without the best fit (--no-nnls): its columns are nan
+    else:                                                # no best fit in the cleaning results (an older version): nan
         best_b, best_s = np.full(len(brows), np.nan), np.full(len(srows), np.nan)
-        best_txt = '; no best fit (cleaning ran with --no-nnls)'
+        best_txt = '; no best fit in the cleaning results'
     print(f'bin totals / targets: posterior median {np.median(ratio):.3f} (range {ratio.min():.3f} to {ratio.max():.3f})' + best_txt)
     parts_m = mean_parts(MAIN, det)
     und_s, und_b = undetectable_share(parts_m, inc_s), undetectable_share(parts_m, inc_b)
