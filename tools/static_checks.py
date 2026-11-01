@@ -62,7 +62,7 @@ print('3. Leftovers (every hit, to judge its context)')
 texts = {s: src[s] for s in SCRIPTS}
 texts.update({d: open(f'{ROOT}/{d}').read() for d in DOCS if os.path.isfile(f'{ROOT}/{d}')})
 texts.update({f'notebook cell {i}': c for i, c in cells + md})
-pat = re.compile(r'SLAB_FLOOR|DIAG_FLOOR|1e-10 by default|FLOOR = -10|default -10|-10 by default|−10 by default|\(1e-10\)')   # the default before -12
+pat = re.compile(r'SLAB_FLOOR|DIAG_FLOOR|1e-12 by default|FLOOR = -12|default -12|-12 by default|−12 by default|\(1e-12\)')   # a default before -10
 nhits = 0
 for name, t in texts.items():
     for ln, line in enumerate(t.split('\n'), 1):
@@ -129,14 +129,19 @@ check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('
 check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
       "gibbs.py --prior halfway (command line only), with its exact test in the full self-test set")
 _cfg_keys = re.findall(r'(\w+)=', ''.join(c for _, c in cells if 'CONFIG = dict(' in c))
-check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ["'zero-model'"] and 'down_the_middle' in _cfg_keys
+check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['False'] and 'down_the_middle' in _cfg_keys
       and any("if DOWN_THE_MIDDLE:\n        args += ['--down-the-middle']" in c for _, c in cells)
       and "'--down-the-middle', nargs='?', const='equal', default=None, choices=['equal', 'zero-model']" in src['gibbs.py']
       and 'balance_rows' in src['gibbs.py'] and "weights='equal'" in src['cru_common.py']
       and any("if DOWN_THE_MIDDLE == 'zero-model':\n            args += ['zero-model']" in c for _, c in cells)
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
-      'notebook DOWN_THE_MIDDLE = \'zero-model\' (each type\'s own weight), recorded, and passed to gibbs.py --down-the-middle; '
-      'True its common weight (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
+      'notebook DOWN_THE_MIDDLE = False (no balance term), recorded; True and \'zero-model\' passed to gibbs.py '
+      '--down-the-middle (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
+check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ['10'] and 'band' in _cfg_keys
+      and any("args += ['--band', BAND]" in c for _, c in cells) and "'--band'" in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_band()') == 2,
+      'notebook BAND = 10 (every prediction within a factor 10 of its target), recorded and passed to gibbs.py --band, '
+      'with its exact test in both self-test sets')
 check(sum(c.count('*ref_args()') for _, c in cells) == 6 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
@@ -156,11 +161,11 @@ check(re.findall(r'^RANDOMIZED_NNLS = (\d+)', cells[0][1], re.M) == ['0'] and 'r
       'cells are skipped')
 for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     d = argdefault(trees[s], '--diag-floor')
-    check(d == -12, f'{s} --diag-floor default {d!r}')
+    check(d == -10, f'{s} --diag-floor default {d!r}')
 m = re.findall(r"spike_mode:.*\n.*\n\s*W, se, top = float\(sp_\[0\] or (-?\d+)\)", src['gibbs.py'])
-check(m == ['-12'], f'gibbs.py spike-and-slab default slab floor {m}')
+check(m == ['-10'], f'gibbs.py spike-and-slab default slab floor {m}')
 cfg = cells[0][1]
-check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-12'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
+check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-10'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
       f"notebook FLOOR = {re.findall(r'^FLOOR = (-?[0-9]+)', cfg, re.M)}, no SLAB_FLOOR or DIAG_FLOOR setting")
 for script in ('preliminaries.py', 'gibbs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     cc = [i for i, c in cells if 'sh(' in c and f"'{script}'" in c
@@ -215,7 +220,7 @@ check(spec_default == 'as-given', f'cru_common.mfd_uncertainty spec default {spe
 check(not any(re.search(r'block_weights|block_scale|BLOCK_WEIGHT', src[sc]) for sc in SCRIPTS),
       'no script mentions block_weights, block_scale or BLOCK_WEIGHT')
 check('plot_rate_magnitude.py' in SCRIPTS and not re.search(r'^def magnitude_bins', src['plot_rate_magnitude.py'], re.M)
-      and re.search(r'from cru_common import .*magnitude_bins', src['plot_rate_magnitude.py']) is not None,
+      and re.search(r'from cru_common import \(?[^)]*?\bmagnitude_bins\b', src['plot_rate_magnitude.py']) is not None,
       'plot_rate_magnitude.py takes magnitude_bins from cru_common (one definition, shared with cleaning)')
 check(argdefault(trees['gibbs.py'], '--target') == 'MISSING' and argdefault(trees['gibbs.py'], '--chi2max') == 'MISSING'
       and 'chi2max' not in src['gibbs.py'] and 'eps2' not in src['gibbs.py'],

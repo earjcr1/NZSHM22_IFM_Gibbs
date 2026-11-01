@@ -40,6 +40,14 @@ share one; the colours only tell neighbours apart, and a row keeps its colour in
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
 
+Kept draws: when the rate vectors hold the kept draws that select_draws.py adds (REPRESENTATIVES above 0, the
+notebook's default; about 3,000), each one's predictions are drawn as x's at their rows' targets in place of the
+16-84% bars, in the rows' colours darkened a little and faint, so that where the draws gather shows darkest
+(cru_common.draw_xs); those beyond the axes (0 included) sit on their edges, and the mean predictions' dots get a dark
+outline. Their predictions are read from those the runs recorded (cru_common.kept_predictions; one draw per run is
+recomputed from its rates as a check), and without kept draws, or if the runs do not match them, the bars are drawn
+instead; the tables keep the 16%, 50% and 84% points over every recorded draw.
+
 Reference: --reference RATES[:LABEL] marks another model's predictions on every panel as open black squares (triangles on the edges), such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
@@ -51,8 +59,9 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, neighbour_colours, reference_rates,
-                        run_predictions, run_settings, settings_lines)
+from cru_common import (CATEGORICAL, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+                        legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
+                        run_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
@@ -157,7 +166,12 @@ def main():
         model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
         Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, Gr.shape[0], scale)
         q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None
+        K, kidx = (None, None) if model else kept_draws(z)
+        Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, Gr.shape[0], scale,
+                                                      check=(Gp, K, keep_c))   # the kept draws' predictions
+        del K
         data.append(dict(path=path, label=label, y=y, r=r, ratio=y / t, q=q, used=used, ndraws=0 if Y is None else len(Y),
+                         xs=Xk,
                          chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(r) <= 1)),
                          in2=float(np.mean(np.abs(r) <= 2)), groups=list(np.argsort(-np.abs(r), kind='stable')[:max(0, a.label)]),
                          model=model))
@@ -187,6 +201,8 @@ def main():
         spread = (f'posterior spread from the {D["ndraws"]} draws recorded by {", ".join(D["used"])}' if D['q'] is not None
                   else f'{D["model"]}: a single model, so no posterior spread' if D['model']
                   else 'no runs found next to the rate vectors, so no posterior spread')
+        if D['xs'] is not None:
+            spread += f'; the x\'s: the {len(D["xs"])} kept draws\' predictions (select_draws.py)'
         lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the paleo rows {D["chi2"]:.1f}; '
                   f'{100 * D["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two; '
                   f'prediction / target: median {rq[1]:.2f} (5-95%: {rq[0]:.2f} to {rq[2]:.2f}); {spread}; furthest from their '
@@ -205,7 +221,6 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patheffects as pe
-    from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
@@ -232,10 +247,15 @@ def main():
     text += '\n' + axes_line
     print(axes_line)
     ncol = len(data)
+    kx = any(D['xs'] is not None for D in data)          # the kept draws, as x's
+    bars = any(D['q'] is not None and D['xs'] is None for D in data)
     note = ('In units of each row\'s uncertainty: on log axes that moves a point only along the 1:1 line, so its distance '
             'from the line is the ratio of prediction to target. A target is one over its relative uncertainty, so the '
-            'best-measured sites lie furthest right. A bar that reaches an axis continues beyond it (below, possibly to 0). '
-            'Colours only tell neighbouring rows apart.'
+            'best-measured sites lie furthest right. '
+            + ('Each x is one kept draw\'s prediction, faint, so that where the draws gather shows darkest; those beyond '
+               'the axes (0 included) sit on their edges. ' if kx else
+               'A bar that reaches an axis continues beyond it (below, possibly to 0). ')
+            + 'Colours only tell neighbouring rows apart.'
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; '
                'predictions beyond them sit on the edges.' if fixed else ''))
     top_in, sub_in, panel_in, side_in = 0.45, 0.85, 5.0, 0.75     # figure layout, in inches
@@ -245,11 +265,12 @@ def main():
     if tab:                                              # the settings table takes a little more room than a label
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     note = textwrap.fill(note, int((fig_w - 0.5) * 17), break_on_hyphens=False)
-    n_handles = 4 + any(D['q'] is not None for D in data) + int(clipped) + int(ref is not None)   # the legend's entries
+    n_handles = 4 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries
     lc = ((2 if ref is not None else 3) if ncol == 1 else n_handles)   # legend columns: fewer under one panel
-    leg_rows = -(-n_handles // lc)
-    leg_y = 0.08 + (note.count('\n') + 1) * 7.5 * 1.4 / 72 + 0.12   # the legend sits just above the note
-    bot_in = leg_y + 0.24 * leg_rows + 0.68                          # and the axis labels above the legend
+    leg_pt = legend_height(n_handles, lc) + 6            # the legend, between the settings and the subtitles
+    top_in += leg_pt / 72
+    note_top = 0.08 + (note.count('\n') + 1) * 7.5 * 1.4 / 72 + 0.12
+    bot_in = note_top + 0.62                             # the note, and the axis labels above it
     fig, axs = plt.subplots(1, ncol, figsize=(fig_w, top_in + sub_in + panel_in + bot_in), squeeze=False, facecolor=SURFACE)
     halo = [pe.withStroke(linewidth=2.6, foreground=SURFACE)]
     outline = [pe.Stroke(linewidth=1.7, foreground=MUTED), pe.Normal()]   # the pale colours' bars stand out from the surface
@@ -280,11 +301,15 @@ def main():
         if ref is not None:                          # the reference's predictions, in front of the posterior's
             scatter_edges(ax, t, ref['y'], edge, top, dict(s=26, marker='s', facecolors='none', edgecolors=REF,
                           linewidths=0.8, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.8, zorder=3.2))
-        if D['q'] is not None:                       # posterior 16-84% of each prediction, within the axes
+        if D['xs'] is not None:                      # each kept draw's predictions, as x's, within the axes
+            draw_xs(ax, np.broadcast_to(t, D['xs'].shape), np.clip(D['xs'], lo, hi), np.broadcast_to(col, D['xs'].shape),
+                    alpha=0.08)
+        elif D['q'] is not None:                     # posterior 16-84% of each prediction, within the axes
             ax.vlines(t, np.clip(D['q'][0], lo, hi), np.clip(D['q'][2], lo, hi), colors=col, lw=1.3, zorder=2.2,
                       path_effects=outline)
-        scatter_edges(ax, t, D['y'], edge, top, dict(s=28, c=col, edgecolors=MUTED, linewidths=0.45, zorder=3),
-                      dict(s=26, c=col, edgecolors=MUTED, linewidths=0.4, zorder=3))
+        ec, ew = (INK, 0.6) if D['xs'] is not None else (MUTED, 0.45)   # over the x's, a darker outline
+        scatter_edges(ax, t, D['y'], edge, top, dict(s=28, c=col, edgecolors=ec, linewidths=ew, zorder=3),
+                      dict(s=26, c=col, edgecolors=ec, linewidths=ew, zorder=3))
         # labels in a column in the empty corner on their points' side of the 1:1 line (lower right for points predicted
         # below their targets, upper left for those above), each near its point's height, with leader lines
         frac = lambda v: (np.log10(v) - np.log10(lo)) / (np.log10(hi) - np.log10(lo))
@@ -318,18 +343,22 @@ def main():
                f'{100 * D["in1"]:.0f}% within one uncertainty '
                f'of their targets, {100 * D["in2"]:.0f}% within two')
         if tab:
-            draw_settings(ax, tab, 40)
+            draw_settings(ax, tab, 40 + leg_pt)
         else:
-            ax.annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
+            ax.annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40 + leg_pt), textcoords='offset points',
                         va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         ax.annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 12), textcoords='offset points',
                     va='bottom', color=INK2, fontsize=8.5, linespacing=1.35)
     few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.3, mfc=c, mec=MUTED, mew=0.45) for c in few),
-                'prediction' if mm == 'model' else 'mean prediction')]
-    if any(D['q'] is not None for D in data):
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.3, mfc=c, mec=INK if kx else MUTED,
+                             mew=0.6 if kx else 0.45) for c in few), 'prediction' if mm == 'model' else 'mean prediction')]
+    if bars:
         handles.append((tuple(Line2D([], [], color=c, lw=1.3, path_effects=outline) for c in few),
                         'posterior 16–84% of the prediction'))
+    if kx:
+        n_k = max(len(D['xs']) for D in data if D['xs'] is not None)
+        handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+                        f'each of the {n_k:,} kept draws\' prediction'))
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.8),
                         f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
@@ -341,10 +370,8 @@ def main():
     h_in = fig.get_size_inches()[1]
     fig.suptitle('Paleo rates: targets against the model\'s predictions', x=0.03, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
-    order = [h for c in range(lc) for h in handles[c::lc]]          # legend columns filled so it reads row by row
-    fig.legend(handles=[h for h, _ in order], labels=[l for _, l in order], loc='lower center', ncol=lc, frameon=False,
-               fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, leg_y / h_in), handletextpad=0.5, columnspacing=1.8,
-               handlelength=2.6, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+    legend_above(fig, axs[0][0], handles, lc, 40, x=-(ax_left - 0.2) * 72 if ncol == 1 else 0.0, labelcolor=INK2,
+                 columnspacing=1.8)                      # below the settings; under one panel, from the title's left edge
     fig.text(0.5, 0.08 / h_in, note, ha='center', va='bottom', color=MUTED,
              fontsize=7.5, linespacing=1.4)
     fig.subplots_adjust(left=side_in / fig_w, right=1 - 0.25 / fig_w, top=1 - (top_in + sub_in) / h_in, bottom=bot_in / h_in,

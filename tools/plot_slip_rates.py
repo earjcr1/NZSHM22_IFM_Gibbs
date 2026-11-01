@@ -42,6 +42,14 @@ same name with .txt: the mean model's chi-squared over the slip-rate rows as the
 sections (and of subsections) within one and two uncertainties, per section the target, the mean prediction, its
 posterior 16%, 50% and 84% points, their difference and their ratio, and per row the same without the posterior points.
 
+Kept draws: when the rate vectors hold the kept draws that select_draws.py adds (REPRESENTATIVES above 0, the
+notebook's default; about 3,000), each one's section means are drawn as x's at their sections' targets in place of the
+16-84% bars, in the sections' colours darkened a little and faint, so that where the draws gather shows darkest
+(cru_common.draw_xs); those beyond the axes (on the log scale, 0 included) sit on their edges, and the section means'
+dots get a dark outline. Their predictions are read from those the runs recorded (cru_common.kept_predictions; one
+draw per run is recomputed from its rates as a check), and without kept draws, or if the runs do not match them, the
+bars are drawn instead; the tables keep the 16%, 50% and 84% points over every recorded draw.
+
 Reference: --reference RATES[:LABEL] marks another model's section means on every panel as open black squares (triangles on the edges), such as the
 model's own OpenSHA solution, its solution/rates.csv (the notebook passes it when DATA_DIR holds the solution folder);
 LABEL defaults to the solution folder's name (shortened when long). The table view adds its chi-squared and shares, and a column of its
@@ -53,8 +61,9 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (CATEGORICAL, axis_span, best_fit_rates, load_problem, neighbour_colours, reference_rates,
-                        run_predictions, run_settings, settings_lines, slip_sections)
+from cru_common import (CATEGORICAL, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+                        legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
+                        run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 REF = INK                                        # the reference model's marks: black, apart from every series colour
@@ -154,8 +163,12 @@ def main():
         model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
         Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, P['G'].shape[0], scale, avg)
         q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None   # each section mean's posterior points
+        K, kidx = (None, None) if model else kept_draws(z)
+        Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, P['G'].shape[0], scale,
+                                                      avg, check=(Gs, K, keep_c))   # the kept draws' section means
+        del K
         data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s, q=q, used=used,
-                         ndraws=0 if Y is None else len(Y),
+                         ndraws=0 if Y is None else len(Y), xs=Xk,
                          chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(rs) <= 1)), in2=float(np.mean(np.abs(rs) <= 2)),
                          in1r=float(np.mean(np.abs(r) <= 1)), in2r=float(np.mean(np.abs(r) <= 2)),
                          groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]), model=model))
@@ -200,6 +213,8 @@ def main():
         spread = (f'posterior spread of each section mean from the {D["ndraws"]} draws recorded by {", ".join(D["used"])}'
                   if D['q'] is not None else f'{D["model"]}: a single model, so no posterior spread' if D['model']
                   else 'no runs found next to the rate vectors, so no posterior spread')
+        if D['xs'] is not None:
+            spread += f'; the x\'s: the {len(D["xs"])} kept draws\' section means (select_draws.py)'
         lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them, '
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
@@ -223,7 +238,6 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patheffects as pe
-    from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
@@ -249,22 +263,25 @@ def main():
     text += '\n' + axes_line
     print(axes_line)
     nrow = len(data)
-    bars = any(D['q'] is not None for D in data)
+    kx = any(D['xs'] is not None for D in data)          # the kept draws, as x's
+    bars = any(D['q'] is not None and D['xs'] is None for D in data)
     note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections, each section\'s '
             'prediction the mean over its subsections; '
             + ('each section is one measurement.' if weighted else
                'each subsection is counted as its own measurement (the inputs as given).')
             + ' Colours only tell neighbouring sections apart; sections that share a target are stacked at it.'
             + (' A bar that reaches an axis continues beyond it (on the log scale, below possibly to 0).' if bars else '')
+            + (' Each x is one kept draw\'s section mean, faint, so that where the draws gather shows darkest; those '
+               'beyond the axes (on the log scale, 0 included) sit on their edges.' if kx else '')
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; values '
                'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * note.count('\n')                      # room for a note of more than one line
-    n_h = 3 + int(bars) + int(clipped) + int(ref is not None)   # the legend's entries (below): one row of up to four
+    n_h = 3 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries (above): one row of up to four
     lc = n_h if n_h <= 4 else 3
-    leg_extra = 0.22 * (-(-n_h // lc) - 1)
+    leg_pt = legend_height(n_h, lc) + 6                  # the legend, between the settings and the first subtitle
     tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
-    top_in, row_in, bot_in = 0.45, 5.6, 1.0 + extra + leg_extra   # figure layout, in inches
+    top_in, row_in, bot_in = 0.45 + leg_pt / 72, 5.6, 0.8 + extra   # figure layout, in inches
     if tab:                                              # the settings table takes a little more room than a label
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
@@ -304,12 +321,17 @@ def main():
                 scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', facecolors='none', edgecolors=REF,
                               linewidths=0.7, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.7,
                               zorder=3.4))
-            if D['q'] is not None:                   # posterior 16-84% of each section mean, within the axes
+            if D['xs'] is not None:                  # each kept draw's section means, as x's, within the axes
+                kb = ts > 0 if log else np.ones(S, bool)
+                Xv = np.clip(D['xs'][:, kb], *lim)
+                draw_xs(ax, np.broadcast_to(ts[kb], Xv.shape), Xv, np.broadcast_to(col[kb], Xv.shape), alpha=0.05)
+            elif D['q'] is not None:                 # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
                 ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.0,
                           zorder=2.2, path_effects=outline)
-            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=20, c=col, edgecolors=MUTED, linewidths=0.4, zorder=2.5),
-                          dict(s=24, c=col, edgecolors=MUTED, linewidths=0.4, zorder=2.5))
+            ec, ew = (INK, 0.6) if D['xs'] is not None else (MUTED, 0.4)   # over the x's, a darker outline
+            scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=20, c=col, edgecolors=ec, linewidths=ew, zorder=2.5),
+                          dict(s=24, c=col, edgecolors=ec, linewidths=ew, zorder=2.5))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
             pts = [(s, ts[s], min(max(D['ys'][s], lo_e), hi_e)) for s in D['groups']]
             frac = lambda v: ((np.log10(v) - np.log10(lim[0])) / (np.log10(lim[1]) - np.log10(lim[0])) if log
@@ -324,18 +346,23 @@ def main():
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
         sub = (f'{mm}: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
                f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
+        above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
         if tab:
-            draw_settings(axs[i][0], tab, 40)
+            draw_settings(axs[i][0], tab, above)
         else:
-            axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, 40), textcoords='offset points',
+            axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, above), textcoords='offset points',
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
     few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=MUTED, mew=0.4) for c in few), 'section mean')]
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=INK if kx else MUTED, mew=0.6 if kx else 0.4) for c in few), 'section mean')]
     if bars:
         handles.append((tuple(Line2D([], [], color=c, lw=1.0, path_effects=outline) for c in few),
                         'posterior 16–84% of the section mean'))
+    if kx:
+        n_k = max(len(D['xs']) for D in data if D['xs'] is not None)
+        handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+                        f'each of the {n_k:,} kept draws\' section mean'))
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
@@ -346,11 +373,7 @@ def main():
     h_in = fig.get_size_inches()[1]
     fig.suptitle(f'Slip-rate targets against the {mm}\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
-    handles = [h for c in range(lc) for h in handles[c::lc]]     # legend columns filled so it reads row by row
-    fig.legend(handles=[h for h, _ in handles], labels=[l for _, l in handles], loc='lower center', ncol=lc,
-               frameon=False, fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, (0.36 + extra) / h_in),
-               handletextpad=0.5, columnspacing=1.6, handlelength=2.6,
-               handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+    legend_above(fig, axs[0][0], handles, lc, 40, labelcolor=INK2)   # above the first subtitle, below the settings
     fig.text(0.5, 0.12 / h_in, note, ha='center', va='baseline' if not extra else 'bottom', color=MUTED, fontsize=8,
              linespacing=1.4)
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.55) / h_in, bottom=bot_in / h_in, wspace=0.22,

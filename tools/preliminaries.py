@@ -356,8 +356,8 @@ def main():
     ap.add_argument('--blocks', default=None, help="optional names for row blocks, e.g. 'S=0-387,MFD=695-713,P=714-753' (original row numbers); "
                     "the slip-rate and magnitude-bin rows are detected automatically if not named, and checked if named")
     ap.add_argument('--bins-block', default='MFD', help='name of the magnitude-bin rows (detected automatically if --blocks does not name them)')
-    ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 of the diagnostic and reporting cutoff (the notebook\'s '
-                    'FLOOR, -12 by default), compared with the collective negligibility scale')
+    ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 of the diagnostic and reporting cutoff (the notebook\'s '
+                    'FLOOR, -10 by default), compared with the collective negligibility scale')
     ap.add_argument('--slip-block', default='S', help='name of the slip-rate rows, checked for plausibility if named in --blocks')
     ap.add_argument('--slip-sections', default='auto',
                     help="how the slip-rate rows count as measurements: 'auto' (default): each run of subsections holding copies "

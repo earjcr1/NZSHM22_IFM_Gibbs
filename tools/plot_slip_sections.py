@@ -41,6 +41,19 @@ Values below the axis, including 0, sit on its bottom edge as triangles, and a r
 to 0. Below, the share of draws in which no rupture crossing the column is on (its prediction exactly 0), and the
 connectivity.
 
+Kept draws: when the rate vectors hold the kept draws that select_draws.py adds (REPRESENTATIVES above 0, the
+notebook's default; about 3,000), each figure draws them one by one as x's, in the column's colour darkened a little
+and faint, so that where the draws gather shows darkest (cru_common.draw_xs). In the first figure, each draw's column
+mean, spread across the column, in place of the posterior ranges and median (those below the axis, 0 included, on its
+bottom edge; the mean's dot gets a dark outline; the table keeps the points over every recorded draw, and the share
+without an event is still over every recorded draw). In the second, each draw's counts of the column's ruptures that
+are on in it, by their rates in it (bins with none not drawn), over the counts of the posterior means, drawn lighter:
+a single model compares with these. In the third, each draw's rates summed by magnitude bin, with the posterior mean
+as a circle in the column's colour in place of the bars, and below the axis a strip marked 0 whose opacity in each bin
+is the share of draws in which none of the bin's ruptures is on (the table lists those shares). The draws' column
+means are read from the predictions the runs recorded (cru_common.kept_predictions; one draw per run is recomputed as
+a check), and without kept draws, or if the runs do not match them, the figures are drawn as before.
+
 Reference: --reference RATES[:LABEL] marks another model's values, such as the model's own OpenSHA solution, its
 solution/rates.csv; LABEL defaults to the solution folder's name (shortened when long). Its rates on ruptures that
 cleaning removed are left out of its predictions, and the table says how much.
@@ -50,8 +63,9 @@ Writes FIGURE (default: fig_slip_sections.png next to the rate vectors) and, as 
 confined to it), the target, the posterior mean, the 2.5%, 16%, 50%, 84% and 97.5% points, the share of draws at 0, the
 reference's value, and the name.
 
-Second figure: FIGURE's name with _ruptures (default fig_slip_sections_ruptures.png), one panel per column in the same
-order and colours, seven across, counting the ruptures crossing it by their posterior mean rates (log10, bins a quarter
+Second figure, in two parts for readability: FIGURE's name with _ruptures_1 and _ruptures_2 (default
+fig_slip_sections_ruptures_1.png and _2.png: the first 18 columns six across, the rest in three rows), one panel per
+column in the same order and colours, counting the ruptures crossing it by their posterior mean rates (log10, bins a quarter
 of a decade wide, counts on a log scale), and in each title how many of the largest make up 90% of their total, the
 column's event rate. With --reference, the same ruptures counted by the reference's rates (a black outline), and in
 each title how many of its largest rates make up 90% of its total and how many are below the axis, 0 included. A single model compares with a single draw more than with the means, which spread each
@@ -59,8 +73,8 @@ rupture's rate over the draws: they put rate on more ruptures, at lower rates, t
 (.txt) gives per column the number of ruptures, the total, the largest, the 5%, 50% and 95% points of the log10 means,
 the reference's total, largest and counts, and the counts per bin.
 
-Third figure: FIGURE's name with _ruptures_by_magnitude (default fig_slip_sections_ruptures_by_magnitude.png), the same
-panels with the ruptures' posterior mean rates summed by magnitude bin (the bin rows of --bins-block, counted up from
+Third figure, in two parts the same way: FIGURE's name with _ruptures_by_magnitude_1 and _2 (default
+fig_slip_sections_ruptures_by_magnitude_1.png and _2.png; the table view without the number), the same panels with the ruptures' posterior mean rates summed by magnitude bin (the bin rows of --bins-block, counted up from
 --lowest-bin in steps of --bin-width as plot_rate_magnitude.py counts them; a rupture's magnitude is known only to its
 bin row): each column's posterior mean rate of events per bin, on a log scale, with the reference's sums as a black
 outline, and in each title the magnitudes of its ruptures and its event rate (and the reference's). Sums of posterior
@@ -76,8 +90,9 @@ import textwrap
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import (CATEGORICAL, load_problem, magnitude_bins, neighbour_colours, reference_rates, run_predictions,
-                        run_settings, settings_lines, slip_sections)
+from cru_common import (CATEGORICAL, darker, draw_xs, figure_legend, kept_draws, kept_predictions, legend_above,
+                        legend_height, load_problem, magnitude_bins, neighbour_colours, reference_rates,
+                        run_predictions, run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 REF = INK                                        # the reference model's marks: black, apart from every series colour
@@ -304,6 +319,10 @@ def main():
     p0 = np.mean(Y <= 0, axis=0) if Y is not None else None
     ndraws = 0 if Y is None else len(Y)
     del Y
+    K, kidx = (None, None) if model else kept_draws(z)
+    Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, G.shape[0], scale, avg,
+                                                  check=(Gs, K, keep_c))   # the kept draws' column means
+    nK, ons = (0, None) if Xk is None else (len(K), [])
     ref = None
     if a.reference:                                      # another model's column means, beside the posterior's
         ref = reference_rates(a.reference, P)
@@ -347,7 +366,6 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patheffects as pe
-    from matplotlib.legend_handler import HandlerTuple
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch, Rectangle
     from matplotlib.ticker import FuncFormatter, LogLocator, MultipleLocator, NullFormatter
@@ -369,8 +387,11 @@ def main():
             'all lie within one uncertainty of their targets lies inside the band. ' if named else
             'In units of each section\'s measurement uncertainty, as in the slip-rate figure; a section\'s prediction is '
             'the mean over its subsections. ')
-    note += ('The colours only tell neighbouring columns apart. A range that reaches the bottom of the axis continues to '
-             '0. Connectivity is from the cleaned problem\'s slip-rate rows: the rupture set\'s ruptures that cleaning '
+    note += ('The colours only tell neighbouring columns apart. '
+             + (f'Each x is one of the {nK:,} kept draws, faint, so that where they gather shows darkest; those below the '
+                'axis, 0 included, sit on its bottom edge. ' if Xk is not None else
+                'A range that reaches the bottom of the axis continues to 0. ')
+             + 'Connectivity is from the cleaned problem\'s slip-rate rows: the rupture set\'s ruptures that cleaning '
              f'kept; a {unit}\'s own sections are not counted.'
              + ('' if named else ' Each name is followed by the section\'s number in the slip-rate table.'))
     fig_w = max(9.0, 0.34 * N + 2.0)
@@ -379,9 +400,12 @@ def main():
     thin = [pe.Stroke(linewidth=1.3, foreground=MUTED), pe.Normal()]     # outlines: the pale colours stand out
     thick = [pe.Stroke(linewidth=4.6, foreground=MUTED), pe.Normal()]
     few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.9, mfc=c, mec=MUTED, mew=0.45) for c in few),
-                'posterior mean' if q is not None else 'value')]
-    if q is not None:
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.9, mfc=c, mec=INK if Xk is not None else MUTED,
+                             mew=0.7 if Xk is not None else 0.45) for c in few), 'posterior mean' if q is not None else 'value')]
+    if Xk is not None:
+        handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+                        f'each of the {nK:,} kept draws'))
+    elif q is not None:
         handles += [(tuple(Line2D([], [], color=c, lw=4.2, solid_capstyle='butt', path_effects=thick) for c in few),
                      'posterior 16–84% (dark tick: median)'),
                     (tuple(Line2D([], [], color=c, lw=0.9, path_effects=thin) for c in few), 'posterior 2.5–97.5%')]
@@ -392,13 +416,13 @@ def main():
     handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'below the axis (on its edge), '
                     'including 0'))
     lc = 3
-    leg_rows = -(-len(handles) // lc)
-    top_in = 0.45 + (max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72 if tab else 0.0) + 0.55   # title, settings, subtitle
+    leg_pt = legend_height(len(handles), lc) + 6         # the legend, between the settings and the subtitle
+    top_in = (0.45 + (max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72 if tab else 0.0) + 0.55   # title, settings, subtitle
+              + leg_pt / 72)
     main_in, p0_in, conn_in, gap_in = 4.4, 0.8, 0.8, 0.16
     name_in = 0.1 + 0.05 * max_len                       # the names, rotated 60 degrees
-    leg_in = 0.24 * leg_rows + 0.15
     note_in = 0.12 + 0.15 * (note.count('\n') + 1)
-    bot_in = name_in + leg_in + note_in
+    bot_in = name_in + note_in
     H = top_in + main_in + p0_in + conn_in + 2 * gap_in + bot_in
     fig, axs = plt.subplots(3, 1, figsize=(fig_w, H), sharex=True, facecolor=SURFACE,
                             gridspec_kw=dict(height_ratios=[main_in, p0_in, conn_in]))
@@ -426,14 +450,18 @@ def main():
         scatter_edges(ax, x + 0.24, ref['ys'], edge, top, dict(s=20, marker='s', facecolors='none', edgecolors=REF,
                       linewidths=0.8, zorder=3.6), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.8,
                       zorder=3.6))
-    if q is not None:
+    if Xk is not None:                                   # each kept draw's column means, as x's across the column
+        jx = x[None, :] + np.random.default_rng(0).uniform(-0.22, 0.22, Xk.shape)
+        draw_xs(ax, jx, np.clip(Xk, edge, top), np.broadcast_to(col, Xk.shape), alpha=0.12)
+    elif q is not None:
         clip = lambda v: np.clip(v, lo, hi)
         ax.vlines(x, clip(q[0]), clip(q[4]), colors=col, lw=0.9, zorder=2.2, path_effects=thin)
         ax.vlines(x, clip(q[1]), clip(q[3]), colors=col, lw=4.2, zorder=2.3, path_effects=thick)
         on = q[2] > lo                                   # the median, as a dark tick across the bar
         ax.hlines(q[2][on], x[on] - 0.09, x[on] + 0.09, colors=INK, lw=1.0, zorder=2.4)
-    scatter_edges(ax, x, ym, edge, top, dict(s=24, c=col, edgecolors=MUTED, linewidths=0.45, zorder=3.5),
-                  dict(s=24, c=col, edgecolors=MUTED, linewidths=0.4, zorder=3.5))
+    ec, ew = (INK, 0.7) if Xk is not None else (MUTED, 0.45)   # over the x's, a darker outline
+    scatter_edges(ax, x, ym, edge, top, dict(s=24, c=col, edgecolors=ec, linewidths=ew, zorder=3.5),
+                  dict(s=24, c=col, edgecolors=ec, linewidths=ew, zorder=3.5))
     ax.set_ylabel('fault mean prediction\n(in units of its sections\' uncertainties)' if named else
                   'section mean prediction\n(in units of its measurement uncertainty)', color=INK2, fontsize=9)
     if q is not None:                                    # how often the column has no event at all
@@ -458,20 +486,17 @@ def main():
     ac.set_xticklabels(labels, rotation=60, ha='right', rotation_mode='anchor', fontsize=7.5, color=INK2)
     fig.align_ylabels(axs)
     if tab:
-        draw_settings(ax, tab, 24)
+        draw_settings(ax, tab, 24 + leg_pt)
     else:
-        ax.annotate(label, (0, 1), xycoords='axes fraction', xytext=(0, 24), textcoords='offset points', va='bottom',
-                    color=INK, fontsize=11.5, fontweight='bold')
+        ax.annotate(label, (0, 1), xycoords='axes fraction', xytext=(0, 24 + leg_pt), textcoords='offset points',
+                    va='bottom', color=INK, fontsize=11.5, fontweight='bold')
     ax.annotate(how[0].upper() + how[1:], (0, 1), xycoords='axes fraction', xytext=(0, 8), textcoords='offset points',
                 va='bottom', color=INK2, fontsize=8.5)
     fig.suptitle('Named faults one by one, from isolated to well connected' if named else
                  'Slip-rate sections one by one, from isolated to well connected' if not a.pick else
                  'Slip-rate sections one by one', x=0.035, ha='left', color=INK, fontsize=13, fontweight='bold',
                  y=1 - 0.2 / H, va='top')
-    order = [h for c in range(lc) for h in handles[c::lc]]          # legend columns filled so it reads row by row
-    fig.legend(handles=[h for h, _ in order], labels=[l for _, l in order], loc='lower center', ncol=lc, frameon=False,
-               fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, note_in / H), handletextpad=0.5, columnspacing=1.6,
-               handlelength=2.6, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+    legend_above(fig, ax, handles, lc, 24, labelcolor=INK2)   # above the subtitle, below the settings
     fig.text(0.5, 0.08 / H, note, ha='center', va='bottom', color=MUTED, fontsize=7.5, linespacing=1.4)
     fig.subplots_adjust(left=1.15 / fig_w, right=1 - 0.25 / fig_w, top=1 - top_in / H, bottom=bot_in / H,
                         hspace=gap_in / ((main_in + p0_in + conn_in) / 3))
@@ -483,9 +508,19 @@ def main():
     # the second figure: the ruptures crossing each column, counted by their posterior mean rates (and the reference's)
     m = m_all[keep_c]
     idx = [B.indices[B.indptr[g]:B.indptr[g + 1]] for g in pick]
+    if ons is not None:                                  # per column, its ruptures on in each kept draw: draw, rupture, rate
+        for i in idx:
+            got = []
+            for c0 in range(0, nK, 500):
+                V = K[c0:c0 + 500][:, keep_c[i]]
+                r_, j_ = np.nonzero(V > 0)
+                got.append((r_.astype(np.int32) + c0, j_.astype(np.int32), V[r_, j_].astype(np.float64)))
+            ons.append(tuple(np.concatenate(v) for v in zip(*got)))
+    del K
+    on_v = [o[2] for o in ons if len(o[2])] if ons is not None else []
     sets = [[m[i] for i in idx]] + ([[ref['m'][i] for i in idx]] if ref is not None else [])
-    low = np.concatenate([r[r > 0] for r in sets[0]])   # the axis starts at the smallest mean
-    high = np.concatenate([low] + [r[r > 0] for rs in sets[1:] for r in rs])
+    low = np.concatenate([r[r > 0] for r in sets[0]] + [[v.min()] for v in on_v])   # the axis starts at the smallest
+    high = np.concatenate([low] + [r[r > 0] for rs in sets[1:] for r in rs] + [[v.max()] for v in on_v])
     h_lo, h_hi = np.floor(2 * np.log10(low.min())) / 2, np.ceil(2 * np.log10(high.max())) / 2
     bins = np.arange(h_lo, h_hi + 0.125, 0.25)           # quarter decades of log10 rate
 
@@ -527,28 +562,29 @@ def main():
     tag = ''                                             # the reference in the panels' titles: its label, or its start
     if ref is not None:
         tag = ref['label'] if len(ref['label']) <= 14 else re.split('[_-]', ref['label'])[0][:14] or 'reference'
-    ncol_h = 7
-    nrow_h = -(-N // ncol_h)
-    fw, ax_h = 19.0, 1.45                                # inches: the figure's width, each panel's height
+    col_w, ax_h = 2.8, 1.6                               # inches: each panel's column (with its gap), its height
     set_in = 0.15 * 2 * len(tab) if tab else 0.0         # the settings table, two lines per group
+    leg_in = (legend_height(1, 1) + 6) / 72              # the legend (one row), between the settings and the subtitle
     halo = [pe.Stroke(linewidth=2.2, foreground=SURFACE), pe.Normal()]   # the outline stands out over dark bars
 
-    def grid(note, title_lines):
-        """A figure for the N panels, seven across, their titles title_lines lines high: (the figure, its panels in
-        order, styled, with the unused ones hidden, its height in inches, the note wrapped, the note's height)."""
+    def grid(note, title_lines, n, ncol):
+        """A figure for n panels, ncol across, their titles title_lines lines high: (the figure, its panels in order,
+        styled, with the unused ones hidden, its width and height in inches, the note wrapped)."""
+        nrow = -(-n // ncol)
+        fw = 1.0 + ncol * col_w
         gap_h = 0.72 if title_lines > 2 else 0.58        # between rows: the tick labels and the next row's titles
-        top_h = 0.55 + set_in + 0.3 + (0.6 if title_lines > 2 else 0.45)   # title, settings, subtitle, the first titles
-        note = textwrap.fill(note, int((fw - 0.5) * 17), break_on_hyphens=False)
+        top_h = 0.55 + set_in + leg_in + 0.3 + (0.6 if title_lines > 2 else 0.45)   # title, settings, legend, subtitle,
+        note = textwrap.fill(note, int((fw - 0.5) * 17), break_on_hyphens=False)   # the first titles
         note_h = 0.12 + 0.15 * (note.count('\n') + 1)
-        bot_h = note_h + 0.24 + 0.15 + 0.5               # the note, the legend, the lowest panels' ticks and label
-        H_ = top_h + nrow_h * ax_h + (nrow_h - 1) * gap_h + bot_h
-        f_, ax_ = plt.subplots(nrow_h, ncol_h, figsize=(fw, H_), sharex=True, squeeze=False, facecolor=SURFACE)
+        bot_h = note_h + 0.5                             # the note, the lowest panels' ticks and label
+        H_ = top_h + nrow * ax_h + (nrow - 1) * gap_h + bot_h
+        f_, ax_ = plt.subplots(nrow, ncol, figsize=(fw, H_), sharex=True, squeeze=False, facecolor=SURFACE)
         f_.subplots_adjust(left=0.8 / fw, right=1 - 0.2 / fw, top=1 - top_h / H_, bottom=bot_h / H_,
                            hspace=gap_h / ax_h, wspace=0.18)   # room for each panel's tick labels and title
         panels = [a_ for row in ax_ for a_ in row]
-        for a_ in panels[N:]:
+        for a_ in panels[n:]:
             a_.set_visible(False)
-        for a_ in panels[:N]:
+        for a_ in panels[:n]:
             a_.set_facecolor(SURFACE)
             for s_ in ('top', 'right'):
                 a_.spines[s_].set_visible(False)
@@ -557,43 +593,77 @@ def main():
                 a_.spines[s_].set_linewidth(0.5)
             a_.tick_params(colors=AXIS, labelcolor=INK2, labelsize=7.5, which='both', length=2.5, width=0.5)
             a_.grid(True, which='major', color=GRID, lw=0.5, zorder=0)
-        return f_, panels[:N], H_, note, note_h
+        return f_, panels[:n], fw, H_, note
 
-    def finish(f_, H_, title, subtitle, legend, note, note_h, path_, table):
-        """The figure's title, the run's settings, its subtitle, legend and note; written to path_, with its table view."""
+    def finish(f_, fw, H_, title, subtitle, legend, note, path_):
+        """The figure's title, the run's settings, its legend, subtitle and note; written to path_."""
         f_.text(0.035, 1 - 0.2 / H_, title, ha='left', va='top', color=INK, fontsize=13, fontweight='bold')
         y_in = H_ - 0.55
         for nm, vl in (tab or []):                       # the run's settings, as on the other figures
             f_.text(0.8 / fw, y_in / H_, nm, ha='left', va='top', fontsize=7.5, family='monospace', color=MUTED)
             f_.text(0.8 / fw, (y_in - 0.15) / H_, vl, ha='left', va='top', fontsize=7.5, family='monospace', color=INK)
             y_in -= 0.3
-        f_.text(0.8 / fw, (y_in - 0.05) / H_, subtitle, ha='left', va='top', fontsize=8.5, color=INK2)
-        f_.legend(handles=[h for h, _ in legend], labels=[l for _, l in legend], loc='lower center', ncol=2,
-                  frameon=False, fontsize=8.5, labelcolor=INK2, bbox_to_anchor=(0.5, note_h / H_), handletextpad=0.5,
-                  columnspacing=2.0, handlelength=2.6, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+        figure_legend(f_, legend, len(legend), 'upper left', (0.8 / fw, (y_in - 0.02) / H_), labelcolor=INK2, columnspacing=2.0)
+        f_.text(0.8 / fw, (y_in - 0.05 - leg_in) / H_, subtitle, ha='left', va='top', fontsize=8.5, color=INK2)
         f_.text(0.5, 0.08 / H_, note, ha='center', va='bottom', color=MUTED, fontsize=7.5, linespacing=1.4)
         f_.savefig(path_, dpi=150, facecolor=SURFACE)
-        with open(os.path.splitext(path_)[0] + '.txt', 'w') as f:
+        print(f'wrote {path_}')
+
+    def figures(path_, draw, title_lines, title, subtitle, legend, note, ylabel, xlabel, table):
+        """The panels, drawn by draw(panel, column), in two figures for readability: the first 18 six across (path_ with
+        _1), the rest in three rows (_2); and the table view once, path_ with .txt.  The single figure path_ itself, as
+        this script wrote it before, is removed."""
+        stem_ = os.path.splitext(path_)[0]
+        if os.path.exists(path_):
+            os.remove(path_)
+        parts = [list(range(min(N, 18)))] + ([list(range(18, N))] if N > 18 else [])
+        for p_, ks in enumerate(parts, 1):
+            ncol = 6 if p_ == 1 else -(-len(ks) // 3)
+            f_, panels, fw, H_, note_ = grid(note, title_lines, len(ks), ncol)
+            for i, (a_, k) in enumerate(zip(panels, ks)):
+                draw(a_, k)
+                if i % ncol == 0:
+                    a_.set_ylabel(ylabel, color=INK2, fontsize=8)
+                if i + ncol >= len(ks):                  # the lowest panel of its column
+                    a_.set_xlabel(xlabel, color=INK2, fontsize=8)
+            finish(f_, fw, H_, title + (f' ({p_} of {len(parts)}: {ks[0] + 1} to {ks[-1] + 1} of {N})'
+                                        if len(parts) > 1 else ''), subtitle, legend, note_, f'{stem_}_{p_}.png')
+        with open(stem_ + '.txt', 'w') as f:
             f.write('\n'.join(table) + '\n')
-        print(f'wrote {path_} and {os.path.splitext(path_)[0]}.txt')
+        print(f'wrote {stem_}.txt')
 
     each = 'named fault' if named else 'section'
     ordered = ', from isolated to well connected' if not a.pick else ''
     note2 = ('Counts on a log scale, in bins a quarter of a decade wide. A rupture\'s posterior mean rate is its rate when '
              'on times the share of draws in which it is on. "N carry 90%" counts the largest rates that make up 90% of '
              f'their total, the {unit}\'s event rate.')
+    if ons is not None:
+        note2 += (f' Each x counts the ruptures on in one of the {nK:,} kept draws, by their rates in it (a draw\'s bins with '
+                  'none are not drawn); faint, so that where the draws gather shows darkest.')
     if ref is not None:
         note2 += (f' The black outline counts the same ruptures by {ref["label"]}\'s rates. That is a single model, which '
                   'compares with a single draw more than with the means: averaging over the draws puts rate on more '
                   'ruptures, at lower rates, than one model does.')
-    fig2, axh, H2, note2, note_h = grid(note2, 3 if ref is not None else 2)
     xf = FuncFormatter(lambda v, _: f'{v:g}'.replace('-', '−'))
     yf = FuncFormatter(lambda v, _: f'{v:,.0f}' if v >= 1 else '')      # counts, as plain numbers
-    for k, a_ in enumerate(axh):
+
+    def draw_rates(a_, k):
+        """Column k's ruptures counted by their posterior mean rates (and the reference's)."""
         st = stats[0][k]
-        a_.bar(bins[:-1], st['counts'], width=0.25, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2)
+        a_.bar(bins[:-1], st['counts'], width=0.25, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2,
+               alpha=0.4 if ons is not None else 1.0)    # behind the x's, lighter
         a_.set_yscale('log', nonpositive='clip')
-        a_.set_ylim(0.7, max(3.0, max(s[k]['counts'].max() for s in stats) * 3.0))
+        cmax = max(s_[k]['counts'].max() for s_ in stats)
+        if ons is not None:                              # each kept draw's counts of the ruptures on, by their rates
+            d_, _, v_ = ons[k]
+            nb_ = len(bins) - 1
+            b_ = np.clip(((np.log10(v_) - h_lo) / 0.25).astype(int), 0, nb_ - 1)
+            C = np.bincount(d_ * nb_ + b_, minlength=nK * nb_).reshape(nK, nb_)
+            dr, db = np.nonzero(C)
+            jx = bins[db] + 0.25 * np.random.default_rng(k).uniform(0.2, 0.8, len(db))
+            draw_xs(a_, jx, C[dr, db], col[k], zorder=2.5, alpha=0.12)
+            cmax = max(cmax, int(C.max()) if C.size else 0)
+        a_.set_ylim(0.7, max(3.0, cmax * 3.0))
         a_.yaxis.set_major_locator(LogLocator(base=10))
         a_.yaxis.set_major_formatter(yf)
         a_.yaxis.set_minor_formatter(NullFormatter())
@@ -608,19 +678,18 @@ def main():
         a_.xaxis.set_major_formatter(xf)
         a_.tick_params(labelbottom=True)                 # every panel shows its axis's values
         a_.set_title(title, loc='left', fontsize=7.2, color=INK, pad=3, linespacing=1.3)
-        if k % ncol_h == 0:
-            a_.set_ylabel('ruptures', color=INK2, fontsize=8)
-        if k + ncol_h >= N:                              # the lowest panel of its column
-            a_.set_xlabel('log10 rate (per year)' if ref is not None else 'log10 posterior mean rate (per year)',
-                          color=INK2, fontsize=8)
-    leg2 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), f'ruptures crossing the {unit}, by '
-             'posterior mean rate')]
+    leg2 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3, alpha=0.4 if ons is not None else 1.0) for c in few),
+             f'ruptures crossing the {unit}, by posterior mean rate')]
+    if ons is not None:
+        leg2.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+                     f'those on in each of the {nK:,} kept draws, by their rates in it'))
     if ref is not None:
         leg2.append((Patch(facecolor='none', edgecolor=REF, linewidth=0.9), f'the same ruptures by {ref["label"]}\'s rates'))
-    finish(fig2, H2, f'Rupture rates of each {each}{ordered}',
-           f'The ruptures crossing each {unit} of {os.path.basename(out)}, counted by their posterior mean rates'
-           + (f' and by {ref["label"]}\'s' if ref is not None else '') + '; panels in that figure\'s order and colours',
-           leg2, note2, note_h, out2, lines2)
+    figures(out2, draw_rates, 3 if ref is not None else 2, f'Rupture rates of each {each}{ordered}',
+            f'The ruptures crossing each {unit} of {os.path.basename(out)}, counted by their posterior mean rates'
+            + (f' and by {ref["label"]}\'s' if ref is not None else '') + '; panels in that figure\'s order and colours',
+            leg2, note2, 'ruptures', 'log10 rate (per year)' if ref is not None else 'log10 posterior mean rate (per year)',
+            lines2)
 
     # the third figure: the same ruptures' rates summed by magnitude bin, each column's participation rate per bin
     if a.bins_block not in P['block_names']:
@@ -679,15 +748,56 @@ def main():
              f'its bin row; the rows are counted up from {mlo[0]:.1f}). Unlike the counts by rate, these totals compare '
              'directly with a single model\'s. Rates on a log scale; bins more than six decades below a panel\'s largest '
              'are not drawn.' + (f' The black outline is the same for {ref["label"]}\'s rates.' if ref is not None else ''))
-    fig3, axm, H3, note3, note_h3 = grid(note3, 3)
-    for k, a_ in enumerate(axm):
-        v = mfd[0][k]
-        top = max(float(s[k].max()) for s in mfd)
-        a_.bar(edges[:-1], v, width=mw, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2)
-        a_.set_yscale('log', nonpositive='clip')
-        if top > 0:                                      # at most six decades, down from the panel's largest
-            pos = np.concatenate([s[k][s[k] > 0] for s in mfd])
-            a_.set_ylim(max(pos.min() / 2, top / 1e6), top * 3)
+    if ons is not None:                                  # each kept draw's totals by bin, and how often a bin has none
+        note3 = (f'Each x is one of the {nK:,} kept draws: the total rate of the {unit}\'s ruptures in one magnitude bin, '
+                 f'{mw:g} wide (a rupture\'s magnitude is known only to its bin row; the rows are counted up from '
+                 f'{mlo[0]:.1f}), faint, so that where the draws gather shows darkest; the circle is their posterior mean. '
+                 'The strip marked 0 shows, by its opacity, the share of draws in which none of the bin\'s ruptures is on. '
+                 'Rates on a log scale, down to the lowest draws\' (at most seven decades below the largest).'
+                 + (f' The black outline is the same for {ref["label"]}\'s rates, a single model, which compares with a '
+                    'single draw.' if ref is not None else ''))
+        nsl = len(edges) - 1
+        dm, has = [], []
+        for k, i in enumerate(idx):                      # per column: draws x bins, the totals of its ruptures on
+            d_, j_, v_ = ons[k]
+            b_ = binof[i][j_]
+            ok = b_ >= 0
+            dm.append(np.bincount(d_[ok] * nsl + slot[b_[ok]], weights=v_[ok], minlength=nK * nsl).reshape(nK, nsl))
+            has.append(np.bincount(slot[binof[i][binof[i] >= 0]], minlength=nsl) > 0)
+        z0 = [np.mean(D_ <= 0, axis=0) for D_ in dm]
+        lines3 += ['', f'share of the {nK} kept draws without an event in each bin (each column a bin, by its lower edge; '
+                   '- : the column has no rupture in the bin)', f'{"column":>6s} ' + ' '.join(f'{e:9.2f}' for e in edges[:-1])]
+        lines3 += [f'{j:6d} ' + ' '.join(f'{v:9.3f}' if h else f'{"-":>9s}' for v, h in zip(z0[j], has[j]))
+                   for j in range(N)]
+
+    def draw_magnitudes(a_, k):
+        """Column k's ruptures' posterior mean rates (and the reference's) summed by magnitude bin."""
+        top = max(float(s_[k].max()) for s_ in mfd)
+        if ons is not None:                              # the kept draws as x's, the mean as a circle in the column's colour
+            D_ = dm[k]
+            pos_d = D_[D_ > 0]
+            top = max(top, float(pos_d.max()) if pos_d.size else 0.0)
+            a_.set_yscale('log', nonpositive='clip')
+            lo_ = max(float(pos_d.min()) / 1.5 if pos_d.size else top / 1e6, top / 1e7) if top > 0 else 1e-10
+            z_lo, z_hi = lo_ / 10 ** 0.75, lo_ / 10 ** 0.15          # the strip for draws without an event in a bin
+            a_.set_ylim(lo_ / 10 ** 0.9, top * 3 if top > 0 else 1.0)
+            a_.axhline(lo_, color=MUTED, lw=0.4, ls=(0, (2, 2)), zorder=1)
+            a_.text(edges[0] + 0.03, (z_lo * z_hi) ** 0.5, '0', fontsize=6, color=MUTED, va='center', ha='left')
+            for b in np.flatnonzero(has[k]):
+                if z0[k][b] > 0:                         # opacity: the share of draws without an event
+                    a_.fill_between(edges[b:b + 2], z_lo, z_hi, color=col[k], alpha=float(z0[k][b]), lw=0, zorder=2)
+            dr, db = np.nonzero(D_ > 0)
+            jx = edges[db] + mw * np.random.default_rng(k).uniform(0.15, 0.85, len(db))
+            draw_xs(a_, jx, D_[dr, db], col[k], zorder=2.5, alpha=0.12)
+            mm_ = mfd[0][k]
+            cen = 0.5 * (edges[:-1] + edges[1:])
+            a_.scatter(cen[mm_ > 0], mm_[mm_ > 0], s=18, color=col[k], edgecolors=INK, linewidths=0.8, zorder=4)
+        else:
+            a_.bar(edges[:-1], mfd[0][k], width=mw, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2)
+            a_.set_yscale('log', nonpositive='clip')
+            if top > 0:                                  # at most six decades, down from the panel's largest
+                pos = np.concatenate([s_[k][s_[k] > 0] for s_ in mfd])
+                a_.set_ylim(max(pos.min() / 2, top / 1e6), top * 3)
         a_.yaxis.set_major_locator(LogLocator(base=10))
         a_.yaxis.set_minor_formatter(NullFormatter())
         title = (f'{labels[k]}\n{len(idx[k]):,} {"rupture" if len(idx[k]) == 1 else "ruptures"}, {spans[k]}\n'
@@ -700,18 +810,22 @@ def main():
         a_.xaxis.set_major_formatter(FuncFormatter(lambda x_, _: f'{x_:.1f}'))
         a_.tick_params(labelbottom=True)                 # every panel shows its axis's values
         a_.set_title(title, loc='left', fontsize=7.2, color=INK, pad=3, linespacing=1.3)
-        if k % ncol_h == 0:
-            a_.set_ylabel('rate per year', color=INK2, fontsize=8)
-        if k + ncol_h >= N:                              # the lowest panel of its column
-            a_.set_xlabel('magnitude', color=INK2, fontsize=8)
-    leg3 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), f'the {unit}\'s ruptures\' posterior '
-             'mean rates, summed by magnitude bin')]
+    if ons is not None:
+        leg3 = [(tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+                 f'each of the {nK:,} kept draws: the {unit}\'s ruptures\' rates summed by magnitude bin'),
+                (tuple(Line2D([], [], ls='none', marker='o', ms=4.6, mfc=c, mec=INK, mew=0.8) for c in few),
+                 'their posterior mean'),
+                (tuple(Patch(facecolor=c, edgecolor='none', alpha=0.6) for c in few), '0 strip: share of draws with none')]
+    else:
+        leg3 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), f'the {unit}\'s ruptures\' '
+                 'posterior mean rates, summed by magnitude bin')]
     if ref is not None:
         leg3.append((Patch(facecolor='none', edgecolor=REF, linewidth=0.9), f'the same for {ref["label"]}\'s rates'))
-    finish(fig3, H3, f'Rupture rates of each {each} by magnitude{ordered}',
-           f'The ruptures crossing each {unit} of {os.path.basename(out)}: their posterior mean rates'
-           + (f' and {ref["label"]}\'s' if ref is not None else '') + ' summed by magnitude bin; panels in that figure\'s '
-           'order and colours', leg3, note3, note_h3, out3, lines3)
+    figures(out3, draw_magnitudes, 3, f'Rupture rates of each {each} by magnitude{ordered}',
+            f'The ruptures crossing each {unit} of {os.path.basename(out)}: their posterior mean rates'
+            + (f' and {ref["label"]}\'s' if ref is not None else '') + ' summed by magnitude bin; panels in that figure\'s '
+            'order and colours', leg3, note3, 'rate per year', 'magnitude', lines3)
+
 
 if __name__ == '__main__':
     main()

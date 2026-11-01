@@ -7,7 +7,7 @@ and how each run's per-rate medians compare with a reference run's (replicates o
 Each argument is <run>:<label>. The statistics come from each run's running summaries (<run>_stream.npz, written by
 every run), so they are the same whether or not its draws were stored; runs made before those existed use their stored
 draws (<run>_samples.npy), and --from-draws uses stored draws wherever they exist. Rates below the diagnostic floor
-(--diag-floor, 1e-12 by default, the notebook's FLOOR, as in its convergence checks; 1e-16, the summaries' resolution,
+(--diag-floor, 1e-10 by default, the notebook's FLOOR, as in its convergence checks; 1e-16, the summaries' resolution,
 at the lowest) count as one interval in the statistics. --ref names the run the others are compared with rate by rate.
 Writes the figure and, next to it, the text summary (.txt).
 """
@@ -32,7 +32,7 @@ ap.add_argument('--draws', type=int, default=200, help='draws per chain taken fr
 ap.add_argument('--from-draws', action='store_true', help='use stored draws wherever they exist, instead of the summaries')
 ap.add_argument('--slip-block', default='S', help='block of slip-rate rows (subsection totals)')
 ap.add_argument('--bins-block', default='MFD', help='block of magnitude-bin rows')
-ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 rate below which rates count as one interval in the '
+ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as one interval in the '
                 'statistics (the notebook passes FLOOR); at least -16, the running summaries\' resolution')
 a = ap.parse_args()
 

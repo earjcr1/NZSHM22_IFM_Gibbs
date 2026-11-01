@@ -10,15 +10,22 @@ exponential proposal in the tails, so conditionals sitting hundreds of sds beyon
     python gibbs.py --selftest
 
 Under the log-rate priors (--prior), each rate is drawn exactly by a slice sampler in log rate. The default is
-spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from the slab floor (1e-12)
+spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log-uniform rate from the slab floor (1e-10)
 up to a soft top at its bin's target rate, and the fraction on in each bin is estimated. --slab sqrt makes an on
 rupture's rate uniform in sqrt(rate) instead (density m^-1/2, not 1/m), the cross-check on how the lower end of the
 rates is treated. --prior binbox-theta:1:0 (per-bin log-uniform boxes whose depths put no pressure on the bin totals,
 theta = 1; the alternative until October 2026) is kept for comparison. --prior linear is an optional linear-space prior:
-each rupture's rate uniform from 0 to its bin's target rate, drawn by the exact truncated-normal updates above. See
+each rupture's rate uniform from 0 to its bin's target rate, drawn by the exact truncated-normal updates above.
 --down-the-middle adds a balance term to the misfit: each data type's relative shortfall s (summed predictions against
 summed targets) costs A s^2, one A for every type (or, with --down-the-middle zero-model, each type's own, its zero-model
-misfit), as extra rows of G and d, for any prior. See --help for the rest.
+misfit), as extra rows of G and d, for any prior. --band F (the notebook's default, F = 10) keeps every data row with a
+positive target predicted within a factor F of it, from d/F to F d: a hard constraint, for any prior but the retired
+hierarchical one and without transfer moves. Each update is drawn from its conditional restricted to the rates that keep
+every row of its column inside the band (band_bounds in the kernel), spike-and-slab never takes an off or on state the
+band forbids, and a swap that would leave it is rejected. A start outside the band is first moved inside it by a
+penalized least-squares fit (band_start), kept beside the problem as <problem>_band<F>_start.npz and reused by later
+runs with the same problem, band, start and bounds. Each recorded draw's count of rows outside the band, always 0, is
+kept as band_outside. See --help for the rest.
 
 Backends: a C kernel compiled on first use with $CC (default 'cc') and loaded through ctypes; chains run in
 parallel threads (ctypes releases the GIL).  Each thread moves its chains through the ruptures together, reading each
@@ -1988,6 +1995,16 @@ def band_start(G, d, rows, F, m0, hi, verbose=True):
     return None
 
 
+def band_start_key(G, d, rows, F, m0, hi):
+    """A fingerprint of everything band_start's result depends on: the problem's matrix and targets, the banded rows, the
+    factor, the start it moves and the rates' upper bounds."""
+    G = sp.csr_matrix(G)
+    h = hashlib.sha1(repr(float(F)).encode())
+    for v in (G.indptr, G.indices, G.data, d, rows, m0, np.broadcast_to(hi, len(m0))):
+        h.update(np.ascontiguousarray(v).tobytes())
+    return h.hexdigest()
+
+
 def rupture_bins(P, rows, block):
     """Each rupture's magnitude bin: the index, in rows, of the bin row holding it."""
     Gr = P['G'].tocsr()
@@ -2010,7 +2027,7 @@ def main():
     ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz; not after preliminaries.py --no-nnls), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
-                         "slab floor 1e-12 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
+                         "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
                          "fraction on in each bin estimated under a Beta(1, 1) prior; --slab sqrt: a slab uniform in sqrt(rate)); "
                          "spikeslab:A:TOP:a:b "
                          "for slab floor 10^A, TOP = soft, hard or a factor F (hard top at F x R_j), and a Beta(a, b) prior; "
@@ -2059,7 +2076,9 @@ def main():
                     help='keep the prediction of every data row with a positive target (slip-rate, MFD-bin and paleo rows; '
                          'each subsection its own row) within a factor F of its target, from d/F to F d: a hard constraint on '
                          'the rates, for any prior (10: an order of magnitude either way). A start outside it is first moved '
-                         'inside by a penalized least-squares fit')
+                         'inside by a penalized least-squares fit, made once per problem: it is kept beside --problem '
+                         '(<problem>_band<F>_start.npz) and taken from there by later runs with the same problem, band and '
+                         'start')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
     ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
@@ -2068,8 +2087,8 @@ def main():
     ap.add_argument('--out', default='gibbs_run')
     ap.add_argument('--no-samples', action='store_true', help='do not write the (chains, draws, n) float32 sample file; the running '
                     'summaries in <out>_stream.npz are written either way')
-    ap.add_argument('--diag-floor', type=float, default=-12.0, help='log10 rate below which rates count as equal in the running '
-                    'R-hat and effective-draw summaries (default -12; the notebook passes its FLOOR)')
+    ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as equal in the running '
+                    'R-hat and effective-draw summaries (default -10; the notebook passes its FLOOR)')
     ap.add_argument('--keep-draws', type=int, default=0, help='keep this many whole draws per run (divided evenly among the chains, '
                     'evenly spaced over the recorded draws after burn-in) in <out>_kept.npy, float32, with their chain and '
                     'record numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
@@ -2077,9 +2096,9 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, nine verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, ten verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
-                         "term and swap moves), five verdicts")
+                         "term, swap moves and the band), six verdicts")
     a = ap.parse_args()
     if a.selftest == 'current':
         ok = selftest_zlo()
@@ -2087,6 +2106,7 @@ def main():
         ok &= selftest_spikeslab()
         ok &= selftest_balance()
         ok &= selftest_swaps()
+        ok &= selftest_band()
         sys.exit(0 if ok else 1)
     if a.selftest:
         ok = selftest()
@@ -2150,9 +2170,9 @@ def main():
         halfway_mode = a.prior.startswith('halfway')
         theta_mode = a.prior.startswith('binbox-theta')
         floor_mode = a.prior.startswith('binbox-floor') or spike_mode or halfway_mode  # a common floor 10^W for every bin
-        if spike_mode:                                   # spikeslab:A:TOP:a:b (slab floor 10^A, A = -12 by default)
+        if spike_mode:                                   # spikeslab:A:TOP:a:b (slab floor 10^A, A = -10 by default)
             sp_ = (a.prior.split(':') + [None] * 5)[1:5]
-            W, se, top = float(sp_[0] or -12), 0.0, str(sp_[1] or 'soft').lower()
+            W, se, top = float(sp_[0] or -10), 0.0, str(sp_[1] or 'soft').lower()
             ss_a, ss_b = float(sp_[2] or 1), float(sp_[3] or 1)
         elif halfway_mode:                               # halfway:A:TOP:W (floor 10^A, A = -10; W the uniform part's share)
             hw = (a.prior.split(':') + [None] * 4)[1:4]
@@ -2296,10 +2316,28 @@ def main():
         n_out = np.sum((y0[:, band_rows] < P['d'][band_rows] / a.band) | (y0[:, band_rows] > P['d'][band_rows] * a.band), 1)
         if n_out.any():
             hi_m = T.hi * (scale if scale is not None else 1.0)
-            print(f'band: the start leaves {n_out.max()} rows outside it; a penalized least-squares fit from it:')
-            ms = band_start(Gd, P['d'], band_rows, a.band, X0[int(np.argmax(n_out))], hi_m)
-            if ms is None:
-                raise SystemExit('band: no start inside it was found; the band may admit no model of these inputs')
+            x0 = X0[int(np.argmax(n_out))]
+            # the fit is deterministic, so it is made once per problem and kept beside it: later runs (the other
+            # replicates) with the same problem, band, start and bounds take it from there
+            cache = os.path.splitext(a.problem)[0] + f'_band{a.band:g}_start.npz'
+            key = band_start_key(Gd, P['d'], band_rows, a.band, x0, hi_m)
+            ms = None
+            if os.path.exists(cache):
+                with np.load(cache) as c:
+                    if str(c['key']) == key:
+                        ms = np.array(c['m'])
+            if ms is not None:
+                print(f'band: the start leaves {n_out.max()} rows outside it; the start inside it that an earlier run '
+                      f'found from it is taken from {cache}')
+            else:
+                print(f'band: the start leaves {n_out.max()} rows outside it; a penalized least-squares fit from it:')
+                ms = band_start(Gd, P['d'], band_rows, a.band, x0, hi_m)
+                if ms is None:
+                    raise SystemExit('band: no start inside it was found; the band may admit no model of these inputs')
+                tmp = cache[:-4] + f'.{os.getpid()}.tmp.npz'
+                np.savez(tmp, m=ms, key=key, band=a.band)
+                os.replace(tmp, cache)               # whole or not at all, should another run read it meanwhile
+                print(f'band: kept for later runs on this problem in {cache}')
             X0 = np.tile(ms, (a.chains, 1))
             Xs = T.init(X0 if scale is None else X0 / scale)
             left = T.band_outside(T.residual(Xs[:1]))[0]

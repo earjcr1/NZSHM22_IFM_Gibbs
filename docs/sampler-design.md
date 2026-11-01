@@ -30,8 +30,8 @@ first given.
   prior, each rate from a 50/50 mix of uniform and log-uniform (`--prior halfway`), lands on its log-uniform end: the
   data give almost every value to the log-uniform part.
 - **Default model (since October 2026): spike-and-slab** (`--prior spikeslab`) under the plain likelihood: per
-  magnitude bin, each rupture off (rate 0) or on, log-uniform from a slab floor at 1e-12 (also the diagnostic cutoff;
-  1e-10 until late October 2026) up to a soft top at the bin's target rate R_j whose width is the bin's own
+  magnitude bin, each rupture off (rate 0) or on, log-uniform from a slab floor at 1e-10 (also the diagnostic cutoff;
+  1e-12 in late October 2026) up to a soft top at the bin's target rate R_j whose width is the bin's own
   uncertainty, with the fraction on in each bin estimated. The data set the sparsity, the prior puts no pressure on
   the bin totals, and the products barely depend on the slab floor. The square-root slab (`--slab sqrt`, run from the
   command line: the same with an on rupture's rate uniform in √rate, density m^−1/2) was its cross-check until it was
@@ -45,13 +45,18 @@ first given.
   probabilities at 1e-5 about 7 times higher. They are kept for comparison only. The χ² cap, once an optional model
   class, was removed in October 2026, a linearly uniform prior is not used, and the hierarchical prior is retired:
   after 36,000 sweeps its spread was still rising (R̂ 1.86). See REPORT.md.
-- **Balance term (October 2026; on by default).** `gibbs.py --down-the-middle` adds to the Gaussian misfit, for each
+- **Balance term (October 2026; off by default since early November 2026).** `gibbs.py --down-the-middle` adds to the Gaussian misfit, for each
   data type (slip-rate sections, MFD bins, paleo rows), A s² with s the type's relative shortfall, summed predictions
-  against summed targets in units of each measurement's uncertainty. By default (`DOWN_THE_MIDDLE = 'zero-model'`,
-  `--down-the-middle zero-model`, since late October 2026) each type has its own A, its zero-model misfit; with
+  against summed targets in units of each measurement's uncertainty. With `DOWN_THE_MIDDLE = 'zero-model'`
+  (`--down-the-middle zero-model`, the default in late October 2026) each type has its own A, its zero-model misfit; with
   `DOWN_THE_MIDDLE = True` one A serves all types, the largest that keeps every type at or below one extra
   measurement. It is extra rows of G and d, so the kernel is unchanged and every prior takes it; the χ² of the fit
   check stays over the data rows. See REPORT.md, "Balance between over- and underprediction".
+- **The band (early November 2026; on by default).** `gibbs.py --band F` (`BAND = 10`) keeps every data row's
+  prediction within a factor F of its target, from d/F to F d: a hard constraint on the rates, for any prior, with
+  each update drawn within the rates the band allows. The defaults since are the band, no balance term and a slab
+  floor of 1e-10. The chains start from a penalized least-squares fit moved inside it, made once per problem. See
+  REPORT.md, "The band".
 - **Slip-rate sections (October 2026).** Each fault section's slip rate is one measurement, copied in the inputs to its
   k subsections; cleaning now divides each section's rows by √k (`preliminaries.py --slip-sections auto`, the default;
   `none` restores the inputs as given), so it counts once. Most numbers in this section count each subsection as its

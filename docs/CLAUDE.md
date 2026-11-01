@@ -14,7 +14,9 @@ checking that the model's OpenSHA rupture set describes the same ruptures; --zip
 that OpenSHA loads; the notebook's last cell writes the best fit's, nnls/rates.csv, and the posterior mean's,
 spikeslab/rates.csv (rnnls/rates.csv for the randomized fits' mean), one row per rupture of the rupture set like the
 model's own rates.csv, when DATA_DIR holds the model's
-OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), gibbs.py (production sampler; Gaussian
+OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), make_summary_pdf.py (a finished
+run's summary as a PDF, about a paragraph per step with the run's figures, every number read from its reports; command
+line only, needs reportlab), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
 and effective draws in convergence.npz), make_tables.py (the posterior tables and rate vectors, pooled over the
 replicates), block_fit.py (each row block's fit from a run's recorded predictions),
@@ -23,10 +25,11 @@ replicates or priors, from the running summaries or stored draws; command line o
 figure was dropped at the end of October 2026), cru_common.py (shared I/O and diagnostics), compare_priors.py (tables comparing runs under different priors),
 select_draws.py (weighted representative draws for hazard), plot_rate_magnitude.py (each rupture's posterior mean
 rate against its magnitude bin, from the rate vectors, with each bin's ruptures counted by decade of mean rate, and
-above it each bin's total over its target with the total's posterior 16-84% range),
+below it each bin's total over its target with the total's posterior 16-84% range),
 plot_slip_rates.py (slip-rate targets against the mean model's predictions, linear and log, from the rate vectors, with
 each section mean's posterior 16-84% range), plot_paleo_rates.py (paleo-rate targets against the model's predictions,
-log-log, with each prediction's posterior 16-84% range; the three ranges come from the predictions the runs next to
+log-log, with each prediction's posterior 16-84% range; with kept draws, the default, all of these figures and
+plot_slip_sections.py's draw each kept draw as an x instead (cru_common.kept_draws, kept_predictions, draw_xs); the three ranges come from the predictions the runs next to
 the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions; the slip-rate sections and paleo rows are
 coloured from cru_common.CATEGORICAL (Tableau's Color Blind 10, outlined in grey as several are pale), cycled
 along the targets so that neighbours differ, neighbour_colours, and the reference model is black), plot_slip_sections.py (the posterior slip-rate predictions of the rupture set's named
@@ -59,7 +62,7 @@ slope, population and products, with replicate noise for scale), fig_mfd_levels.
 two MFD uncertainty levels) and psis.py (Pareto-smoothed importance sampling, PSIS-LOO, as used for the paleo rows'
 leave-one-out checks).
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform
-from the slab floor 1e-12 up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty; the
+from the slab floor 1e-10 up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty; the
 fraction on in each bin estimated under Beta(1, 1); spikeslab:A:TOP:a:b; --hyper-every defaults to 1 for it, so the
 fractions are redrawn every sweep). --slab sqrt (command line only; not in the notebook) was its cross-check until the
 user dropped it at the end of October 2026 (the request behind it had been misphrased; do not propose it as a check):
@@ -72,11 +75,19 @@ of a uniform and a log-uniform range, 1e-10 to R_j, every rupture always on; the
 log-uniform part, so it behaves like the per-bin log-uniform boxes, pushing the bin totals up.
 --down-the-middle adds a balance term to the misfit, for any prior: each data type's relative shortfall s = sum of
 predictions / sum of targets - 1 (slip-rate sections, MFD bins, paleo rows, in units of each measurement's uncertainty)
-costs A s^2. The notebook's DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; its default since late
-October 2026) gives each type its own A, its zero-model misfit; DOWN_THE_MIDDLE = True (--down-the-middle alone)
-one A for all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows
-weights; extra rows of G and d). The recorded chi2 and
+costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the notebook's default in late October
+2026) gives each type its own A, its zero-model misfit; DOWN_THE_MIDDLE = True (--down-the-middle alone) one A for
+all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
+extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
+--band F (the notebook's BAND = 10, its default since early November 2026, when DOWN_THE_MIDDLE = False and FLOOR = -10
+came with it): every data row with a positive target (each subsection's slip-rate row, each MFD bin, each paleo row)
+keeps its prediction within d/F to F d, a hard constraint for any prior (Target.set_band; the kernel's band_bounds
+restricts each update, under spike-and-slab a forbidden off or on state is never taken, swaps that would leave the band
+are rejected; selftest_band in the full self-test set; without it every run is bit-identical). A start outside it is
+moved in by band_start (penalized least squares, about 4 minutes at 211k), kept beside the problem as
+<problem>_band<F>_start.npz and reused when the problem, band, start and bounds match (band_start_key). The best fit
+and randomized_nnls.py ignore it (REPORT.md, "The band").
 Kept for comparison only, and no longer tested: binbox-theta:1:0 (theta = 1: per-bin log-uniform boxes below R_j,
 depths n_j / (theta ln 10); command line only; the alternative until October 2026, retired because it fitted no
 better and from about 2e5 ruptures its boxes are too deep for its sampler to cross), binbox-floor:-12 (per-bin boxes
@@ -151,7 +162,7 @@ aside with it.
   where they describe it, with numbers stated with the conditions they were measured under. Before committing a code
   change, run the self-tests that apply, a quick end-to-end notebook run (tools/run_quick_checks.sh) and
   tools/static_checks.py. Run heavy jobs one at a time, and delete each test folder once its numbers are in the docs.
-- Floors and cutoff: one setting, the notebook's FLOOR = -12 (1e-12; -10 until late October 2026), is spike-and-slab's
+- Floors and cutoff: one setting, the notebook's FLOOR = -10 (1e-10; -12 in late October 2026), is spike-and-slab's
   slab floor and the diagnostic and reporting cutoff (the notebook passes --diag-floor={FLOOR} to gibbs.py,
   preliminaries.py, check_convergence.py and plot_rate_magnitude.py, whose defaults match; REPORT.md, "Floors and
   cutoff"); for theta it is only the cutoff. The per-bin boxes, if run, take it as their floor.
@@ -165,7 +176,7 @@ aside with it.
   must pass. Any sampler change must also keep the rate-by-rate agreement in compare_runs.py
   (z-scores ~ N(0,1), |z| > 3 near 0.27%). The notebook's RUN_SELFTESTS runs only `--selftest current`, the cases
   the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance term, swap
-  moves). A change meant only to speed things up must leave a fixed-seed run's output arrays
+  moves, the band). A change meant only to speed things up must leave a fixed-seed run's output arrays
   bit-identical if it is in the sampler (gibbs.py's per-draw bookkeeping works on each chain's nonzero rates, and its
   kernel moves a thread's chains through the ruptures together, for instance). In cleaning (preliminaries.py), where a faster method can only sum in another order (the best fit, the
   near-duplicate search, the resolution diagonal), its results must be identical up to rounding (the cleaned problem
@@ -176,16 +187,16 @@ aside with it.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
-  one: the chi2 cap, --target cutoff, was removed in October 2026), with the balance term on by default, each type's
-  own weight (DOWN_THE_MIDDLE = 'zero-model', --down-the-middle zero-model); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
+  one: the chi2 cap, --target cutoff, was removed in October 2026), within the band by default (BAND = 10, --band 10)
+  and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
-  tools/run_quick_checks.sh, pins FLOOR = -10 and DOWN_THE_MIDDLE = True, under which TESTING.md's quick-preset
+  tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True and BAND = None, under which TESTING.md's quick-preset
   reference values were measured); the notebook runs it alone,
   always with swap moves (--swap-cos 0.99), from the best fit and without stored draws. Sharing the fraction on by magnitude
   bin and tectonic domain or slip-rate section, pooled or not, was tried in October 2026 and changed no fit (REPORT.md).
   A spike-and-slab run counts as converged only when the number of ruptures on and every bin's fraction on have
   R-hat < 1.01, as well as the rates. A linearly uniform prior is only an option (--prior linear): it pushes the bin totals far up and fails
   the fit check by hundreds of sd at 2e4 and thousands at 211k; so is the halfway prior (--prior halfway). The prior, its floor,
-  edges and hyperpriors, the likelihood (the balance term and its weight among it), sigma, bounds, how the slip-rate rows
+  edges and hyperpriors, the likelihood (the balance term and its weight among it), the band and its factor, sigma, bounds, how the slip-rate rows
   count and the MFD bins' uncertainty level are modelling decisions: ask the user before changing them. If all-zero rows are kept (--keep-empty-rows), the fit check
   includes their constant.

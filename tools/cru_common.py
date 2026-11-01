@@ -665,6 +665,36 @@ def run_settings(config, problem):
     return [(name, str(cfg[key])) for name, key in FIGURE_SETTINGS if key in cfg]
 
 
+LEGEND_ROW = 8.5 * 1.5                               # points per legend row: the figures' 8.5-point text and half a line
+
+
+def legend_height(n_items, ncol):
+    """Points a legend of n_items entries in ncol columns takes up (rows of LEGEND_ROW)."""
+    return LEGEND_ROW * -(-n_items // ncol)
+
+
+def figure_legend(fig, items, ncol, loc, anchor, transform=None, **kw):
+    """A legend in the figures' style, its (handle, label) items in ncol columns read row by row, its loc corner at anchor
+    (in transform's coordinates; the figure's by default), with no border or padding around it."""
+    from matplotlib.legend_handler import HandlerTuple
+    order = [it for c in range(ncol) for it in items[c::ncol]]   # legend columns filled so it reads row by row
+    opts = dict(fontsize=8.5, handletextpad=0.5, columnspacing=1.6, handlelength=2.6,
+                handler_map={tuple: HandlerTuple(ndivide=None, pad=0.15)})
+    opts.update(kw)
+    return fig.legend(handles=[h for h, _ in order], labels=[l for _, l in order], loc=loc, ncol=ncol, frameon=False,
+                      bbox_to_anchor=anchor, bbox_transform=transform or fig.transFigure, borderaxespad=0.0,
+                      borderpad=0.0, **opts)
+
+
+def legend_above(fig, ax, items, ncol, y, x=0.0, **kw):
+    """figure_legend above a panel, between the run's settings and the panel's subtitle: its lower left corner y points
+    above the panel's top left corner (and x points to its right: negative, to its left, for a legend wider than the
+    panel)."""
+    from matplotlib.transforms import offset_copy
+    return figure_legend(fig, items, ncol, 'lower left', (0.0, 1.0),
+                         offset_copy(ax.transAxes, fig=fig, x=x, y=y, units='points'), **kw)
+
+
 def settings_lines(pairs, width):
     """Settings as a small table in monospace text: a line of names over a line of values, column by column, continued
     on further pairs of lines when wider than width characters. Returns [(names, values), ...]."""
@@ -724,6 +754,77 @@ def run_predictions(folder, rows, n_rows, scale, combine=None):
             Y.append(yc if combine is None else yc @ combine)
         used.append(os.path.basename(f)[:-4])
     return (np.concatenate(Y), used) if Y else (None, [])
+
+
+def kept_draws(z):
+    """The kept draws that select_draws.py adds to the rate vectors (z, the loaded .npz): `kept`, one row per draw over
+    the original ruptures (float32), and `kept_index`, each one's run (its position among the runs select_draws.py was
+    given), chain and record. (None, None) without them: REPRESENTATIVES = 0, or a single model's rate vectors. The
+    figures draw them one by one, as x's (draw_xs)."""
+    if 'kept' not in z.files or 'kept_index' not in z.files:
+        return None, None
+    return z['kept'], np.asarray(z['kept_index'])
+
+
+def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=None):
+    """The kept draws' predictions for the given rows, each divided by scale (with combine, a rows x m matrix, their
+    combinations), read from the predictions their runs recorded (main_rep<k>.npz next to the rate vectors for run k,
+    the notebook's order): a kept draw is the recorded draw at its chain and record (record - burn // thin in the run's
+    predictions), so nothing is recomputed. check = (G_rows, kept, keep_cols): the first kept draw of each run is
+    recomputed from its rates and must agree, or the runs are not the ones the draws came from. None if a run is
+    missing or disagrees; the figures then draw the posterior ranges instead."""
+    out = None
+    for r in np.unique(index[:, 0]):
+        f = os.path.join(folder, f'main_rep{r}.npz')
+        if not os.path.exists(f):
+            return None
+        with np.load(f) as z:
+            if 'y' not in z.files:
+                return None
+            y, off = z['y'], int(z['burn']) // int(z['thin'])
+        sel = np.flatnonzero(index[:, 0] == r)
+        rec = index[sel, 2] - off
+        if y.ndim != 3 or y.shape[2] != n_rows or rec.min() < 0 or rec.max() >= y.shape[1]:
+            return None
+        yk = np.asarray(y[index[sel, 1], rec][:, rows], np.float64)
+        del y
+        if check is not None:                            # the first of the run's kept draws, recomputed
+            Gr, K, kc = check
+            yc = Gr @ np.asarray(K[sel[0]], np.float64)[kc]
+            if not np.allclose(yc, yk[0], rtol=2e-3, atol=1e-5 * max(1.0, float(np.abs(yc).max()))):
+                return None
+        yk /= scale
+        if combine is not None:
+            yk = yk @ combine
+        if out is None:
+            out = np.empty((len(index),) + yk.shape[1:])
+        out[sel] = yk
+    return out
+
+
+# Each kept draw as an x, in its mark's colour darkened a little (several of CATEGORICAL are pale), faint, so that
+# where the draws gather shows as the densest part; rasterized, since there are thousands per mark.
+X_MARK = dict(marker='x', ls='none', ms=2.6, mew=0.4, alpha=0.15, rasterized=True)
+
+
+def darker(c, f=0.75):
+    """A colour darkened to a fraction f of its RGB values."""
+    from matplotlib.colors import to_rgb
+    return tuple(f * v for v in to_rgb(c))
+
+
+def draw_xs(ax, x, y, colours, zorder=2.2, **kw):
+    """Kept draws as x's (X_MARK, overridden by kw) at (x, y), flat arrays of equal length, each in colours (one colour
+    for all, or one per point), darkened; one call per colour."""
+    x, y = np.ravel(x), np.ravel(y)
+    style = {**X_MARK, **kw}
+    if isinstance(colours, str) or np.ndim(colours) == 1 and len(colours) in (3, 4) and not isinstance(colours[0], str):
+        ax.plot(x, y, color=darker(colours), zorder=zorder, **style)
+        return
+    colours = np.ravel(np.asarray(colours, dtype=object))
+    for c in dict.fromkeys(colours):
+        s = colours == c
+        ax.plot(x[s], y[s], color=darker(c), zorder=zorder, **style)
 
 
 # The colours that tell neighbouring marks apart: Tableau's Color Blind 10 (tableau:tab10_colorblind in the cmap
