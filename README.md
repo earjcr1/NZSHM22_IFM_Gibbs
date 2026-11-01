@@ -8,7 +8,8 @@ stated prior: a Bayesian posterior, sampled by an exact Gibbs sampler, from whic
 posterior means and spreads of every rupture rate, of every predicted datum and of sums such as
 fault event rates, together with weighted representative models for hazard calculations.
 
-Output figures from a run on a setup with 211,000 ruptures, very similar to the NZSHM rupture set:
+Output figures from a run on a setup with 211,000 ruptures, very similar to the NZSHM rupture set, are below.
+Configs of the inversion setup that produced the A matrix and D vector are at https://docs.google.com/document/d/13QdPHv5wpl3SfnFK5gyZggNQ66btGH1k4b4tntspJzY/
 
 <img width="2669" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_1" src="https://github.com/user-attachments/assets/0f3dd5d8-755c-48e8-8365-04f4a772f013" />
 <img width="2250" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_2" src="https://github.com/user-attachments/assets/ec14095d-c772-423d-a76d-b5647650ab2c" />
