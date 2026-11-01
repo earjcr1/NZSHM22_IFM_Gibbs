@@ -1,0 +1,39 @@
+slip rates fault by fault: the 33 named faults of named_faults.json, from the most isolated to the most connected (other sections sharing a rupture with each: 0 to 125, median 34); targets and predictions in units of each section's measurement uncertainty (the mean over the subsections)
+connectivity, from the cleaned problem's slip-rate rows (for the ruptures cleaning kept, the rupture set's indices.csv): "connected" counts the other sections (holding none of the fault's subsections) sharing at least one rupture with it, "ruptures" the ruptures crossing it, "confined" the share of those crossing no other slip-rate row
+spikeslab (spikeslab/rate_vectors.npz): posterior distributions from the 165024 draws recorded by main_rep0, main_rep1, main_rep2
+reference: NZSHM22_InversionSolution-211k (/Users/rollins/inversions/NZSHM22_Matrices-211k/NZSHM22_InversionSolution-211k/solution/rates.csv); its rates on the 298 ruptures cleaning removed (5.95e-05 per year, 0.14% of its total) are not in these predictions
+settings: SLIP_SECTIONS auto, MFD_UNCERTAINTY as-given, DOWN_THE_MIDDLE False, BAND 10, RANDOMIZED_NNLS 0, RUPTURE_SET auto, PRESET very_conservative, FLOOR -10
+column sections           rows   k connected ruptures confined    target      mean      2.5%       16%       50%       84%     97.5%   at 0  reference  name
+     0      127        630-633   4         0        1   100.0%    0.4706    0.4559   0.05143   0.08264    0.2679    0.8791     1.791   0.0%     0.3919  Greendale
+     1      500      2298-2308  11         0       55   100.0%    0.8696     0.477   0.09597    0.1474    0.3494    0.8251      1.54   0.0%     0.8062  White Creek
+     2      412      1868-1869   2         1        2    50.0%       0.8    0.6013   0.08859    0.1508    0.4568     1.094     1.815   0.0%     0.7945  Te Tatua o Wairere
+     3  444-445      2015-2022   8         1       17    17.6%     1.197    0.7501    0.2251    0.3849    0.6851     1.118     1.641   0.0%     0.9884  Waihi
+     4      345      1592-1596   5         2       14     0.0%     1.673     1.141    0.2434    0.5046     1.043     1.783      2.59   0.0%      1.528  Poutu
+     5      469      2133-2135   3         3        6    16.7%       1.8    0.4191    0.1837    0.2052    0.2798    0.4665      2.04   0.0%      1.788  Wairoa North
+     6 187, ...       914, ...  15         3      119    47.1%     1.015    0.7601    0.3014    0.4662    0.7278     1.052     1.404   0.0%     0.9717  Kerepehi
+     7  419-420      1891-1896   6         5       17    23.5%       1.2    0.7813    0.4182    0.5361    0.7337     1.019     1.421   0.0%      1.303  Titri
+     8        3            7-9   3         5       20    15.0%    0.1611   0.02067   0.01629   0.01716   0.01963   0.02428   0.03072   0.0%    0.01465  Akatore
+     9      114        592-595   4         6       27    22.2%    0.5294     0.379    0.1341     0.175    0.3178    0.5922     0.946   0.0%     0.4955  Fox Peak
+    10      210      1009-1012   4        10      110     5.5%    0.6222    0.7044   0.08867    0.1881    0.5748      1.26     1.927   0.0%     0.6023  Lees Valley
+    11    48-50        224-232   9        10      462     4.1%     1.071     0.755    0.3338    0.4826    0.6984     1.028     1.502   0.0%      1.062  Cape Egmont
+    12      343      1581-1585   5        11      177     1.7%       2.8     1.371    0.4577    0.8012     1.301     1.947     2.657   0.0%      2.559  Porters Pass
+    13      174        845-848   4        17     1525     0.0%      1.44    0.8603    0.2673    0.4608    0.7957      1.26     1.827   0.0%       1.44  Kaiapo
+    14      324      1497-1503   7        19     4648     0.0%       1.8     1.871     0.996     1.371     1.833     2.373     2.962   0.0%      1.701  Paeroa
+    15       95        510-513   4        25      124     4.8%    0.3077    0.2561   0.06879    0.1015    0.2019    0.4114    0.7576   0.0%     0.5169  Dunstan
+    16      112        574-583  10        34     1260     3.6%       1.4     1.893     0.784     1.218      1.83     2.562     3.364   0.0%      1.482  Flaxmore - Waimea - Tahunanui
+    17       25        123-126   4        41      799     0.8%       0.8    0.3663   0.09598    0.1581    0.2747    0.6024     1.079   0.0%     0.7044  Awanui
+    18      495      2259-2267   9        42      691     5.2%       1.4     1.116    0.2199    0.4423    0.9762     1.811     2.765   0.0%      1.379  Whangamoa
+    19      466      2118-2128  11        52     3345     1.6%      3.92     4.367     2.902      3.64     4.371       5.1     5.797   0.0%      3.926  Wairau
+    20      311      1456-1461   6        60     1071     0.9%     1.067    0.3174    0.1139     0.148    0.2573    0.4953    0.8398   0.0%     0.7064  Ostler
+    21       26        127-134   8        63     3885     0.7%       1.2    0.9579    0.5437    0.7524    0.9681     1.159     1.324   0.0%      1.038  Awatere
+    22    97-98        519-523   5        63    13844     0.0%     1.128     1.244    0.7139      0.95     1.228     1.538     1.873   0.0%          1  Edgecumbe
+    23      292      1365-1371   7        74     6914     0.3%       1.2     2.037     1.075     1.496     2.001     2.578     3.203   0.0%      1.466  Ohariu
+    24       12          29-40  12        78    51583     0.1%      2.22     2.501     2.207     2.353     2.502     2.648     2.787   0.0%      2.485  Alpine: George to Jacksons
+    25       14          62-71  10        83    19768     0.2%         3     4.059     3.102      3.56     4.052     4.557     5.054   0.0%      3.187  Alpine: Kaniere to Springs Junction
+    26  482-486      2199-2209  11        88     7981     0.1%     1.176    0.5436    0.3211    0.4143    0.5373    0.6711    0.8054   0.0%     0.6734  Wellington: Wellington-Hutt Valley
+    27       13          41-61  21        95    64857     0.3%      2.16     2.609     2.286     2.443      2.61     2.774      2.93   0.0%      2.362  Alpine: Jacksons to Kaniere
+    28  461-463      2098-2112  15       102    13408     0.4%     1.851    0.6996    0.5066    0.5949    0.6952     0.804    0.9199   0.0%      1.184  Wairarapa
+    29      487      2210-2214   5       103    34110     0.0%     3.385     3.645     2.453     3.015     3.634     4.278     4.898   0.0%      3.623  Wellington: Pahiatua
+    30      274      1295-1299   5       107    10757     0.1%     2.133     1.205    0.6609    0.9158     1.202     1.489     1.774   0.0%      2.038  Needles
+    31      184        885-887   3       118    12496     0.0%     3.067     1.444    0.8792     1.158     1.447     1.729     1.997   0.0%      2.362  Kekerengu
+    32      146        719-725   7       125    37894     0.0%      31.6     31.61      29.7     30.63     31.61     32.59     33.53   0.0%      31.63  Hope
