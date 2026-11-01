@@ -14,5 +14,5 @@ Configs of the inversion setup that produced the A matrix and D vector are at ht
 <img width="2669" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_1" src="https://github.com/user-attachments/assets/0f3dd5d8-755c-48e8-8365-04f4a772f013" />
 <img width="2250" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_2" src="https://github.com/user-attachments/assets/ec14095d-c772-423d-a76d-b5647650ab2c" />
 <img width="1290" height="1282" alt="fig_rate_magnitude" src="https://github.com/user-attachments/assets/107682cf-06ce-40fb-acd6-816b65d1df1b" />
-<img width="982" height="1376" alt="fig_paleo_rates" src="https://github.com/user-attachments/assets/4cbb0669-44f4-41a6-af2f-b025405813a7" />
 <img width="1590" height="1179" alt="fig_slip_rates" src="https://github.com/user-attachments/assets/c8006852-cb80-422b-9447-0944ed0fd3bc" />
+<img width="982" height="1376" alt="fig_paleo_rates" src="https://github.com/user-attachments/assets/4cbb0669-44f4-41a6-af2f-b025405813a7" />
