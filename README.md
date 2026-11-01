@@ -7,3 +7,4 @@ already divided by its uncertainty. This workflow maps the whole set of models c
 stated prior: a Bayesian posterior, sampled by an exact Gibbs sampler, from which it reports
 posterior means and spreads of every rupture rate, of every predicted datum and of sums such as
 fault event rates, together with weighted representative models for hazard calculations.
+<img width="982" height="1376" alt="fig_paleo_rates" src="https://github.com/user-attachments/assets/4cbb0669-44f4-41a6-af2f-b025405813a7" />
