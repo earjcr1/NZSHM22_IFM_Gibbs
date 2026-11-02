@@ -451,7 +451,7 @@ def main():
             f'projected on the local plate motion and added up across the strip ({tt("plate_rate.txt")}).' if plate else '')
          + (' <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '
             'motion, the model\u2019s slip rates added up should match the targets added up, within that sum\u2019s '
-            'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 120):g}' + ' km of the '
+            'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 8.5):g}' + ' km of the '
             'plate boundary counts as one measurement, and it is recorded apart from χ² (' + tt('plate_rate.txt') + ').'
             if ssum else ''))
 

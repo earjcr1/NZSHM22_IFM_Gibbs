@@ -63,8 +63,8 @@ first given.
   South Island strip's share of the Pacific–Australia plate rate within limits. Their χ² is negligible, so the kernel
   and the likelihood are unchanged. See REPORT.md, "A monotonic MFD" and "The plate rate". `--slip-sum` (`SLIP_SUM`)
   instead adds soft rows to the likelihood, after the balance term's: along every cross-section perpendicular to the
-  plate motion, the model's slip rates added up against the targets added up, weighted as about five measurements
-  between the Alpine and Cook Strait edges (`SLIP_SUM_L0`, 120 km each), and recorded apart from χ² (REPORT.md, "Summed slip rates").
+  plate motion, the model's slip rates added up against the targets added up, on by default, weighted as one extra
+  observation per 8.5-km strip (`SLIP_SUM_L0`), and recorded apart from χ² (REPORT.md, "Summed slip rates").
 - **Slip-rate sections (October 2026).** Each fault section's slip rate is one measurement, copied in the inputs to its
   k subsections; cleaning now divides each section's rows by √k (`preliminaries.py --slip-sections auto`, the default;
   `none` restores the inputs as given), so it counts once. Most numbers in this section count each subsection as its

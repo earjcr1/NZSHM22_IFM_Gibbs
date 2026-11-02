@@ -645,7 +645,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('BAND', 'band'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('PLATE_RATE', 'plate_rate'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('RANDOMIZED_NNLS', 'randomized_nnls'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('BAND', 'band'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_RISE_SD', 'mfd_rise_sd'), ('PLATE_RATE', 'plate_rate'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('RANDOMIZED_NNLS', 'randomized_nnls'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

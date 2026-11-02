@@ -40,11 +40,13 @@ taken over strips whose width is the subsections' mean trace length (8.5 km at 2
 the edges, the same width on beyond them over the rest of New Zealand with --slip-sum all, the default): each strip
 contributes (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2. Narrower strips only approximate the
 integral more closely (the term converges as they narrow; at 8.5 km within about 5% of its limit); L0 sets its
-weight (--slip-sum-l0, SLIP_SUM_L0 = 120 km by default): the target sums' decorrelation length along the plate motion
-between the edges (the integral of their correlation, a mean of 120 km at 211,000 ruptures), close to the span between
-the edges over the 5 sections of the Alpine and Wairau Faults there (George to Jacksons, Jacksons to Kaniere, Kaniere to
+weight (--slip-sum-l0, SLIP_SUM_L0 = 8.5 km by default, the strips' width, so that each strip's sum counts as one extra
+observation: 72 between the edges). For comparison, the target sums' decorrelation length along the plate motion
+between the edges is 120 km (the integral of their correlation at 211,000 ruptures), close to the span between the
+edges over the 5 sections of the Alpine and Wairau Faults there (George to Jacksons, Jacksons to Kaniere, Kaniere to
 Springs Junction, Springs Junction to Tophouse, Wairau; Wairau 2, cut by the NE edge, counted out), 122 km, which
-dominate the sums' uncertainty; so the term counts as about 5 measurements between the edges. sigma_k is the uncertainty of the strip's target
+dominate the sums' uncertainty: an L0 of 120 km would count the regional sums' information once more (about 5
+measurements between the edges), 8.5 km about 14 times. sigma_k is the uncertainty of the strip's target
 sum, with copies of one fault section's slip rate (its subsections, which share one rate and one uncertainty) fully
 correlated and sections independent: sigma_k^2 = sum over sections p of (sum over i in p of w_ki sigma_i)^2. Each
 subsection's sigma_i and target are the cleaned problem's own (sigma_i from its row's coefficients against the
@@ -70,8 +72,9 @@ POLE = (-61.04, 184.19, 1.08)          # Beavan et al. (2002): Pacific relative 
 END_NE = (174.4258, -41.67585)         # lon, lat: midway between the Needles Fault's NE end (174.4533 E, 41.6900 S) and
                                        # the Wairarapa: Needles SW end (174.3983 E, 41.6617 S), the Cook Strait step-over
 END_SW = (167.83, -44.53)              # lon, lat: the Alpine Fault goes offshore (the Puysegur subduction zone beyond)
-SLIP_SUM_L0 = 120.0                    # km: the summed slip rates' L0, the target sums' decorrelation length between
-                                       # the edges (about the span over its 5 Alpine-Wairau sections, 122 km)
+SLIP_SUM_L0 = 8.5                      # km: the summed slip rates' L0, the strips' width, so each strip's sum counts
+                                       # as one extra observation (120 km: the target sums' decorrelation length between
+                                       # the edges, about the span over its 5 Alpine-Wairau sections, 122 km)
 EARTH_R = 6371.0                       # km
 
 

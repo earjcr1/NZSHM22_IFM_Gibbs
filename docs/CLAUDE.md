@@ -92,7 +92,9 @@ and randomized_nnls.py ignore it (REPORT.md, "The band"). --positive (BAND = 'po
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
 rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (MFD_MONOTONIC,
-on by default since early November 2026): no bin's total above its lower neighbour's where the target is not, through constraint rows after
+on by default since early November 2026): no bin's total above its lower neighbour's where the target is not (and,
+since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
+times the lower total, MFD_RISE_SD = 0.89 by default), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
 selftest_band. --plate-rate LO,HI --rupture-set DIR (PLATE_RATE, off by default; (0.4, 0.8) if imposed): each of
 --plate-strips (8) strips' share of the Pacific-Australia plate rate within LO-HI, one constraint row per strip after
@@ -100,13 +102,13 @@ the monotonic ones (plate_rate.py's strip_rows: cross-sections are great circles
 between END_SW, where the Alpine Fault goes offshore, and END_NE, the Needles / Wairarapa: Needles step-over in Cook
 Strait; each subsection weighted by the fraction of the strip's cross-sections crossing it, its slip vector projected
 on the local plate motion over the local rate; checked against the slip-rate rows; the start must be inside, no
-repair); exact test in selftest_band. --slip-sum all|between --rupture-set DIR (SLIP_SUM, off by default): a soft term
+repair); exact test in selftest_band. --slip-sum all|between --rupture-set DIR (SLIP_SUM, 'all' by default since November 3rd, 2026): a soft term
 in the likelihood, rows after the balance term's (T.n_bal) and before n_fit, recorded apart as tr['slip_sum']
 (plate_rate.py's slip_sum_rows: per strip, (width / L0) ((sum_i w_ki (model_i - target_i)) / sigma_k)^2, w_ki the
 fraction of subsection i's extent along the plate motion in strip k, so each subsection's weights add to 1; sigma_k
 with each parent section's subsections fully correlated; strips the mean subsection trace length wide, 8.5 km; L0 =
---slip-sum-l0 (SLIP_SUM_L0, 120 km by default: the target sums' decorrelation length between the edges, about the span
-over its 5 Alpine-Wairau sections, 122 km); no whitening between strips, so the
+--slip-sum-l0 (SLIP_SUM_L0, 8.5 km by default, the strips' width: one extra observation per strip; 120 km would be the
+target sums' decorrelation length between the edges, about the span over its 5 Alpine-Wairau sections, 122 km); no whitening between strips, so the
 strip count only sets the integral's accuracy; the swap pairs' inner products include its rows, checked on a sample at
 start). Its bookkeeping test is in selftest_balance. plate_rate.py reports both (plate_rate.txt, a notebook cell for
 every run with a rupture set).

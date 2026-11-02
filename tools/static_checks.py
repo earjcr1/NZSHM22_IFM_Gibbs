@@ -145,9 +145,12 @@ check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'ban
       'recorded and passed to gibbs.py --band or --positive, '
       'with its exact test in both self-test sets')
 check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
-      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and "'--mfd-monotonic'" in src['gibbs.py']
+      and any("args += ['--mfd-monotonic', '--mfd-rise-sd', MFD_RISE_SD]" in c for _, c in cells)
+      and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
+      and re.findall(r'^MFD_RISE_SD = (\S+)', cells[0][1], re.M) == ['0.89'] and 'mfd_rise_sd' in _cfg_keys
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = True (imposed by default), recorded and passed to gibbs.py --mfd-monotonic, with its '
+      'notebook MFD_MONOTONIC = True (imposed by default) and MFD_RISE_SD = 0.89 (a rising target\'s rise capped; '
+      'gibbs.py\'s default too), recorded and passed to gibbs.py --mfd-monotonic --mfd-rise-sd, with its '
       'exact test in the band\'s self-test')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
       and any("args += ['--plate-rate', f'{PLATE_RATE[0]:g},{PLATE_RATE[1]:g}']" in c
@@ -159,17 +162,17 @@ check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'pla
       'notebook PLATE_RATE = None (not imposed by default), recorded and passed to gibbs.py --plate-rate with the rupture set '
       '(rows from plate_rate.py, checked against the slip-rate rows), with its exact test in the band\'s self-test; '
       'plate_rate.txt reported for every run with a rupture set')
-check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['None'] and 'slip_sum' in _cfg_keys
+check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ["'all'"] and 'slip_sum' in _cfg_keys
       and any('if PLATE_RATE or SLIP_SUM:' in c for _, c in cells)
       and "'--slip-sum', default=None, choices=['all', 'between']" in src['gibbs.py']
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
       and "summed slip rates\\' term recorded apart" in src['gibbs.py'].split('\ndef selftest_balance')[1].split('\ndef ')[0]
-      and '\ndef slip_sum_rows(' in src['plate_rate.py'] and 'SLIP_SUM_L0 = 120.0' in src['plate_rate.py']
-      and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 120.0
-      and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['120'] and 'slip_sum_l0' in _cfg_keys
+      and '\ndef slip_sum_rows(' in src['plate_rate.py'] and 'SLIP_SUM_L0 = 8.5 ' in src['plate_rate.py']
+      and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 8.5
+      and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['8.5'] and 'slip_sum_l0' in _cfg_keys
       and any("args += ['--slip-sum', SLIP_SUM, '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
       and any("'--slip-sum-region', SLIP_SUM or 'all', '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
-      'notebook SLIP_SUM = None (not added by default) and SLIP_SUM_L0 = 120 (km, gibbs.py\'s and plate_rate.py\'s '
+      'notebook SLIP_SUM = \'all\' (added by default) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')

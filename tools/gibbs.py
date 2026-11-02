@@ -2333,10 +2333,18 @@ def main():
     ap.add_argument('--mfd-monotonic', action='store_true',
                     help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target is not above the next '
                          'lower bin\'s (neighbouring bins, counted up from --lowest-bin in steps of --bin-width; a bin '
-                         'cleaning removed breaks the pair), its total rate is not above that bin\'s either: a hard '
+                         'cleaning removed breaks the pair), its total rate is not above that bin\'s either, and where the '
+                         'target rises the rise is capped (--mfd-rise-sd): a hard '
                          'constraint, alongside --band or --positive or alone. Kept by constraint rows, each '
-                         'eps x (lower bin total - upper bin total) >= 0 with eps = 1e-9, which add at most about 1e-20 to '
+                         'eps x (rho x lower bin total - upper bin total) >= 0, rho = 1 except where the target rises, with eps = 1e-9, '
+                         'which add at most about 1e-20 to '
                          'chi2; a start that breaks it is scaled down bin by bin first')
+    ap.add_argument('--mfd-rise-sd', type=float, default=0.89, metavar='M',
+                    help='--mfd-monotonic: where a bin\'s target rises above the next lower bin\'s, the upper total may '
+                         'be up to rho times the lower, rho the ratio at the lower bin\'s target of the target difference '
+                         'plus M sd of it (from the two bins\' uncertainties; default 0.89, the median distance of the other '
+                         'pairs\' walls above their target differences with the NZSHM22 inputs: 1.427 for M6.8-6.9 there); '
+                         'a ratio, so it caps the MFD\'s shape and not its level; negative: such pairs are left free')
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='--mfd-monotonic: the lowest magnitude bin\'s lower edge')
     ap.add_argument('--bin-width', type=float, default=0.1, help='--mfd-monotonic: the magnitude bins\' width')
     ap.add_argument('--plate-rate', default=None, metavar='LO,HI',
@@ -2354,13 +2362,14 @@ def main():
                          'perpendicular to the plate motion, the model\'s slip rates added up against the targets added up, '
                          'within the uncertainty of that sum (copies of one fault section\'s slip rate correlated), each '
                          'subsection counting once in all; strips the subsections\' mean trace length wide, each weighted '
-                         'its width over L0 (--slip-sum-l0), so it counts as about 5 measurements between the Alpine and '
-                         'Cook Strait edges (plate_rate.py). all: over all of New Zealand; between: only between the edges. '
+                         'its width over L0 (--slip-sum-l0; at the default, each strip one extra observation, 72 between '
+                         'the Alpine and Cook Strait edges) (plate_rate.py). all: over all of New Zealand; between: only between the edges. '
                          'Recorded apart from chi2')
-    ap.add_argument('--slip-sum-l0', type=float, default=120.0, metavar='KM',
-                    help='--slip-sum: L0 in km (default 120, the target sums\' decorrelation length along the plate motion '
-                         'between the edges, about the 612 km between them over its 5 Alpine-Wairau sections): each strip '
-                         'is weighted its width over L0, so a shorter L0 weighs the term more')
+    ap.add_argument('--slip-sum-l0', type=float, default=8.5, metavar='KM',
+                    help='--slip-sum: L0 in km (default 8.5, the strips\' width, so each strip\'s sum counts as one extra '
+                         'observation; 120 is the target sums\' decorrelation length along the plate motion between the '
+                         'edges, about the 612 km between them over its 5 Alpine-Wairau sections): each strip is weighted '
+                         'its width over L0, so a shorter L0 weighs the term more')
     ap.add_argument('--rupture-set', default=None,
                     help='--plate-rate and --slip-sum: the OpenSHA rupture set of these inputs (a solution folder, or its '
                          'ruptures/), for the faults\' traces, rakes and dips and the ruptures\' sections and average slips')
@@ -2450,22 +2459,38 @@ def main():
         mrows, Rm, origm, mlo = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
         Gb = sp.csr_matrix(P['G'])[mrows]
         members = [Gb.indices[Gb.indptr[k]:Gb.indptr[k + 1]] for k in range(len(mrows))]
-        pairs_m = [(k, k + 1) for k in range(len(mrows) - 1) if origm[k + 1] == origm[k] + 1 and Rm[k + 1] <= Rm[k]]
-        skipped = [(k, k + 1) for k in range(len(mrows) - 1) if (k, k + 1) not in pairs_m]
+        sig_b = Rm / (P['d'][mrows] / P['row_scale'][mrows])    # each bin's uncertainty, as cleaning left it
+        adj = [(k, k + 1) for k in range(len(mrows) - 1) if origm[k + 1] == origm[k] + 1]
+        flat = [(k, k1) for k, k1 in adj if Rm[k1] <= Rm[k]]
+        rise = [(k, k1) for k, k1 in adj if Rm[k1] > Rm[k]] if a.mfd_rise_sd >= 0 else []
+        skipped = [(k, k + 1) for k in range(len(mrows) - 1) if (k, k + 1) not in flat + rise]
+        pairs_m = sorted(flat + rise)
+        # the upper bin's total may be up to rho times the lower's: 1 where the target does not rise; where it rises,
+        # the ratio at the lower bin's target of the target difference plus --mfd-rise-sd sd of it (from the two bins'
+        # uncertainties), the median distance of the other pairs' walls above their target differences with the NZSHM22
+        # inputs (0.89 sd): a ratio, so the cap limits the MFD's shape and not its level
+        rhos = np.array([1.0 if (k, k1) in flat else
+                         (Rm[k] + (Rm[k1] - Rm[k]) + a.mfd_rise_sd * np.hypot(sig_b[k], sig_b[k1])) / Rm[k]
+                         for k, k1 in pairs_m])
         eps = 1e-9
         C = sp.lil_matrix((len(pairs_m), n))
         for q, (k, k1) in enumerate(pairs_m):
-            C[q, members[k]] = eps
+            C[q, members[k]] = eps * rhos[q]
             C[q, members[k1]] = -eps
         G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), C.tocsr()])), np.r_[d_fit, np.zeros(len(pairs_m))]
-        mono = dict(pairs=pairs_m, members=members, mlo=mlo, eps=eps, rows=np.arange(n_fit, n_fit + len(pairs_m)))
+        mono = dict(pairs=pairs_m, rhos=rhos, members=members, mlo=mlo, eps=eps,
+                    rows=np.arange(n_fit, n_fit + len(pairs_m)))
         name = lambda k: f'{mlo[k]:.2f}-{mlo[k] + a.bin_width:.2f}'
         print(f'MFD monotonic: in every draw, a bin\'s total rate is not above the next lower bin\'s wherever its target is '
-              f'not: {len(pairs_m)} pairs of neighbouring bins (from {name(pairs_m[0][0])} up)' if pairs_m else
-              'MFD monotonic: no pair of neighbouring bins has a target that is not increasing; nothing to keep')
+              f'not: {len(flat)} pairs of neighbouring bins (from {name(flat[0][0])} up)' if flat else
+              'MFD monotonic: no pair of neighbouring bins has a target that is not increasing')
+        for k, k1 in rise:
+            print(f'   {name(k)} -> {name(k1)}: the target rises ({Rm[k]:.3e} -> {Rm[k1]:.3e}, a ratio of {Rm[k1] / Rm[k]:.3f}), '
+                  f'so the upper bin\'s total is at most {rhos[pairs_m.index((k, k1))]:.3f} times the lower\'s (the target '
+                  f'difference plus {a.mfd_rise_sd:g} sd of it, as a ratio at the lower bin\'s target)')
         if skipped:
-            print('   pairs left free (the target increases, or a bin cleaning removed lies between): '
-                  + ', '.join(f'{name(k)} -> {name(k1)}' for k, k1 in skipped))
+            print('   pairs left free (' + ('the target increases, or ' if a.mfd_rise_sd < 0 else '')
+                  + 'a bin cleaning removed lies between): ' + ', '.join(f'{name(k)} -> {name(k1)}' for k, k1 in skipped))
     plate = None                                   # --plate-rate's constraint rows follow --mfd-monotonic's
     if a.plate_rate is not None:
         try:
@@ -2741,11 +2766,11 @@ def main():
         for x in X0:                               # a start that breaks it: each offending bin scaled down to its neighbour
             for _ in range(len(mono['pairs']) + 1):
                 tot = np.array([x[m].sum() for m in mono['members']])
-                bad = [(k, k1) for k, k1 in mono['pairs'] if tot[k1] > tot[k]]
+                bad = [(k, k1, rho) for (k, k1), rho in zip(mono['pairs'], mono['rhos']) if tot[k1] > rho * tot[k]]
                 if not bad:
                     break
-                k, k1 = bad[0]
-                x[mono['members'][k1]] *= tot[k] / tot[k1] * (1 - 1e-9)
+                k, k1, rho = bad[0]
+                x[mono['members'][k1]] *= rho * tot[k] / tot[k1] * (1 - 1e-9)
                 fixed += 1
         Us = T.init(X0 if scale is None else X0 / scale)
         left = T.band_outside(T.residual(Us))
