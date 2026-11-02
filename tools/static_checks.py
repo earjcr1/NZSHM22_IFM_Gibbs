@@ -142,6 +142,10 @@ check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ['10'] and 'band' in _c
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
       'notebook BAND = 10 (every prediction within a factor 10 of its target), recorded and passed to gibbs.py --band, '
       'with its exact test in both self-test sets')
+check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
+      and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('def selftest_band')[1],
+      "notebook BAND = 'positive' passes gibbs.py --positive (every prediction above zero), with its exact test in the "
+      'band\'s self-test')
 check(sum(c.count('*ref_args()') for _, c in cells) == 6 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),

@@ -88,7 +88,10 @@ are rejected; selftest_band in the full self-test set; without it every run is b
 moved in by band_start (penalized least squares, each rate in units of 1/||G_i||, stopped once inside
 F^0.95; about 1.5 minutes at 211k), kept beside the problem as
 <problem>_band<F>_start.npz and reused when the problem, band, start and bounds match (band_start_key). The best fit
-and randomized_nnls.py ignore it (REPORT.md, "The band").
+and randomized_nnls.py ignore it (REPORT.md, "The band"). --positive (BAND = 'positive'), an alternative,
+spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
+one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
+rupture in each row the start predicts at 0; its exact test is in selftest_band).
 Kept for comparison only, and no longer tested: binbox-theta:1:0 (theta = 1: per-bin log-uniform boxes below R_j,
 depths n_j / (theta ln 10); command line only; the alternative until October 2026, retired because it fitted no
 better and from about 2e5 ruptures its boxes are too deep for its sampler to cross), binbox-floor:-12 (per-bin boxes

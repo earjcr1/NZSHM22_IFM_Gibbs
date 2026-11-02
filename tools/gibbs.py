@@ -617,7 +617,7 @@ class Target:
         self.mixw = 0.0                            # the halfway prior (pkind 1): the linear part's share (0: none)
         self.n_data = self.N                       # the data rows; any rows after them are the balance term's
         self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
-        self.rlo = self.rhi = None                 # --band: each row's residual kept within [rlo, rhi] (set_band)
+        self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
             self.pkind = 1
@@ -660,7 +660,29 @@ class Target:
             raise ValueError('the band needs positive targets')
         self.rlo, self.rhi = np.full(self.N, -np.inf), np.full(self.N, np.inf)
         self.rlo[rows], self.rhi[rows] = self.d[rows] / F - self.d[rows], F * self.d[rows] - self.d[rows]
-        self.band = dict(F=float(F), rows=rows, tol=np.where(np.isfinite(self.rlo), 1e-9 * np.abs(self.d), 0.0))
+        self.band = dict(F=float(F), rows=rows, tol=np.where(np.isfinite(self.rlo), 1e-9 * np.abs(self.d), 0.0),
+                         what=f'the band (a factor {F:g} of their targets)')
+
+    def set_positive(self, rows):
+        """Positivity (--positive), spike-and-slab only: each of these rows' predictions kept above zero, that is, at least
+        one of the rupture rates in it on. With nonnegative coefficients and rates that are 0 or at least the slab floor,
+        that is the same as a prediction of at least half the smallest amount one rupture switched on can add to the row,
+        a lower limit with no upper one, which the band's machinery then keeps (set_band's rlo and rhi)."""
+        rows = np.asarray(rows)
+        if self.pkind != 3:
+            raise ValueError('positivity needs spike-and-slab (under the other priors no rate is exactly 0)')
+        Gr = sp.csr_matrix(self.G)[rows]
+        if (Gr.data < 0).any():
+            raise ValueError('positivity needs nonnegative coefficients in the rows it applies to')
+        if (np.diff(Gr.indptr) == 0).any():
+            raise ValueError('positivity: a row with no rupture in it can never be predicted above zero')
+        floor = np.exp(self.zlo_vec if self.zlo_vec is not None else np.full(self.n, self.zlo))   # each rate's slab floor
+        step = np.minimum.reduceat(Gr.data * floor[Gr.indices], Gr.indptr[:-1])                 # smallest one-rupture amount
+        self.rlo, self.rhi = np.full(self.N, -np.inf), np.full(self.N, np.inf)
+        self.rlo[rows] = 0.5 * step - self.d[rows]
+        tol = np.zeros(self.N)
+        tol[rows] = np.minimum(1e-9 * np.abs(self.d[rows]), 0.1 * step)     # rounding, well below the limit
+        self.band = dict(F=None, rows=rows, tol=tol, floor=floor, what='positivity (each above zero)')
 
     def band_outside(self, R):
         """Per chain, how many rows of the band its residuals R leave outside it (beyond rounding)."""
@@ -1202,8 +1224,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         SM = np.ascontiguousarray(np.where(X > 0, X, np.exp(T.zhi)))
     R = T.residual(X)
     if T.rlo is not None and T.band_outside(R).any():
-        raise ValueError(f'the start leaves {T.band_outside(R).max()} rows outside the band (a factor {T.band["F"]:g} of '
-                         'their targets); start inside it')
+        raise ValueError(f'the start leaves {T.band_outside(R).max()} rows outside {T.band["what"]}; start inside it')
     rng = seed_states(seed, K)
     g = np.random.default_rng(seed)
     if SS is not None:                                   # per-bin inclusion probabilities: exact Beta updates
@@ -1806,13 +1827,15 @@ def selftest_swaps(backends=('c', 'numpy')):
 
 
 def selftest_band(backends=('c', 'numpy')):
-    """The band (--band): the self-tests' small problems with every prediction kept within a factor F of its target, against
+    """The band (--band) and positivity (--positive): the self-tests' small problems with every prediction kept within a
+    factor F of its target, against
     grid integrals restricted to the band: spike-and-slab (P(on) and E[log10 m | on], F = 1.3, where the band forbids the
     first rate's off state), a log-box prior with swap
     moves between near-duplicate columns (E[log10 m], F = 2) and the linear prior's truncated normals (E[m], F = 1.25);
     with each, how far the exact answer without the band lies, and that no recorded draw leaves the band."""
     from scipy.special import betaln
-    print('the band: spike-and-slab, a log-box prior with swaps and the linear prior vs grid integrals within the band')
+    print('the band: spike-and-slab, positivity, a log-box prior with swaps and the linear prior vs grid integrals within '
+          'their limits')
     ok = True
     inside = lambda Y, d, F: np.all((Y >= d / F) & (Y <= d * F), axis=-1)
 
@@ -1868,6 +1891,40 @@ def selftest_band(backends=('c', 'numpy')):
             print(f'   {be:5s} spike-and-slab rate {i}: P(on) {p:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}; without the band '
                   f'{p_free[i]:.4f}, z {zf:+.1f}); E[log10 m | on] {uu.mean():.4f} (exact {e_u[i]:.4f}, z {zu:+.2f}; without '
                   f'{e_free[i]:.4f})')
+    # positivity (--positive): the same two rates with small targets, so that both off is likely without it; positivity
+    # forbids exactly that state, as every state with a rate on predicts both rows above zero
+    dP = np.array([0.04, 0.03])
+
+    def exact_pos(pos):
+        def Lb(m1, m2):
+            Y = np.stack(np.broadcast_arrays(m1 + 0.7 * m2, 0.5 * m1 + m2), -1)
+            return np.exp(-0.5 * np.sum((Y - dP) ** 2, -1) / sig ** 2)
+        L1, L2, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+        w00 = 0.0 if pos else pg[0] * Lb(0.0, 0.0)
+        w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2), pg[2] * L12.sum()
+        W = w00 + w10 + w01 + w11
+        return [(w10 + w11) / W, (w01 + w11) / W], w00 / W
+    (pp_on, _), (pp_free, p00_free) = exact_pos(True), exact_pos(False)
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dP, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.set_positive([0, 1])
+        U0, _ = positive_start(T, np.zeros(2))           # from all off: one rate switched on
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile(U0, (K, 1)), sw, sw // 10, 1, be, 1, 11, monitor=(0, 1), verbose=False, keep_samples=False)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= int(tr['band_outside'].max()) == 0 and bool((Mo > 0).any(-1).all())
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            p, e_on = on.mean(), ess(on)
+            sd_p = np.sqrt(max(pp_on[i] * (1 - pp_on[i]), 1e-12) / e_on)
+            zp, zf = (p - pp_on[i]) / sd_p, (p - pp_free[i]) / sd_p
+            ok &= abs(zp) < 4
+            print(f'   {be:5s} positivity, rate {i}: P(on) {p:.4f} (exact {pp_on[i]:.4f}, z {zp:+.2f}; without it '
+                  f'{pp_free[i]:.4f}, z {zf:+.1f}, both off {p00_free:.3f})')
     # a log-box prior with swap moves: the selftest_swaps problem
     G2, d2, s2, se, F2 = np.array([[1.0, 0.98], [0.5, 0.53]]), np.array([0.4, 0.2]), 0.09, 0.5, 2.0
     ug = np.linspace(-3.0 - 6 * se, 0.0, 2001)
@@ -2021,6 +2078,27 @@ def band_start(G, d, rows, F, m0, hi, verbose=True):
     return None
 
 
+def positive_start(T, U):
+    """A start with every row of T's positivity above zero, from U (rates in T's units, on its prior's support): for the
+    rows predicted at 0, ruptures crossing them are switched on at twice their slab floor, each time the one that
+    crosses the most such rows (ties: the lowest index), until none is left. At the slab floor these rates add next to
+    nothing to the fit. Returns (the new U, how many were switched on)."""
+    U = np.array(U, np.float64)
+    rows = T.band['rows']
+    Gr = sp.csr_matrix(T.G)[rows]
+    Gc = Gr.tocsc()
+    covered = np.asarray(Gr @ (U > 0).astype(np.float64)).ravel() > 0
+    added = 0
+    while not covered.all():
+        open_ = np.flatnonzero(~covered)
+        counts = np.bincount(Gr[open_].indices, minlength=T.n)
+        i = int(np.argmax(counts))
+        U[i] = max(U[i], 2.0 * T.band['floor'][i])
+        covered[Gc.indices[Gc.indptr[i]:Gc.indptr[i + 1]]] = True
+        added += 1
+    return U, added
+
+
 def band_start_key(G, d, rows, F, m0, hi):
     """A fingerprint of everything band_start's result depends on: the problem's matrix and targets, the banded rows, the
     factor, the start it moves and the rates' upper bounds."""
@@ -2105,6 +2183,11 @@ def main():
                          'inside by a penalized least-squares fit, made once per problem: it is kept beside --problem '
                          '(<problem>_band<F>_start.npz) and taken from there by later runs with the same problem, band and '
                          'start')
+    ap.add_argument('--positive', action='store_true',
+                    help='an alternative to --band (not with it), spike-and-slab only: keep the prediction of every data row '
+                         'with a positive target above zero in every draw, that is, at least one of the ruptures in each row '
+                         'on, with no other limit. A start that predicts 0 for some rows gets, for each, a rupture crossing it '
+                         'switched on at twice its slab floor')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
     ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
@@ -2317,6 +2400,18 @@ def main():
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
     band_rows = None
+    if a.positive and a.band is not None:
+        raise SystemExit('--positive and --band: give one or the other')
+    if a.positive:                                 # positivity: every data row with a positive target above zero
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--positive is not implemented for transfer moves or the hierarchical prior')
+        try:
+            T.set_positive(np.flatnonzero(P['d'] > 0))
+        except ValueError as e:
+            raise SystemExit(f'--positive: {e}')
+        print(f'positivity: the predictions of {len(T.band["rows"])} of the {T.n_data} data rows (those with a positive '
+              'target) kept above zero, at least one rupture on in each; a start that predicts 0 for some gets ruptures '
+              'switched on first')
     if a.band is not None:                         # the band: every data row with a positive target
         if not a.band > 1:
             raise SystemExit(f'--band {a.band:g}: give a factor above 1 (10: an order of magnitude either way)')
@@ -2370,6 +2465,17 @@ def main():
             left = T.band_outside(T.residual(Xs[:1]))[0]
             if left:                               # e.g. rates below the slab floor, switched off by the prior
                 raise SystemExit(f'band: the start found leaves {left} rows outside it once the prior\'s support is applied')
+    if a.positive:                                 # a start predicting 0 for some rows: ruptures switched on in them
+        Us = T.init(X0 if scale is None else X0 / scale)
+        n_out = T.band_outside(T.residual(Us))
+        if n_out.any():
+            chi0 = float(np.sum(T.residual(Us[:1])[0, :T.n_data] ** 2))
+            Us = np.array([positive_start(T, u)[0] for u in Us])
+            added = positive_start(T, T.init(X0[:1] if scale is None else X0[:1] / scale)[0])[1]
+            X0 = Us if scale is None else Us * scale
+            chi1 = float(np.sum(T.residual(Us[:1])[0, :T.n_data] ** 2))
+            print(f'positivity: the start predicts 0 for {n_out.max()} rows; {added} ruptures crossing them switched on at '
+                  f'twice their slab floor (chi2 {chi0:.4f} -> {chi1:.4f})')
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)
