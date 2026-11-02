@@ -116,6 +116,7 @@ check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not Non
 check(argdefault(trees['gibbs.py'], '--slab') == 'log' and "choices=['log', 'sqrt']" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_spikeslab(gam=0.5)') == 1,
       f"gibbs.py --slab default {argdefault(trees['gibbs.py'], '--slab')!r} (log or sqrt), the square-root slab in the full self-test set")
+check(re.findall(r'^PRESET = (\S+)', cells[0][1], re.M) == ["'conservative'"], "notebook PRESET = 'conservative' (the default)")
 _pre = re.search(r'^PRESETS = \{.*?^\}', cells[0][1], re.M | re.S)
 _ns = {}
 if _pre:
@@ -137,13 +138,19 @@ check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['F
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
       'notebook DOWN_THE_MIDDLE = False (no balance term), recorded; True and \'zero-model\' passed to gibbs.py '
       '--down-the-middle (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
-check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ['10'] and 'band' in _cfg_keys
+check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'band' in _cfg_keys
       and any("args += ['--band', BAND]" in c for _, c in cells) and "'--band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
-      'notebook BAND = 10 (every prediction within a factor 10 of its target), recorded and passed to gibbs.py --band, '
+      "notebook BAND = 'positive' (every prediction above zero; a number: the band, each within that factor of its target), "
+      'recorded and passed to gibbs.py --band or --positive, '
       'with its exact test in both self-test sets')
+check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 'mfd_monotonic' in _cfg_keys
+      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and "'--mfd-monotonic'" in src['gibbs.py']
+      and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
+      'notebook MFD_MONOTONIC = False (not imposed by default), recorded and passed to gibbs.py --mfd-monotonic, with its '
+      'exact test in the band\'s self-test')
 check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
-      and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('def selftest_band')[1],
+      and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
       "notebook BAND = 'positive' passes gibbs.py --positive (every prediction above zero), with its exact test in the "
       'band\'s self-test')
 check(sum(c.count('*ref_args()') for _, c in cells) == 6 and '\ndef reference_rates(' in src['cru_common.py']

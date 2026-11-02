@@ -46,7 +46,7 @@ import time
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path, report_to, balance_rows
+from cru_common import load_problem, column_norms, prior_rates, split_rhat, ess, summarize_samples, resolve_logbox, bin_targets, logbox_mean, prelim_path, report_to, balance_rows, magnitude_bins
 import scipy.sparse as _sparse
 sp_csc = _sparse.csc_matrix
 
@@ -616,6 +616,7 @@ class Target:
         self.gam = 0.0                             # spike-and-slab: the slab's tilt, density m^(gam - 1) (1/2: uniform in sqrt m)
         self.mixw = 0.0                            # the halfway prior (pkind 1): the linear part's share (0: none)
         self.n_data = self.N                       # the data rows; any rows after them are the balance term's
+        self.n_fit = self.N                        # the rows in the likelihood; any after them are constraint rows only
         self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
         self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
         if logbox is not None:
@@ -683,6 +684,20 @@ class Target:
         tol = np.zeros(self.N)
         tol[rows] = np.minimum(1e-9 * np.abs(self.d[rows]), 0.1 * step)     # rounding, well below the limit
         self.band = dict(F=None, rows=rows, tol=tol, floor=floor, what='positivity (each above zero)')
+
+    def add_limits(self, rows, rlo, rhi, tol, what):
+        """More rows kept within limits on their residuals, [rlo, rhi], alongside any band or positivity (constraint rows
+        such as --mfd-monotonic's, after the rows in the likelihood); tol: the rounding allowed when counting rows
+        outside."""
+        rows = np.asarray(rows)
+        if self.rlo is None:
+            self.rlo, self.rhi = np.full(self.N, -np.inf), np.full(self.N, np.inf)
+            self.band = dict(F=None, rows=np.zeros(0, int), tol=np.zeros(self.N), what=what)
+        else:
+            self.band['what'] += ' and ' + what
+        self.rlo[rows], self.rhi[rows] = rlo, rhi
+        self.band['tol'] = np.array(self.band['tol'], np.float64)
+        self.band['tol'][rows] = tol
 
     def band_outside(self, R):
         """Per chain, how many rows of the band its residuals R leave outside it (beyond rounding)."""
@@ -1250,7 +1265,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
               mon=np.zeros((K, n_rec, len(monitor))), y=np.zeros((K, n_keep, T.n_data), np.float32), sweep=np.zeros(n_rec, int))
     nd = T.n_data                                        # chi2 and predictions over the data rows only
     dd = T.d[:nd] @ T.d[:nd]
-    if nd < T.N:                                         # the balance term's rows: recorded on their own
+    if nd < T.n_fit:                                     # the balance term's rows: recorded on their own
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     samp = None
     ST = None                                            # running summaries: everything the notebook needs, without draws
@@ -1323,9 +1338,10 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
         if T.rlo is not None:                                # rows outside the band: always 0, a check
             tr.setdefault('band_outside', np.zeros((K, n_rec), np.int64))[:, rec] = T.band_outside(R)
-        if nd < T.N:                                         # the balance term, and each type's relative shortfall
-            tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:] ** 2, 1) / T.sigma ** 2
-            tr.setdefault('balance_s', np.zeros((K, n_rec, T.N - nd)))[:, rec] = R[:, nd:] / np.sqrt(T.balance['A'])
+        if nd < T.n_fit:                                     # the balance term, and each type's relative shortfall
+            nf = T.n_fit
+            tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:nf] ** 2, 1) / T.sigma ** 2
+            tr.setdefault('balance_s', np.zeros((K, n_rec, nf - nd)))[:, rec] = R[:, nd:nf] / np.sqrt(T.balance['A'])
         Xm = X if sc is None else X * sc
         tr['sum_m'][:, rec] = Xm.sum(1)
         tr['tscale'][:, rec] = y @ T.d[:nd] / dd
@@ -1827,15 +1843,16 @@ def selftest_swaps(backends=('c', 'numpy')):
 
 
 def selftest_band(backends=('c', 'numpy')):
-    """The band (--band) and positivity (--positive): the self-tests' small problems with every prediction kept within a
+    """The band (--band), positivity (--positive) and the MFD's monotonicity (--mfd-monotonic, two rates in two bins,
+    against the exact answer with m1 > m0 forbidden): the self-tests' small problems with every prediction kept within a
     factor F of its target, against
     grid integrals restricted to the band: spike-and-slab (P(on) and E[log10 m | on], F = 1.3, where the band forbids the
     first rate's off state), a log-box prior with swap
     moves between near-duplicate columns (E[log10 m], F = 2) and the linear prior's truncated normals (E[m], F = 1.25);
     with each, how far the exact answer without the band lies, and that no recorded draw leaves the band."""
     from scipy.special import betaln
-    print('the band: spike-and-slab, positivity, a log-box prior with swaps and the linear prior vs grid integrals within '
-          'their limits')
+    print('the band: spike-and-slab, positivity, MFD monotonicity, a log-box prior with swaps and the linear prior vs grid '
+          'integrals within their limits')
     ok = True
     inside = lambda Y, d, F: np.all((Y >= d / F) & (Y <= d * F), axis=-1)
 
@@ -1925,6 +1942,51 @@ def selftest_band(backends=('c', 'numpy')):
             ok &= abs(zp) < 4
             print(f'   {be:5s} positivity, rate {i}: P(on) {p:.4f} (exact {pp_on[i]:.4f}, z {zp:+.2f}; without it '
                   f'{pp_free[i]:.4f}, z {zf:+.1f}, both off {p00_free:.3f})')
+    # the MFD's monotonicity (--mfd-monotonic): the same two rates, each now alone in a bin, the second bin above the
+    # first in magnitude, with targets that favour the second rate over the first: a constraint row eps (m0 - m1) >= 0
+    # outside the likelihood forbids m1 > m0, so the state (off, on) and part of (on, on)
+    dM, eps_m = np.array([0.3, 0.5]), 1e-9
+
+    def exact_mono(mono):
+        def Lb(m1, m2):
+            Y = np.stack(np.broadcast_arrays(m1 + 0.7 * m2, 0.5 * m1 + m2), -1)
+            return np.exp(-0.5 * np.sum((Y - dM) ** 2, -1) / sig ** 2)
+        L1, L2 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1])
+        L12 = Lb(M1, M2) * (M2 <= M1 if mono else 1.0) * gw[0][:, None] * gw[1][None, :]
+        w00, w10 = Lb(0.0, 0.0), gw[0] @ L1          # one rate per bin, Beta(1, 1): each state's prior 1/4
+        w01, w11 = (0.0 if mono else gw[1] @ L2), L12.sum()
+        W = w00 + w10 + w01 + w11
+        e1 = ((gw[0] * u[0]) @ L1 + L12.sum(1) @ u[0]) / (w10 + w11)
+        return [(w10 + w11) / W, (w01 + w11) / W], e1
+    (pm_on, em1), (pm_free, em1_free) = exact_mono(True), exact_mono(False)
+    for be in backends:
+        Gm = sp.csc_matrix(np.vstack([Gs, [eps_m, -eps_m]]))
+        T = Target(Gm, np.r_[dM, 0.0], sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+        T.n_data = T.n_fit = 2                           # the constraint row is outside the likelihood
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.array([0, 1], np.int64), B=2, nb=np.array([1.0, 1.0]), a=a_, b=b_)
+        T.add_limits([2], 0.0, np.inf, eps_m * 1e-15, 'monotonicity')
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.4, 0.1], (K, 1)), sw, sw // 10, 1, be, 1, 13, monitor=(0, 1), verbose=False,
+                    keep_samples=False)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= int(tr['band_outside'].max()) == 0 and bool((Mo[:, :, 1] <= Mo[:, :, 0]).all())
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            p, e_on = on.mean(), ess(on)
+            sd_p = np.sqrt(max(pm_on[i] * (1 - pm_on[i]), 1e-12) / e_on)
+            zp, zf = (p - pm_on[i]) / sd_p, (p - pm_free[i]) / sd_p
+            ok &= abs(zp) < 4
+            extra = ''
+            if i == 0:
+                uu = np.log10(Mo[:, :, 0][Mo[:, :, 0] > 0])
+                zu = (uu.mean() - em1) / (uu.std() / np.sqrt(max(1.0, e_on * p)))
+                ok &= abs(zu) < 4
+                extra = f'; E[log10 m | on] {uu.mean():.4f} (exact {em1:.4f}, z {zu:+.2f}; without {em1_free:.4f})'
+            print(f'   {be:5s} MFD monotonic, rate {i}: P(on) {p:.4f} (exact {pm_on[i]:.4f}, z {zp:+.2f}; without it '
+                  f'{pm_free[i]:.4f}, z {zf:+.1f}){extra}')
     # a log-box prior with swap moves: the selftest_swaps problem
     G2, d2, s2, se, F2 = np.array([[1.0, 0.98], [0.5, 0.53]]), np.array([0.4, 0.2]), 0.09, 0.5, 2.0
     ug = np.linspace(-3.0 - 6 * se, 0.0, 2001)
@@ -2188,6 +2250,15 @@ def main():
                          'with a positive target above zero in every draw, that is, at least one of the ruptures in each row '
                          'on, with no other limit. A start that predicts 0 for some rows gets, for each, a rupture crossing it '
                          'switched on at twice its slab floor')
+    ap.add_argument('--mfd-monotonic', action='store_true',
+                    help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target is not above the next '
+                         'lower bin\'s (neighbouring bins, counted up from --lowest-bin in steps of --bin-width; a bin '
+                         'cleaning removed breaks the pair), its total rate is not above that bin\'s either: a hard '
+                         'constraint, alongside --band or --positive or alone. Kept by constraint rows, each '
+                         'eps x (lower bin total - upper bin total) >= 0 with eps = 1e-9, which add at most about 1e-20 to '
+                         'chi2; a start that breaks it is scaled down bin by bin first')
+    ap.add_argument('--lowest-bin', type=float, default=6.8, help='--mfd-monotonic: the lowest magnitude bin\'s lower edge')
+    ap.add_argument('--bin-width', type=float, default=0.1, help='--mfd-monotonic: the magnitude bins\' width')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
     ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
@@ -2247,6 +2318,29 @@ def main():
               + '; '.join(f'{t["name"]} ({t["n"]}): ' + (f'A = {t["A"]:.4g}, ' if a.down_the_middle != 'equal' else '')
                           + f'{100 * t["A"] / t["zero_misfit"]:.0f}% of their zero-model misfit '
                           f'({t["zero_misfit"]:.0f}), {t["weight"] * t["n"]:.2f} of a measurement' for t in info_bal))
+    n_fit, mono = G_fit.shape[0], None             # the rows in the likelihood; --mfd-monotonic's constraint rows follow
+    if a.mfd_monotonic:
+        if a.bins_block not in P['block_names']:
+            raise SystemExit(f'--mfd-monotonic: no row block named {a.bins_block!r} (--bins-block)')
+        mrows, Rm, origm, mlo = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
+        Gb = sp.csr_matrix(P['G'])[mrows]
+        members = [Gb.indices[Gb.indptr[k]:Gb.indptr[k + 1]] for k in range(len(mrows))]
+        pairs_m = [(k, k + 1) for k in range(len(mrows) - 1) if origm[k + 1] == origm[k] + 1 and Rm[k + 1] <= Rm[k]]
+        skipped = [(k, k + 1) for k in range(len(mrows) - 1) if (k, k + 1) not in pairs_m]
+        eps = 1e-9
+        C = sp.lil_matrix((len(pairs_m), n))
+        for q, (k, k1) in enumerate(pairs_m):
+            C[q, members[k]] = eps
+            C[q, members[k1]] = -eps
+        G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), C.tocsr()])), np.r_[d_fit, np.zeros(len(pairs_m))]
+        mono = dict(pairs=pairs_m, members=members, mlo=mlo, eps=eps)
+        name = lambda k: f'{mlo[k]:.2f}-{mlo[k] + a.bin_width:.2f}'
+        print(f'MFD monotonic: in every draw, a bin\'s total rate is not above the next lower bin\'s wherever its target is '
+              f'not: {len(pairs_m)} pairs of neighbouring bins (from {name(pairs_m[0][0])} up)' if pairs_m else
+              'MFD monotonic: no pair of neighbouring bins has a target that is not increasing; nothing to keep')
+        if skipped:
+            print('   pairs left free (the target increases, or a bin cleaning removed lies between): '
+                  + ', '.join(f'{name(k)} -> {name(k1)}' for k, k1 in skipped))
     logbox, beta, lognormal, scale, zlo_vec, bins, ku_vec, hi_u = None, None, None, None, None, None, None, 1.0
     hi_vec = None                                  # linear prior: each rupture's top
     mixw = 0.0                                     # halfway prior: the uniform part's share
@@ -2397,6 +2491,7 @@ def main():
             T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
             T.gam = 0.5 if a.slab == 'sqrt' else 0.0
     T.n_data = P['G'].shape[0]                     # the data rows; the balance term's rows follow them
+    T.n_fit = n_fit                                # and then --mfd-monotonic's constraint rows, outside the likelihood
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
     band_rows = None
@@ -2476,6 +2571,29 @@ def main():
             chi1 = float(np.sum(T.residual(Us[:1])[0, :T.n_data] ** 2))
             print(f'positivity: the start predicts 0 for {n_out.max()} rows; {added} ruptures crossing them switched on at '
                   f'twice their slab floor (chi2 {chi0:.4f} -> {chi1:.4f})')
+    if mono is not None and mono['pairs']:         # the MFD's monotonicity: constraint rows kept at or above 0
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--mfd-monotonic is not implemented for transfer moves or the hierarchical prior')
+        T.add_limits(np.arange(n_fit, T.N), 0.0, np.inf, mono['eps'] * 1e-15, 'the MFD\'s monotonicity')
+        X0 = np.array(X0, np.float64)
+        fixed = 0
+        for x in X0:                               # a start that breaks it: each offending bin scaled down to its neighbour
+            for _ in range(len(mono['pairs']) + 1):
+                tot = np.array([x[m].sum() for m in mono['members']])
+                bad = [(k, k1) for k, k1 in mono['pairs'] if tot[k1] > tot[k]]
+                if not bad:
+                    break
+                k, k1 = bad[0]
+                x[mono['members'][k1]] *= tot[k] / tot[k1] * (1 - 1e-9)
+                fixed += 1
+        Us = T.init(X0 if scale is None else X0 / scale)
+        left = T.band_outside(T.residual(Us))
+        if fixed:
+            print(f'MFD monotonic: the start breaks it; bins scaled down to their lower neighbour {fixed} times over the '
+                  f'{len(X0)} chains')
+        if left.any():
+            raise SystemExit(f'MFD monotonic: the start leaves {left.max()} rows outside {T.band["what"]}; the constraints '
+                             'together may need a start made for them')
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)

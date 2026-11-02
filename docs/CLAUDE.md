@@ -80,8 +80,8 @@ costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the n
 all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
 extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
---band F (the notebook's BAND = 10, its default since early November 2026, when DOWN_THE_MIDDLE = False and FLOOR = -10
-came with it): every data row with a positive target (each subsection's slip-rate row, each MFD bin, each paleo row)
+--band F (the notebook's BAND = 10; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and
+FLOOR = -10 came with it, until BAND = 'positive' and PRESET = 'conservative' became the defaults on 2026-11-02): every data row with a positive target (each subsection's slip-rate row, each MFD bin, each paleo row)
 keeps its prediction within d/F to F d, a hard constraint for any prior (Target.set_band; the kernel's band_bounds
 restricts each update, under spike-and-slab a forbidden off or on state is never taken, swaps that would leave the band
 are rejected; selftest_band in the full self-test set; without it every run is bit-identical). A start outside it is
@@ -91,7 +91,10 @@ F^0.95; about 1.5 minutes at 211k), kept beside the problem as
 and randomized_nnls.py ignore it (REPORT.md, "The band"). --positive (BAND = 'positive'), an alternative,
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
-rupture in each row the start predicts at 0; its exact test is in selftest_band).
+rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (MFD_MONOTONIC,
+off by default): no bin's total above its lower neighbour's where the target is not, through constraint rows after
+the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
+selftest_band.
 Kept for comparison only, and no longer tested: binbox-theta:1:0 (theta = 1: per-bin log-uniform boxes below R_j,
 depths n_j / (theta ln 10); command line only; the alternative until October 2026, retired because it fitted no
 better and from about 2e5 ruptures its boxes are too deep for its sampler to cross), binbox-floor:-12 (per-bin boxes
@@ -191,7 +194,7 @@ aside with it.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
-  one: the chi2 cap, --target cutoff, was removed in October 2026), within the band by default (BAND = 10, --band 10)
+  one: the chi2 cap, --target cutoff, was removed in October 2026), with every prediction above zero by default (BAND = 'positive', --positive)
   and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
   tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True and BAND = None, under which TESTING.md's quick-preset
