@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -149,6 +149,30 @@ check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
       'notebook MFD_MONOTONIC = False (not imposed by default), recorded and passed to gibbs.py --mfd-monotonic, with its '
       'exact test in the band\'s self-test')
+check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
+      and any("args += ['--plate-rate', f'{PLATE_RATE[0]:g},{PLATE_RATE[1]:g}']" in c
+              and "args += ['--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and "'--plate-rate'" in src['gibbs.py'] and 'from plate_rate import describe, strip_rows' in src['gibbs.py']
+      and "'the plate rate')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0]
+      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c for _, c in cells)
+      and '\ndef check_problem(' in src['plate_rate.py'],
+      'notebook PLATE_RATE = None (not imposed by default), recorded and passed to gibbs.py --plate-rate with the rupture set '
+      '(rows from plate_rate.py, checked against the slip-rate rows), with its exact test in the band\'s self-test; '
+      'plate_rate.txt reported for every run with a rupture set')
+check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['None'] and 'slip_sum' in _cfg_keys
+      and any('if PLATE_RATE or SLIP_SUM:' in c for _, c in cells)
+      and "'--slip-sum', default=None, choices=['all', 'between']" in src['gibbs.py']
+      and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
+      and "summed slip rates\\' term recorded apart" in src['gibbs.py'].split('\ndef selftest_balance')[1].split('\ndef ')[0]
+      and '\ndef slip_sum_rows(' in src['plate_rate.py'] and 'SLIP_SUM_L0 = 120.0' in src['plate_rate.py']
+      and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 120.0
+      and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['120'] and 'slip_sum_l0' in _cfg_keys
+      and any("args += ['--slip-sum', SLIP_SUM, '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
+      and any("'--slip-sum-region', SLIP_SUM or 'all', '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
+      'notebook SLIP_SUM = None (not added by default) and SLIP_SUM_L0 = 120 (km, gibbs.py\'s and plate_rate.py\'s '
+      'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
+      'subsection once), recorded apart from '
+      'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
 check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
       and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
       "notebook BAND = 'positive' passes gibbs.py --positive (every prediction above zero), with its exact test in the "

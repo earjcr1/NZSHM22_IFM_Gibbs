@@ -57,6 +57,14 @@ first given.
   each update drawn within the rates the band allows. The defaults since are positivity (`--positive`, `BAND = 'positive'`:
   every prediction above zero, with no other limit), no balance term and a slab floor of 1e-10. The chains start from a penalized least-squares fit moved inside it, made once per problem. See
   REPORT.md, "The band".
+- **Constraint rows (early November 2026; optional).** `--mfd-monotonic` (`MFD_MONOTONIC`) and `--plate-rate`
+  (`PLATE_RATE`) add rows after the likelihood's, ε × the quantity kept with d = 0 and ε = 1e-9, held within limits by
+  the band's machinery: no magnitude bin's total above its lower neighbour's where the targets do not rise, and each
+  South Island strip's share of the Pacific–Australia plate rate within limits. Their χ² is negligible, so the kernel
+  and the likelihood are unchanged. See REPORT.md, "A monotonic MFD" and "The plate rate". `--slip-sum` (`SLIP_SUM`)
+  instead adds soft rows to the likelihood, after the balance term's: along every cross-section perpendicular to the
+  plate motion, the model's slip rates added up against the targets added up, weighted as about five measurements
+  between the Alpine and Cook Strait edges (`SLIP_SUM_L0`, 120 km each), and recorded apart from χ² (REPORT.md, "Summed slip rates").
 - **Slip-rate sections (October 2026).** Each fault section's slip rate is one measurement, copied in the inputs to its
   k subsections; cleaning now divides each section's rows by √k (`preliminaries.py --slip-sections auto`, the default;
   `none` restores the inputs as given), so it counts once. Most numbers in this section count each subsection as its
