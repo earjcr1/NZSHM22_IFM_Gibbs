@@ -144,10 +144,10 @@ check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'ban
       "notebook BAND = 'positive' (every prediction above zero; a number: the band, each within that factor of its target), "
       'recorded and passed to gibbs.py --band or --positive, '
       'with its exact test in both self-test sets')
-check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 'mfd_monotonic' in _cfg_keys
+check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
       and any("args += ['--mfd-monotonic']" in c for _, c in cells) and "'--mfd-monotonic'" in src['gibbs.py']
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = False (not imposed by default), recorded and passed to gibbs.py --mfd-monotonic, with its '
+      'notebook MFD_MONOTONIC = True (imposed by default), recorded and passed to gibbs.py --mfd-monotonic, with its '
       'exact test in the band\'s self-test')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
       and any("args += ['--plate-rate', f'{PLATE_RATE[0]:g},{PLATE_RATE[1]:g}']" in c

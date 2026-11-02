@@ -92,7 +92,7 @@ and randomized_nnls.py ignore it (REPORT.md, "The band"). --positive (BAND = 'po
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
 rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (MFD_MONOTONIC,
-off by default): no bin's total above its lower neighbour's where the target is not, through constraint rows after
+on by default since early November 2026): no bin's total above its lower neighbour's where the target is not, through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
 selftest_band. --plate-rate LO,HI --rupture-set DIR (PLATE_RATE, off by default; (0.4, 0.8) if imposed): each of
 --plate-strips (8) strips' share of the Pacific-Australia plate rate within LO-HI, one constraint row per strip after
