@@ -12,8 +12,10 @@ the script lists those at the end; a figure that is missing is left out. Sentenc
 sits below the fit check, whether the paleo rates are underpredicted, ...) are chosen from the numbers, not written in.
 
 Sections: an overview; inputs and configuration (the settings table); cleaning and diagnostics (prelim.png); the best
-fit (nnls/'s three fit figures); the model (prior, likelihood, the band); sampling; convergence (per replicate); the fit
-to the data (the row-block table); posterior tables and representative models; the posterior's fit, data type by data
+fit (nnls/'s three fit figures); the model (prior, likelihood, and the constraints and soft terms the run used: the band
+or positivity, the soft band, the monotonic MFD, the plate rate, the summed slip rates); sampling; convergence (per
+replicate); the fit to the data (the row-block table, and the terms recorded apart from chi2: the soft band's and the
+summed slip rates'); posterior tables and representative models; the posterior's fit, data type by data
 type (the three fit figures); faults one by one (plot_slip_sections.py's figures, on landscape pages); the OpenSHA
 output; points to keep in mind. Each figure carries a numbered caption and its file name.
 
@@ -112,7 +114,10 @@ def main():
     plate_txt = None if plate is None else (f'at most {plate[1]:g}' if plate[0] is None else
                                             f'between {plate[0]:g} and {plate[1]:g}')
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
-    dtm = cfg.get('down_the_middle')
+    tau = cfg.get('band_soft') or None                 # the soft band's width in decades, or None
+    dec = lambda t: f'{t:g} decade' + ('' if t == 1 else 's')
+    l0 = cfg.get('slip_sum_l0', 8.5)
+    dtm = cfg.get('down_the_middle')                   # the balance term: shown only for older runs that used it
     floor = cfg.get('floor', -10)
     preset = cfg.get('preset', 'n/a')
     reps = cfg.get('representatives')
@@ -163,8 +168,32 @@ def main():
     swaps = grab(log0, r'swap moves: (\d+) near-duplicate pairs', 'swap pairs', int)
     acc = grab(log0, r'swap acceptance ([\d.]+)', 'swap acceptance')
     start_out = grab(log0, r'the start leaves (\d+) rows outside', 'band start', int) if band else None
-    start_chi2 = (re.findall(r'penalty [\d.e+]+: chi2 ([\d.]+), 0 rows outside', ''.join(read(r[:-4] + '_log.txt')
-                                                                                        for r in runs)) or [None])[0]
+    logs = [read(r[:-4] + '_log.txt') for r in runs]
+    start_chi2 = (re.findall(r'penalty [\d.e+]+: chi2 ([\d.]+), 0 rows outside', ''.join(logs)) or [None])[0]
+    pos_rows, pos_on = grab(log0, r'positivity: the start predicts 0 for (\d+) rows; (\d+) ruptures', 'positivity start',
+                            int, (1, 2)) if positive else (None, None)
+    plate_start = re.search(r'plate rate: the start is above [\d.]+ in (\d+) of (\d+) chains; their rates scaled down by '
+                            r'([\d.]+)', log0) if plate else None
+    # the terms recorded apart from chi2, per replicate: the soft band's (on chi2's scale) and the summed slip rates'
+    lb_re = (r'^soft band \(--log-band.*?([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+)\)[^\n]*?beyond its tau of their '
+             r'targets: ([\d.]+) per draw')
+    lb = [tuple(float(x) for x in m.groups()) for m in (re.search(lb_re, t, re.M) for t in logs) if m] if tau else []
+    if tau and not lb:
+        MISSING.append('soft band term')
+    lb_start, lb_start_out = grab(log0, r"soft band: .*?the start's ([\d.]+) \(on chi2's scale\), (\d+) rows beyond",
+                                  'soft band start', float, (1, 2), flags=re.M) if tau else (None, None)
+    ss_re = r'^summed slip rates \(--slip-sum\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+); near ([\d.]+) if'
+    ssr = [tuple(float(x) for x in m.groups()) for m in (re.search(ss_re, t, re.M) for t in logs) if m] if ssum else []
+    if ssum and not ssr:
+        MISSING.append('summed slip rates term')
+    rise_cap = re.search(r'^\s*(\d\.\d\d)-\d\.\d\d -> \S+: the target rises .*?at most ([\d.]+) times the lower\'s '
+                         r'\(the target difference plus ([\d.]+) sd', log0, re.M) if mono else None   # since 2026-11-03
+    rise_cap = (rise_cap.group(1), float(rise_cap.group(2)), float(rise_cap.group(3))) if rise_cap else None
+    pr_txt = read(os.path.join(PR, 'plate_rate.txt')) if plate else ''
+    plate_top = re.search(r'comes closest to the plate rate \(kept draws\' 97\.5%\):\s*strip\s+([+-]\d+) \(([\d.]+) E, '
+                          r'([\d.]+) S\):.*?kept draws ([\d.]+)-([\d.]+); (\w[^,]*), (\w[^,]*?) [\d.]+', pr_txt, re.S)
+    plate_in = re.search(r'kept draws: (\d+); limits .*?: all strips inside in ([\d.]+)% of them', pr_txt)
+    sweep_s = [float(x[-1]) for x in (re.findall(r'([\d.]+)s/sweep\)', t) for t in logs) if x]
     wlogs = sorted(glob.glob(os.path.join(PR, 'workflow_log_*.txt')))
     stamps = re.findall(r'^----- (\d{4}-\d\d-\d\d \d\d:\d\d)', read(wlogs[-1]) if wlogs else '', re.M)
     t_start, t_end = (cfg.get('started') or (stamps[0] if stamps else None)), (stamps[-1] if stamps else None)
@@ -176,6 +205,7 @@ def main():
     on = {m.group(1): (int(m.group(2)), m.group(3), m.group(4)) for m in re.finditer(
         r'^\s*(\S*main_rep\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s*$', conv, re.M)}
     verdict = dict(re.findall(r'^(\S*main_rep\d+): (PASS|CHECK)', conv, re.M))
+    why_check = dict(re.findall(r'^(\S*main_rep\d+): CHECK: (.*?)(?:: run longer.*)?$', conv, re.M))
     slow = {m.group(1): (int(m.group(2)), m.group(3), float(m.group(4)), float(m.group(5)), int(m.group(6).replace(',', '')))
             for m in re.finditer(r'^(\S*main_rep\d+): slow-mixing minority: (\d+) ruptures \(([\d.]+)%\) with R-hat > '
                                  r'[\d.]+ \(worst ([\d.]+)\), carrying ([\d.]+)% of the total rate; .*?fewest ([\d,]+)',
@@ -268,7 +298,13 @@ def main():
     M = 1.8 * cm
     FW, LW = P_W - 2 * M, L_W - 2 * M
     tt = lambda s: f'<font name="DVM" size="8.4">{s}</font>'
-    short = f'cru_workflow run summary: {data_name}, {preset}' + (f', band {band:g}' if band else '')
+    short = (f'cru_workflow run summary: {data_name}, {preset}' + (f', band {band:g}' if band else ', positivity' if positive
+                                                                   else '') + (f', soft band {tau:g}' if tau else ''))
+    # the constraints and soft terms in words, for the subtitle
+    parts = ([f'the band (factor {band:g})'] if band else ['positivity'] if positive else []) \
+        + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else []) + (['a monotonic MFD'] if mono else []) \
+        + (['the summed slip rates'] if ssum else []) + ([f'the plate rate ({plate_txt})'] if plate else [])
+    model_txt = ', '.join(parts[:-1]) + (' and ' if len(parts) > 1 else '') + parts[-1] if parts else ''
 
     def footer(canvas, doc):
         canvas.saveState()
@@ -333,7 +369,7 @@ def main():
 
     # title
     para(a.title, title)
-    para(f'Workflow summary for {data_name}, preset {preset}' + (f', with the band (factor {band:g})' if band else ''), sub)
+    para(f'Workflow summary for {data_name}, preset {preset}' + (f', with {model_txt}' if model_txt else ''), sub)
     para(f'Run folder: <font name="DVM" size="7.6">{run_name}</font>', small)
     para(f'Run started {t_start or "n/a"}' + (f', last step {t_end}' if t_end else '') + '. Figures as last drawn; '
          'numbers from the run\u2019s reports.', small)
@@ -358,7 +394,7 @@ def main():
          + (f' The OpenSHA solution for the same rupture set ({tt(refname)}) supplies the fault geometry and named '
             'faults for the figures, and a reference model drawn in black on every figure.' if ref else '')
          + ' One configuration cell sets everything; this run used:')
-    dtm_txt = {False: 'no balance term: the Gaussian misfit alone', True: 'a balance term, one weight for every data type',
+    dtm_txt = {True: 'a balance term, one weight for every data type',
                'zero-model': 'a balance term, each data type\u2019s own weight'}.get(dtm, str(dtm))
     table([['setting', 'value', 'meaning'],
            ['SLIP_SECTIONS', repr(cfg.get('slip_sections')), 'how the slip-rate rows count (\u2019auto\u2019: each fault '
@@ -369,23 +405,26 @@ def main():
             'every prediction kept above zero (a hard constraint)' if positive else
             f'every prediction kept within a factor {band:g} of its target (a hard constraint)' if band else
             'neither positivity nor the band'],
-           ['BAND_SOFT', 'None' if not cfg.get('band_soft') else f'{cfg.get("band_soft"):g}',
-            f'each prediction within {cfg.get("band_soft"):g} decades of its target at 1 sd (a soft band, in the misfit)'
-            if cfg.get('band_soft') else 'no soft band'],
+           ['BAND_SOFT', 'None' if not tau else f'{tau:g}',
+            f'each prediction within {dec(tau)} of its target at 1 sd (a soft band: a penalty on the log ratio of '
+            'prediction to target, beside the misfit)' if tau else 'no soft band'],
            ['MFD_MONOTONIC', str(mono), ('no magnitude bin\u2019s total above its lower neighbour\u2019s where the targets '
-            'do not rise' + (f', and where they rise, the rise capped {cfg.get("mfd_rise_sd", 0.89):g} sd above the target '
-                             'difference' if cfg.get('mfd_rise_sd', 0.89) >= 0 else '')
+            'do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target difference'
+                             if rise_cap else '')
             + ' (a hard constraint)') if mono else 'not imposed'],
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
             f'and PLATE_RATE use, 8.5 km wide {xsec_txt}'],
            ['SLIP_SUM', str(bool(ssum)),
             'the slip along the plate motion (each fault\u2019s slip vector projected on it) summed along each '
-            'cross-section perpendicular to it, against the targets\u2019 sums (a soft term)' if ssum else 'not added'],
-           ['PLATE_RATE', 'None' if not plate else f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
-            f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint)' if plate else 'not imposed'],
-           ['DOWN_THE_MIDDLE', str(dtm), dtm_txt],
-           ['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
-           ['PRESET', repr(preset), f'{nrep} replicates × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
+            'cross-section perpendicular to it, against the targets\u2019 sums (a soft term)' if ssum else 'not added']]
+          + ([['SLIP_SUM_L0', f'{l0:g}', f'the summed slip rates\u2019 weight: each {l0:g} km of the plate boundary counts '
+               'as one measurement']] if ssum else [])
+          + [['PLATE_RATE', 'None' if not plate else f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
+            f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint)' if plate else 'not imposed']]
+          + ([['DOWN_THE_MIDDLE', str(dtm), dtm_txt]] if dtm else [])
+          + [['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
+           ['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
+                                     if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
             f'every {th})'],
            ['REPRESENTATIVES', str(reps), 'weighted representative models selected for hazard']],
           [3.3 * cm, 3.2 * cm, FW - 6.5 * cm])
@@ -437,7 +476,7 @@ def main():
     figure('nnls/fig_paleo_rates_nnls.png', 'Best fit: each paleo row\u2019s target against its prediction, in units of its '
            'uncertainty, log-log; the shaded bands are within one and two uncertainties.', FW * 0.6, max_h=15 * cm)
 
-    head('4. The model: prior, likelihood' + (' and band' if band else ''))
+    head('4. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''))
     para(f'<b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
          f'rate from 10<super>{floor:g}</super> per year up to its magnitude bin\u2019s target rate (spike-and-slab). The '
          'top is soft, a Gaussian shoulder as wide as the bin\u2019s own uncertainty, since no single rupture can carry more '
@@ -454,8 +493,20 @@ def main():
          + (' <b>Positivity.</b> In addition, every prediction with a positive target (each subsection\u2019s slip rate, '
             'each MFD bin and each paleo rate) must be above zero, so at least one rupture is on in each, with no other '
             'limit: a hard constraint.' if positive else '')
+         + (f' <b>A soft band.</b> A penalty beside the misfit on each prediction\u2019s ratio to its target, '
+            f'\u00bd (log<sub>10</sub>(prediction / target) / {tau:g})\u00b2, so a prediction {dec(tau)} from its target costs as '
+            'much as a one-uncertainty miss in \u03c7\u00b2, on every row with a positive target (each slip-rate subsection\u2019s '
+            'term divided by the k subsections of its section, so a section counts once). It ignores each row\u2019s '
+            'uncertainty, so it acts where a target is weak and the data alone would accept a prediction near zero; where '
+            'a target is strong the Gaussian likelihood already holds the prediction far closer than a decade. A '
+            'prediction of zero would cost infinitely much, which is why it comes with positivity. It is recorded apart '
+            'from \u03c7\u00b2, on \u03c7\u00b2\u2019s scale (twice its share of the negative log posterior), so the fit check stays over the '
+            'data alone.' if tau else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
-            'total rate may not be either, in every model.' if mono else '')
+            'total rate may not be either, in every model'
+            + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
+               f'most {rise_cap[1]:.3f} times the lower\u2019s, a cap {rise_cap[2]:g} sd above the targets\u2019 own difference, as far as the other pairs\u2019 '
+               'limits sit above theirs (the median).' if rise_cap else '.') if mono else '')
          + (f' <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
             f'{xsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
             'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '
@@ -473,11 +524,27 @@ def main():
          'step that switches the rupture on or off. '
          + ('Under the band each update is restricted to the rates that keep every row the rupture touches inside it. '
             if band else '')
+         + ('Each update is restricted to the rates that keep the hard constraints ('
+            + ', '.join((['no positive-target row predicted at zero'] if positive else [])
+                        + (['the MFD’s monotonicity'] if mono else []) + (['the plate-rate limit'] if plate else []))
+            + '). ' if not band and hard else '')
+         + ('The soft band is not quadratic in the rates, so the sampler keeps it exactly by Metropolis steps: a switch '
+            'on or off takes the penalty’s change in its log odds, and a slab move or a swap is accepted by its change; '
+            'for the many off ruptures, bounds from cached log ratios settle most decisions without logarithms'
+            + (f' (here {rng(sweep_s, "{:.3f}")} s per sweep for {ch} chains on {cfg.get("threads", "n/a")} threads)'
+               if sweep_s else '') + '. ' if tau else '')
+         + ('The summed slip rates are quadratic in the rates, so they enter the exact updates as extra rows of the misfit. '
+            if ssum else '')
          + f'Swap moves exchange the rates of near-duplicate ruptures ({fmt(swaps)} pairs; '
          f'{fmt(acc and 100 * acc, "{:.1f}")}% of swaps accepted), and the fraction on in each bin is redrawn after every '
          'sweep. '
          + (f'The chains start from the best fit moved inside the band by a penalized least-squares fit (χ² '
-            f'{start_chi2 or "n/a"}, no rows outside). ' if band else 'The chains start from the best fit. ')
+            f'{start_chi2 or "n/a"}, no rows outside). ' if band else 'The chains start from the best fit'
+            + (f', with {fmt(pos_on)} ruptures switched on at twice the slab floor so that none of the {fmt(pos_rows)} '
+               'rows it predicts at zero is left there' if positive and pos_on else '')
+            + (f'; in {plate_start.group(1)} of {plate_start.group(2)} chains it took up more than the plate-rate limit, '
+               f'and their rates were scaled down (by a factor {float(plate_start.group(3)):.3f} at most)'
+               if plate_start else '') + '. ')
          + f'Each of the {nrep} replicates ran {ch} chains for {fmt(sw)} sweeps in '
          f'{rng(hours, "{:.1f}")} hours, '
          f'keeping {fmt(recs)} draws per chain after burn-in: {fmt(n_rec)} recorded draws in all.'
@@ -495,8 +562,9 @@ def main():
     sl = [slow[n] for n in names if n in slow]
     para(f'{tt("check_convergence.py")} judges each replicate against the targets of its preset: '
          + (f'all {len(names)} <b>pass</b>. ' if passes and all(p == 'PASS' for p in passes) else
-            'verdicts ' + ', '.join(n.split('/')[-1] + ' ' + verdict.get(n, 'n/a') for n in names) + ' (see '
-            f'{tt("convergence_report.txt")} for the reasons). ')
+            'verdicts ' + ', '.join(n.split('/')[-1] + ' ' + verdict.get(n, 'n/a') for n in names) + ' ('
+            + ('; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check) or
+               f'see {tt("convergence_report.txt")} for the reasons') + '). ')
          + f'For χ² and the total rate the effective sample sizes are {rng(ess_c)} and {rng(ess_t)} per replicate, and '
          f'for the rupture rates the 5th percentile is {rng([float(crow[n][9]) for n in names])}. About {rng(on_n)} '
          'ruptures are on in each draw. With so many rates even perfectly independent draws give a worst R̂ above 1, so '
@@ -523,6 +591,9 @@ def main():
                'target is weak (a section whose target is less than about one uncertainty above zero would otherwise '
                'accept a prediction of zero), so under the band χ² sits below it, and the fit check no longer tests the '
                'uncertainties.' if band and z_all < -2 else
+               ' The fit check assumes the Gaussian likelihood alone; the soft band pulls the predictions of weak-target '
+               'rows towards their targets, closer than the data alone would hold them, so χ² sits lower than it would '
+               'without it.' if tau and z_all < -2 else
                ' A χ² below the fit check means the data are fitted more closely than their uncertainties imply.'
                if z_all < -2 else ' A χ² above the fit check means some data are fitted worse than their uncertainties '
                'allow, or the uncertainties are too small.' if z_all > 2 else '')
@@ -535,6 +606,23 @@ def main():
           + [[r[0].strip(), f'{int(r[1]):,}', f'{float(r[2]):g}', f'{r[3]} ± {r[4]}', r[7], r[8].replace('-', '\u2212'),
               r[9], r[10]] for r in brow],
           [2.9 * cm, 1.3 * cm, 2.6 * cm, 2.9 * cm, 2.6 * cm, 1.2 * cm, 2.0 * cm, FW - 15.5 * cm])
+    if lb or ssr:
+        para('Each run also records the terms it adds beside χ², each on χ²’s scale and not counted in it. '
+             + (f'<b>The soft band</b>: {rng([x[0] for x in lb], "{:.1f}")} on average per replicate (5–95% of draws '
+                f'{fmt(min(x[1] for x in lb), "{:.1f}")}–{fmt(max(x[2] for x in lb), "{:.1f}")}'
+                + (f'; the start’s {lb_start:.1f}' if lb_start is not None else '') + '), with '
+                f'{rng([x[3] for x in lb], "{:.0f}")} rows per draw predicted more than {dec(tau)} from their targets'
+                + (f' (the start: {lb_start_out:.0f})' if lb_start_out is not None else '') + '. ' if lb else '')
+             + (f'<b>The summed slip rates</b>: {rng([x[0] for x in ssr], "{:.1f}")} on average per replicate (5–95% '
+                f'{fmt(min(x[1] for x in ssr), "{:.1f}")}–{fmt(max(x[2] for x in ssr), "{:.1f}")}), against about '
+                f'{ssr[0][3]:.1f} expected if the model matched the truth (one per {l0:g} km of strip); '
+                f'{tt("plate_rate.txt")} lists the strips furthest from their target sums.' if ssr else '')
+             + (f' <b>The plate rate</b>: every strip is inside the limits in {float(plate_in.group(2)):.1f}% of the '
+                f'{int(plate_in.group(1)):,} kept draws, as a hard constraint requires'
+                + (f'; the strip closest to the limit, {plate_top.group(1)} ({plate_top.group(2)}° E, '
+                   f'{plate_top.group(3)}° S, mostly {plate_top.group(6).rsplit(" ", 1)[0]} and '
+                   f'{plate_top.group(7)} in the fault model), reaches {float(plate_top.group(5)):.3f} at the kept '
+                   'draws\u2019 97.5%' if plate_top else '') + '.' if plate_in else ''))
 
     head('8. Posterior tables, rate vectors and representative models')
     rel = None if post_tot is None or t_tot is None else 100 * (post_tot / t_tot - 1)
@@ -655,6 +743,11 @@ def main():
                    'because the band is stricter than the data where targets are weak; a fit check under the band would '
                    f'need its expected χ² from simulated data. The factor {band:g} is a modelling choice, and a run at '
                    'another factor would show how much the results depend on it.')
+    elif tau and z_all is not None and z_all < -2:
+        pts.append(f'<b>The fit check under the soft band.</b> χ² is {-z_all:.1f} standard deviations below the fit '
+                   'check, which assumes the Gaussian likelihood alone; a fit check with the soft band would need its '
+                   f'expected χ² from simulated data. Its width ({dec(tau)} at 1 sd) is a modelling choice, and a run at '
+                   'another width would show how much the results depend on it.')
     elif z_all is not None and abs(z_all) > 2:
         pts.append(f'<b>The fit check.</b> χ² is {fmt(z_all, "{:+.1f}")} standard deviations from the fit check.')
     if p_med and (p_med < 0.85 or p_med > 1.15):
@@ -665,9 +758,12 @@ def main():
                    f'{rng([s[3] for s in sl], "{:.1f}")}% of the total rate, mix slowly; their individual rates are less '
                    'precise than the rest, though sums over many ruptures are not affected.')
     if passes and not all(p == 'PASS' for p in passes):
-        pts.append('<b>Convergence.</b> Not every replicate passes; see the reasons in convergence_report.txt.')
+        pts.append('<b>Convergence.</b> Not every replicate passes'
+                   + (': ' + '; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check)
+                      + ' (the report suggests longer runs).' if why_check else '; see the reasons in convergence_report.txt.'))
     pts.append(f'<b>Starts.</b> All {nrep * (ch or 0)} chains started from the same point (the best fit'
-               + (' moved inside the band' if band else '') + '); runs from dispersed starts remain untested.')
+               + (' moved inside the band' if band else ', with ruptures switched on for positivity' if positive and pos_on
+                  else '') + '); runs from dispersed starts remain untested.')
     if reps and s_verdict[1] and 'miss' in s_verdict[1]:
         pts.append(f'<b>Representative models.</b> The {reps} representatives miss some of their tolerances; the '
                    'posterior-mean rate vector is the exact input for mean hazard.')
