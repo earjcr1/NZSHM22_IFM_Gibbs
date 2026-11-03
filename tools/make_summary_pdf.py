@@ -363,8 +363,13 @@ def main():
             'every prediction kept above zero (a hard constraint)' if positive else
             f'every prediction kept within a factor {band:g} of its target (a hard constraint)' if band else
             'neither positivity nor the band'],
-           ['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the targets '
-            'do not rise (a hard constraint)' if mono else 'not imposed'],
+           ['BAND_SOFT', 'None' if not cfg.get('band_soft') else f'{cfg.get("band_soft"):g}',
+            f'each prediction within {cfg.get("band_soft"):g} decades of its target at 1 sd (a soft band, in the misfit)'
+            if cfg.get('band_soft') else 'no soft band'],
+           ['MFD_MONOTONIC', str(mono), ('no magnitude bin\u2019s total above its lower neighbour\u2019s where the targets '
+            'do not rise' + (f', and where they rise, the rise capped {cfg.get("mfd_rise_sd", 0.89):g} sd above the target '
+                             'difference' if cfg.get('mfd_rise_sd', 0.89) >= 0 else '')
+            + ' (a hard constraint)') if mono else 'not imposed'],
            ['PLATE_RATE', 'None' if not plate else f'({plate[0]:g}, {plate[1]:g})',
             f'each South Island strip\u2019s share of the plate rate within {plate[0]:g}\u2013{plate[1]:g} (a hard '
             'constraint)' if plate else 'not imposed'],

@@ -145,11 +145,11 @@ check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'ban
       'recorded and passed to gibbs.py --band or --positive, '
       'with its exact test in both self-test sets')
 check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
-      and any("args += ['--mfd-monotonic', '--mfd-rise-sd', MFD_RISE_SD]" in c for _, c in cells)
+      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and not any('MFD_RISE_SD' in c for _, c in cells)
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
-      and re.findall(r'^MFD_RISE_SD = (\S+)', cells[0][1], re.M) == ['0.89'] and 'mfd_rise_sd' in _cfg_keys
+
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = True (imposed by default) and MFD_RISE_SD = 0.89 (a rising target\'s rise capped; '
+      'notebook MFD_MONOTONIC = True (imposed by default, a rising target\'s rise capped at gibbs.py\'s 0.89 sd; '
       'gibbs.py\'s default too), recorded and passed to gibbs.py --mfd-monotonic --mfd-rise-sd, with its '
       'exact test in the band\'s self-test')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
@@ -176,15 +176,21 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ["'all'"] and 'slip
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
+check(re.findall(r'^BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None'] and 'band_soft' in _cfg_keys
+      and any("args += ['--log-band', BAND_SOFT]" in c for _, c in cells) and "'--log-band'" in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
+      and 'static void lw_bounds(' in src['gibbs.py'],
+      'notebook BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py --log-band (with positivity; '
+      'kept by a Metropolis step in the kernel, its exact test in the full self-test set)')
 check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
       and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
       "notebook BAND = 'positive' passes gibbs.py --positive (every prediction above zero), with its exact test in the "
       'band\'s self-test')
-check(sum(c.count('*ref_args()') for _, c in cells) == 6 and '\ndef reference_rates(' in src['cru_common.py']
+check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
       'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
-      'solution to all of them (best fit, randomized best fits, posterior)')
+      'solution to all of them (the best fit\'s and the posterior\'s)')
 check(all('axis_span(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'randomized_nnls.py'))
       and 'best_fit_rates(' in src['plot_rate_magnitude.py'] and '\ndef axis_span(' in src['cru_common.py'],
       'the fit figures take fixed axes from the targets and the best fit (cru_common.axis_span, best_fit_rates)')
@@ -192,11 +198,10 @@ check(all("'--config'" in src[sc] and 'run_settings(' in src[sc] for sc in ('plo
                                                                           'plot_rate_magnitude.py'))
       and '\ndef run_settings(' in src['cru_common.py'] and "('FLOOR', 'floor')" in src['cru_common.py'],
       'the fit figures show the run\'s settings, SLIP_SECTIONS to FLOOR, in place of the label (cru_common.run_settings)')
-check(re.findall(r'^RANDOMIZED_NNLS = (\d+)', cells[0][1], re.M) == ['0'] and 'randomized_nnls' in _cfg_keys
-      and any("sh('randomized_nnls.py', '--problem', 'cru_clean.npz', '--fits', RANDOMIZED_NNLS" in c for _, c in cells)
-      and sum('if RANDOMIZED_NNLS:' in c for _, c in cells) >= 9 and "'--selftest'" in src['randomized_nnls.py'],
-      'notebook RANDOMIZED_NNLS = 0 (the sampler), recorded; with a number of fits, randomized_nnls.py runs and the sampler '
-      'cells are skipped')
+check(not any('RANDOMIZED_NNLS' in c or "'randomized_nnls.py'" in c for _, c in cells)
+      and "'--selftest'" in src['randomized_nnls.py'],
+      'notebook has no RANDOMIZED_NNLS (retired from the notebook on 2026-11-03; randomized_nnls.py stays for the command '
+      'line, with its self-test)')
 for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     d = argdefault(trees[s], '--diag-floor')
     check(d == -10, f'{s} --diag-floor default {d!r}')
@@ -291,6 +296,33 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
       and "os.path.join(os.path.dirname(stem), 'nnls')" in src['preliminaries.py'] and {'rupture_set', 'rupture_dir'} <= set(keys or []),
       f"the best fit's outputs go into RUN_DIR/nnls/ (preliminaries.py); the last cell ({cc}) writes it and the posterior mean "
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
+
+# every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
+MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'BAND', 'BAND_SOFT', 'MFD_MONOTONIC',
+                  'PLATE_RATE', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
+_cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
+_runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
+_figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])
+_md = '\n'.join(''.join(c['source']) for c in nb['cells'] if c['cell_type'] == 'markdown')
+_docs = {d_: open(f'{ROOT}/{d_}').read() for d_ in ('docs/REPORT.md', 'docs/CLAUDE.md')}
+_pdf = open(f'{ROOT}/tools/make_summary_pdf.py').read()
+_gaps = []
+for s_ in MODEL_SETTINGS:
+    k_ = _cfgmap.get(s_)
+    miss = [w for w, ok_ in (('defined', re.search(rf'^{s_} = ', cfg, re.M) is not None), ('recorded', k_ is not None),
+                             ('in FIGURE_SETTINGS', s_ in _figset), ('in RUN_NAME', s_ in _runname),
+                             ('in the summary PDF', k_ is not None and (f"'{k_}'" in _pdf or f'"{k_}"' in _pdf)),
+                             ('in the notebook\'s markdown', s_ in _md), ('in REPORT.md', s_ in _docs['docs/REPORT.md']),
+                             ('in CLAUDE.md', s_ in _docs['docs/CLAUDE.md'])) if not ok_]
+    if miss:
+        _gaps.append(f'{s_}: not ' + ', '.join(miss))
+check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
+      'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
+_pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
+_unpinned = [s_ for s_ in ('BAND', 'BAND_SOFT', 'MFD_MONOTONIC', 'PLATE_RATE', 'SLIP_SUM', 'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
+             if f'{s_}=' not in _pin]
+check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
+      + (f': not {_unpinned}' if _unpinned else ''))
 
 print('5. Options and imports')
 opts = {}

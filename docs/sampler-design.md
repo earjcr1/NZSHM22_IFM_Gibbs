@@ -52,6 +52,9 @@ first given.
   `DOWN_THE_MIDDLE = True` one A serves all types, the largest that keeps every type at or below one extra
   measurement. It is extra rows of G and d, so the kernel is unchanged and every prior takes it; the χ² of the fit
   check stays over the data rows. See REPORT.md, "Balance between over- and underprediction".
+- **A soft band (November 3rd, 2026; optional).** `gibbs.py --log-band TAU` (`BAND_SOFT`): a Gaussian penalty on
+  each prediction's log ratio to its target, TAU decades at 1 sd, kept exactly by Metropolis steps within each update
+  (REPORT.md, "A soft band").
 - **The band (early November 2026; optional).** `gibbs.py --band F` (`BAND = 10`) keeps every data row's
   prediction within a factor F of its target, from d/F to F d: a hard constraint on the rates, for any prior, with
   each update drawn within the rates the band allows. The defaults since are positivity (`--positive`, `BAND = 'positive'`:

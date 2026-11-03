@@ -12,7 +12,7 @@ nnls_vectors.npz, which the notebook draws with the three fit-figure scripts bel
 rate_vectors.csv's rows), make_solution.py (a rate vector as an OpenSHA fault system solution's rates.csv, after
 checking that the model's OpenSHA rupture set describes the same ruptures; --zip FILE also writes a complete archive
 that OpenSHA loads; the notebook's last cell writes the best fit's, nnls/rates.csv, and the posterior mean's,
-spikeslab/rates.csv (rnnls/rates.csv for the randomized fits' mean), one row per rupture of the rupture set like the
+spikeslab/rates.csv, one row per rupture of the rupture set like the
 model's own rates.csv, when DATA_DIR holds the model's
 OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), make_summary_pdf.py (a finished
 run's summary as a PDF, about a paragraph per step with the run's figures, every number read from its reports; command
@@ -40,8 +40,8 @@ rate, with the reference model's rates of the same ruptures beside them; and a t
 bin, each fault's rate of events per bin against the reference's; --named none draws slip-rate sections instead, 30 by
 default; the notebook draws them after the paleo-rate figure),
 randomized_nnls.py (best fits to the data plus fresh draws of their
-stated noise, in place of the sampler when the notebook's RANDOMIZED_NNLS is a number of fits: their spread of slip-rate,
-MFD and paleo predictions in figures, in RUN_DIR/rnnls/; the best fit's sampling distribution, not a posterior).
+stated noise, from the command line only since 2026-11-03, when the notebook's RANDOMIZED_NNLS was retired: their spread of
+slip-rate, MFD and paleo predictions in figures, in the --out folder; the best fit's sampling distribution, not a posterior).
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference
 RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated; the notebook
 passes the model's own OpenSHA solution (ref_args(): solution/rates.csv beside the rupture set, looked for when each
@@ -88,13 +88,17 @@ are rejected; selftest_band in the full self-test set; without it every run is b
 moved in by band_start (penalized least squares, each rate in units of 1/||G_i||, stopped once inside
 F^0.95; about 1.5 minutes at 211k), kept beside the problem as
 <problem>_band<F>_start.npz and reused when the problem, band, start and bounds match (band_start_key). The best fit
-and randomized_nnls.py ignore it (REPORT.md, "The band"). --positive (BAND = 'positive'), an alternative,
+and randomized_nnls.py ignore it (REPORT.md, "The band"). --log-band TAU (BAND_SOFT, off by default; with
+--positive): a soft band, 1/2 (log10(y / d) / TAU)^2 on each positive-target row (slip subsections 1/k), kept exactly by
+Metropolis steps in the kernel (lw_change in the on/off log odds and on slab moves and swaps; lw_bounds with cached
+log ratios QC and 1/y settle most off ruptures without logs), T.lw = dict(W, LD, DY, rows, tau); selftest_logband in
+the full set; NULL arrays without it, so runs are bit-identical. --positive (BAND = 'positive'), an alternative,
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
 rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (MFD_MONOTONIC,
 on by default since early November 2026): no bin's total above its lower neighbour's where the target is not (and,
 since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
-times the lower total, MFD_RISE_SD = 0.89 by default), through constraint rows after
+times the lower total; --mfd-rise-sd, 0.89 by default, command line only), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
 selftest_band. --plate-rate LO,HI --rupture-set DIR (PLATE_RATE, off by default; (0.4, 0.8) if imposed): each of
 --plate-strips (8) strips' share of the Pacific-Australia plate rate within LO-HI, one constraint row per strip after
@@ -130,7 +134,7 @@ aside with it.
   (gibbs.py --keep-draws: <out>_kept.npy and _kept_index.npy; recording only, the chains are unchanged) and
   select_draws.py writes weighted representatives as columns rep_01... of rate_vectors.csv, with representatives.csv
   and select_report.txt; the mean column stays the source for mean hazard. The notebook also writes
-  spikeslab/workflow_log_<date>-<time>.txt (rnnls/ for the randomized best fits), a copy of
+  spikeslab/workflow_log_<date>-<time>.txt, a copy of
   everything it prints, with each cell's start time and duration and any traceback (cru_common.start_log).
 - Each step's code lives in a script, and each script keeps what it prints in a report next to its outputs
   (cru_common.report_to): prelim_summary.txt, <run>_log.txt, convergence_report.txt, block_fit_report.txt,
@@ -172,9 +176,8 @@ aside with it.
 - Code, data and outputs may be in separate folders. Scripts take input paths as arguments, find prelim_results.npz
   next to --problem (or via --prelim), and write where --out points; the notebook uses DATA_DIR (its files only read) and RUN_DIR,
   relative to its own folder (by default ~/inversions/NZSHM22_Matrices-211k/ and a new subfolder of it named after the
-  settings and the start time, SLIP_SECTIONS..._floor..._<unix time>); the runs go into RUN_DIR/spikeslab/ (the randomized best fits into RUN_DIR/rnnls/), with
-  the shared cleaned problem and diagnostics at the top of RUN_DIR, the best fit's outputs in RUN_DIR/nnls/ and the
-  randomized best fits' (RANDOMIZED_NNLS) in RUN_DIR/rnnls/. One prior per notebook run (no comparison runs); a second
+  settings and the start time, SLIP_SECTIONS..._floor..._<unix time>); the runs go into RUN_DIR/spikeslab/, with
+  the shared cleaned problem and diagnostics at the top of RUN_DIR, the best fit's outputs in RUN_DIR/nnls/. One prior per notebook run (no comparison runs); a second
   setting of the same prior needs its own RUN_DIR (the default name gives it one). Never write into the data folder's
   own files (the inputs and the model's OpenSHA solution): only the notebook's RUN_DIRs go there.
 - Before routine use, work through docs/TESTING.md. The slip-rate and magnitude-bin rows are detected
@@ -224,3 +227,11 @@ aside with it.
   edges and hyperpriors, the likelihood (the balance term and its weight among it), the band and its factor, sigma, bounds, how the slip-rate rows
   count and the MFD bins' uncertainty level are modelling decisions: ask the user before changing them. If all-zero rows are kept (--keep-empty-rows), the fit check
   includes their constant.
+
+Conventions that every new option follows (static_checks.py enforces the first): a model setting in the notebook is
+validated in the configuration cell, recorded in CONFIG, listed in cru_common.FIGURE_SETTINGS, part of RUN_NAME where it
+changes the results, passed to its script, given a default check in static_checks.py, shown in make_summary_pdf.py's
+settings table, described in the notebook's markdown and in REPORT.md and CLAUDE.md, and pinned in run_quick_checks.sh
+where the quick checks' reference values would otherwise move. Every term outside chi2 that a run records (the balance
+term, the summed slip rates, the soft band) is recorded on chi2's scale (twice its share of the negative log posterior),
+apart from chi2, so the fit check stays over the data alone.
