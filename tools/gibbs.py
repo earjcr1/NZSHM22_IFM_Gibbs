@@ -28,9 +28,10 @@ runs with the same problem, band, start and bounds. Each recorded draw's count o
 kept as band_outside. --positive (the notebook's default) keeps every such row above zero instead, through the same
 machinery, and --mfd-monotonic and --plate-rate add constraint rows of their own outside the likelihood (eps x the
 quantity kept, d = 0, eps = 1e-9, so they add nothing measurable to chi2): no magnitude bin's total above its lower
-neighbour's where the targets do not rise, and each South Island strip's share of the Pacific-Australia plate rate
-within limits (plate_rate.py builds those rows from the rupture set's geometry and slips). Two soft terms can join the
-misfit beside the data, each recorded apart from chi2 on chi2's scale: --slip-sum, the slip rates summed along each
+neighbour's where the targets do not rise, and each strip's share of the Pacific-Australia plate rate within limits
+(plate_rate.py builds those rows from the rupture set's geometry and slips, on the strips of cross-sections
+perpendicular to the plate motion that --slip-sum uses too, --cross-sections). Two soft terms can join the misfit
+beside the data, each recorded apart from chi2 on chi2's scale: --slip-sum, the slip rates summed along each
 cross-section perpendicular to the plate motion against the targets' sums (rows of G and d, so the kernel is unchanged),
 and --log-band, a soft band, a Gaussian penalty on each prediction's log ratio to its target, which is not quadratic
 in the rates and is kept by Metropolis steps within the kernel's updates. See --help for the rest.
@@ -1514,7 +1515,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             lr_ = T.lw['rows']
             with np.errstate(divide='ignore', invalid='ignore'):
                 lq = np.log(np.maximum(R[:, lr_] + T.lw['DY'][lr_], 0.0)) - T.lw['LD'][lr_]
-            # on chi2's scale (twice the penalty, as the balance and summed-slip terms are recorded)
+            # its chi2-equivalent, sum w' (log10(y / d) / tau)^2 (w' = 1/k for slip subsections), as chi2 and the balance and
+            # summed-slip terms are recorded: twice its share of the negative log posterior
             tr.setdefault('log_band', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(T.lw['W'][lr_] * lq ** 2, 1)
             tr.setdefault('log_band_out', np.zeros((K, n_rec)))[:, rec] = np.sum(np.abs(lq) > T.lw['tau'] * LN10, 1)
         Xm = X if sc is None else X * sc
@@ -1631,7 +1633,7 @@ def report(tr, burn, thin, names=None):
               'counted in chi2 above')
     if 'log_band' in tr:                             # --log-band: the soft band (not in chi2 above)
         v, o = tr['log_band'][:, nb:], tr['log_band_out'][:, nb:]
-        print(f'soft band (--log-band, on chi2\'s scale: twice its penalty): {v.mean():.1f} on average (5-95% '
+        print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
               f'tau of their targets: {o.mean():.1f} per draw')
     if 'hyper_pi' in tr:                             # spike-and-slab: per-bin fraction switched on
@@ -2628,24 +2630,27 @@ def main():
                          'a ratio, so it caps the MFD\'s shape and not its level; negative: such pairs are left free')
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='--mfd-monotonic: the lowest magnitude bin\'s lower edge')
     ap.add_argument('--bin-width', type=float, default=0.1, help='--mfd-monotonic: the magnitude bins\' width')
-    ap.add_argument('--plate-rate', default=None, metavar='LO,HI',
-                    help='with --rupture-set: in every draw, the share of the Pacific-Australia plate rate that the South '
-                         'Island\'s crustal faults take up kept within LO-HI (0.4,0.8, say) in each of --plate-strips strips '
-                         'between the cross-sections where the Alpine Fault goes offshore and through the Needles-'
-                         'Wairarapa step-over in Cook Strait (plate_rate.py: '
-                         'cross-sections perpendicular to the plate motion of Beavan et al. 2002\'s Euler pole; each '
-                         'fault\'s slip vector projected on the local plate motion, over the local plate rate): a hard '
-                         'constraint, alongside --band, --positive or --mfd-monotonic or alone. Kept by constraint rows, '
-                         'eps x share with eps = 1e-9; the start must be inside')
-    ap.add_argument('--plate-strips', type=int, default=8, help='--plate-rate: strips of equal width (8: about 76 km each)')
-    ap.add_argument('--slip-sum', default=None, choices=['all', 'between'],
+    ap.add_argument('--cross-sections', default='all', choices=['all', 'between'],
+                    help='--slip-sum and --plate-rate: their strips of cross-sections perpendicular to the plate motion '
+                         '(Beavan et al. 2002\'s Euler pole), the subsections\' mean trace length wide (8.5 km at 211,000 '
+                         'ruptures: 72 between the edges where the Alpine Fault goes offshore and through the Needles-'
+                         'Wairarapa step-over in Cook Strait). all (default): over all of New Zealand; between: only '
+                         'between the edges (plate_rate.py)')
+    ap.add_argument('--plate-rate', default=None, metavar='HI or LO,HI',
+                    help='with --rupture-set: in every draw, each strip\'s share of the Pacific-Australia plate rate that '
+                         'the crustal faults take up (the average over its cross-sections of the faults\' slip vectors '
+                         'projected on the local plate motion, over the local plate rate; plate_rate.py) at most HI '
+                         '(0.8, say: the whole plate rate, at the 0.8 the ruptures of these inputs scale the fault '
+                         'model\'s slip rates by), or within LO-HI; on the --cross-sections strips: a hard constraint, '
+                         'alongside --band, --positive or --mfd-monotonic or alone. Kept by constraint rows, eps x share '
+                         'with eps = 1e-9; a start above HI is scaled down to it')
+    ap.add_argument('--slip-sum', action='store_true',
                     help='with --rupture-set: a soft term in the likelihood, beside the data: along every cross-section '
                          'perpendicular to the plate motion, the model\'s slip rates added up against the targets added up, '
                          'within the uncertainty of that sum (copies of one fault section\'s slip rate correlated), each '
-                         'subsection counting once in all; strips the subsections\' mean trace length wide, each weighted '
-                         'its width over L0 (--slip-sum-l0; at the default, each strip one extra observation, 72 between '
-                         'the Alpine and Cook Strait edges) (plate_rate.py). all: over all of New Zealand; between: only between the edges. '
-                         'Recorded apart from chi2')
+                         'subsection counting once in all; on the --cross-sections strips, each weighted its width over '
+                         'L0 (--slip-sum-l0; at the default, each strip one extra observation, 72 between the Alpine and '
+                         'Cook Strait edges) (plate_rate.py). Recorded apart from chi2')
     ap.add_argument('--slip-sum-l0', type=float, default=8.5, metavar='KM',
                     help='--slip-sum: L0 in km (default 8.5, the strips\' width, so each strip\'s sum counts as one extra '
                          'observation; 120 is the target sums\' decorrelation length along the plate motion between the '
@@ -2715,18 +2720,24 @@ def main():
                           + f'{100 * t["A"] / t["zero_misfit"]:.0f}% of their zero-model misfit '
                           f'({t["zero_misfit"]:.0f}), {t["weight"] * t["n"]:.2f} of a measurement' for t in info_bal))
     A_ss, n_bal, ss_info = None, None, None        # --slip-sum: the summed slip rates' rows, after the balance term's
-    if a.slip_sum is not None or a.plate_rate is not None:
+    cs = None                                      # --slip-sum's and --plate-rate's strips
+    if a.slip_sum or a.plate_rate is not None:
         if not a.rupture_set:
-            raise SystemExit(f'--{"slip-sum" if a.slip_sum is not None else "plate-rate"} needs --rupture-set (the OpenSHA '
+            raise SystemExit(f'--{"slip-sum" if a.slip_sum else "plate-rate"} needs --rupture-set (the OpenSHA '
                              'rupture set: the faults\' geometry, the ruptures\' sections and slips)')
         from cru_common import find_rupture_set
         rd = find_rupture_set(a.rupture_set, search=False)
         if rd is None:
             raise SystemExit(f'--rupture-set {a.rupture_set}: no OpenSHA rupture set there (indices.csv, or ruptures/indices.csv)')
-    if a.slip_sum is not None:
+        from plate_rate import cross_sections
+        try:
+            cs = cross_sections(rd, P, a.cross_sections, a.slip_block)
+        except (OSError, ValueError) as e:
+            raise SystemExit(f'--{"slip-sum" if a.slip_sum else "plate-rate"}: {e}')
+    if a.slip_sum:
         from plate_rate import describe_slip_sum, slip_sum_rows
         try:
-            A_ss, b_ss, ss_info = slip_sum_rows(rd, P, a.slip_sum, a.slip_block, l0_km=a.slip_sum_l0)
+            A_ss, b_ss, ss_info = slip_sum_rows(rd, P, a.cross_sections, a.slip_block, l0_km=a.slip_sum_l0, cs=cs)
         except (OSError, ValueError) as e:
             raise SystemExit(f'--slip-sum: {e}')
         n_bal = G_fit.shape[0]
@@ -2775,25 +2786,22 @@ def main():
                   + 'a bin cleaning removed lies between): ' + ', '.join(f'{name(k)} -> {name(k1)}' for k, k1 in skipped))
     plate = None                                   # --plate-rate's constraint rows follow --mfd-monotonic's
     if a.plate_rate is not None:
+        from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows
         try:
-            lo_p, hi_p = (float(v) for v in a.plate_rate.split(','))
-        except ValueError:
-            raise SystemExit(f'--plate-rate {a.plate_rate}: give LO,HI, shares of the plate rate (0.4,0.8, say)')
-        if not 0 <= lo_p < hi_p:
-            raise SystemExit(f'--plate-rate {a.plate_rate}: give 0 <= LO < HI')
-        from plate_rate import describe, strip_rows
-        try:
-            A_p, st_p = strip_rows(rd, P, a.plate_strips, a.slip_block)
+            lo_p, hi_p = parse_limits(a.plate_rate)
+            A_p, pinfo = plate_rows(rd, P, a.cross_sections, a.slip_block, cs=cs)
         except (OSError, ValueError) as e:
             raise SystemExit(f'--plate-rate: {e}')
-        if (np.diff(A_p.indptr) == 0).any():
-            raise SystemExit(f'--plate-rate: strips {list(np.flatnonzero(np.diff(A_p.indptr) == 0) + 1)} hold no rupture')
+        if lo_p is not None and lo_p > 0 and len(pinfo['empty']):
+            raise SystemExit(f'--plate-rate {a.plate_rate}: strips {list(pinfo["empty"])} hold no rupture, so their share '
+                             f'is 0, below {lo_p:g}')
         r0, eps_p = G_fit.shape[0], 1e-9
         G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), eps_p * A_p])), np.r_[d_fit, np.zeros(A_p.shape[0])]
-        plate = dict(A=A_p, rows=np.arange(r0, r0 + A_p.shape[0]), lo=lo_p, hi=hi_p, eps=eps_p)
-        print(f'plate rate: in every draw, each strip\'s share of the plate rate kept within {lo_p:g}-{hi_p:g}; '
-              + describe(st_p) + f', through {A_p.getnnz(1).min():,}-{A_p.getnnz(1).max():,} ruptures per strip; the '
-              'slip-rate rows checked against the rupture set (the same subsections, in proportion to average slip)')
+        plate = dict(A=A_p, rows=np.arange(r0, r0 + A_p.shape[0]), lo=lo_p, hi=hi_p, eps=eps_p, k=pinfo['k'],
+                     what=describe_limits(lo_p, hi_p))
+        print(f'plate rate: in every draw, each strip\'s share of the plate rate {plate["what"]}; '
+              + describe_plate(pinfo) + f', through {A_p.getnnz(1).min():,}-{A_p.getnnz(1).max():,} ruptures per strip; '
+              'the slip-rate rows checked against the rupture set (the same subsections, in proportion to average slip)')
     logbox, beta, lognormal, scale, zlo_vec, bins, ku_vec, hi_u = None, None, None, None, None, None, None, 1.0
     hi_vec = None                                  # linear prior: each rupture's top
     mixw = 0.0                                     # halfway prior: the uniform part's share
@@ -3091,19 +3099,27 @@ def main():
     if plate is not None:                          # the plate rate: each strip's share kept within [lo, hi]
         if dirs is not None or lognormal is not None:
             raise SystemExit('--plate-rate is not implemented for transfer moves or the hierarchical prior')
-        eps_p = plate['eps']
-        T.add_limits(plate['rows'], eps_p * plate['lo'], eps_p * plate['hi'], eps_p * 1e-9,
-                     f'the plate rate ({plate["lo"]:g}-{plate["hi"]:g} of it in each strip)')
+        eps_p, lo_p, hi_p = plate['eps'], (-np.inf if plate['lo'] is None else plate['lo']), plate['hi']
+        T.add_limits(plate['rows'], eps_p * lo_p, eps_p * hi_p, eps_p * 1e-9,
+                     f'the plate rate ({plate["what"]} of it in each strip)')
         Us = T.init(X0 if scale is None else X0 / scale)
         share = (plate['A'] @ (Us if scale is None else Us * scale).T).T          # chains x strips
-        print('plate rate: the start\'s shares, strip by strip from SW to NE: '
-              + ' '.join(f'{v:.3f}' for v in share[0])
-              + ('' if np.allclose(share, share[0]) else f' (chain 1; {len(share)} chains differ)'))
-        out_p = (share < plate['lo']) | (share > plate['hi'])
+        j = int(np.argmax(share[0]))
+        print(f'plate rate: the start\'s shares {share[0].min():.3f} to {share[0].max():.3f} (the highest in strip '
+              f'{int(plate["k"][j]):+d})' + ('' if np.allclose(share, share[0]) else f' (chain 1; {len(share)} chains differ)'))
+        top = share.max(1)
+        if (top > hi_p).any() and lo_p <= 0:       # a start above HI: each chain's rates scaled down to it, which keeps
+            X0 = np.array(X0, np.float64)          # positivity, the MFD's monotonicity (a ratio) and any LO <= 0
+            for c in np.flatnonzero(top > hi_p):
+                X0[c] *= hi_p / top[c] * (1 - 1e-9)
+            Us = T.init(X0 if scale is None else X0 / scale)
+            share = (plate['A'] @ (Us if scale is None else Us * scale).T).T
+            print(f'plate rate: the start is above {hi_p:g} in {int((top > hi_p).sum())} of {len(top)} chains; their '
+                  f'rates scaled down by {(hi_p / top[top > hi_p]).min():.4f} at most')
+        out_p = (share < lo_p) | (share > hi_p)
         if out_p.any():
             raise SystemExit(f'plate rate: the start leaves {int(out_p.sum(1).max())} strips outside '
-                             f'{plate["lo"]:g}-{plate["hi"]:g}; start from a model inside the limits (--init FILE), or '
-                             'widen them')
+                             f'{plate["what"]}; start from a model inside the limits (--init FILE), or widen them')
         left = T.band_outside(T.residual(Us))
         if left.any():
             raise SystemExit(f'plate rate: the start leaves {left.max()} rows outside {T.band["what"]}')

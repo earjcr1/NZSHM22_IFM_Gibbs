@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """plate_rate.py -- the faults' slip across the Pacific-Australia plate boundary, cross-section by cross-section.
 
-    python plate_rate.py RUPTURE_SET [--run spikeslab] [--problem cru_clean.npz] [--limits 0.4,0.8] [--strips 8]
-                         [--slip-sum-region all]
+    python plate_rate.py RUPTURE_SET [--run spikeslab] [--problem cru_clean.npz] [--cross-sections all]
+                         [--limits 0.8] [--slip-sum-l0 8.5]
 
 The cross-sections are perpendicular to the plate motion everywhere: great circles through the Euler pole (POLE:
 Beavan et al., 2002, Pacific relative to Australia, 61.04 S, 184.19 E, 1.08 deg/Myr), each labelled by its bearing from
@@ -10,43 +10,34 @@ the pole. Two of them are the region's edges: END_SW (167.83 E, 44.53 S), where 
 Puysegur subduction zone beyond), and END_NE (174.4258 E, 41.67585 S), the midpoint of the step-over between the Needles
 Fault's NE end and the Wairarapa Fault's SW end (Wairarapa: Needles) in Cook Strait, beyond which the Hikurangi
 subduction zone takes up strain. Between them lie the Alpine Fault from George to Jacksons (10 of its 12 subsections)
-to Tophouse, the Wairau and Wairau 2 (its eastern subsection cut by the edge), and the whole Hope Fault. Two quantities
-use them, both built from the slip-rate rows (a subsection's slip rate is the sum over its ruptures of rate x average
-slip, the rupture set's average_slips.csv), so both are linear in the rupture rates.
+to Tophouse, the Wairau and Wairau 2 (its eastern subsection cut by the edge), and the whole Hope Fault.
 
-The plate rate (gibbs.py --plate-rate, a hard constraint): the region between the edges is cut into --strips strips
-of equal width (8: about 76 km each), and each strip's share of the plate rate is the average over its cross-sections:
-
-    share_k = sum over subsections i of w_ki x slip rate_i x p_i
-
-  w_ki: the fraction of strip k's cross-sections that cross subsection i (its trace's extent in bearing inside the
-        strip, over the strip's width), so a fault counts once however many of its subsections the strip holds, and a
-        subsection across a strip edge counts in both strips in proportion;
-  p_i:  the horizontal slip of the block on the Pacific side of subsection i relative to the block on the Australian
-        side (from its rake, dip and dip direction, Aki-Richards; the Pacific side is the one towards the pole), per unit
-        slip, projected on the local direction of plate motion and divided by the local plate rate: its share of the
-        plate rate per mm/yr of slip. Only the component along the plate motion is counted; the one across it (which
-        should add up to 0) is sensitive to the rakes and dips and is reported only.
+The strips (cross_sections(); the notebook's CROSS_SECTIONS, gibbs.py --cross-sections): the cross-sections are
+grouped into strips whose width is the subsections' mean trace length (8.5 km at 211,000 ruptures: 72 strips between
+the edges), with 'all' (the default) the same width on beyond the edges over the rest of New Zealand (166 strips that
+hold a subsection at 211,000 ruptures), with 'between' only between them (a subsection across an edge counts by its
+part inside). Two quantities use the same strips, both built from the slip-rate rows (a subsection's slip rate is the
+sum over its ruptures of rate x average slip, the rupture set's average_slips.csv), so both are linear in the rupture
+rates. Each subsection's part in a strip comes from its trace's extent in bearing from the pole inside the strip.
 
 The summed slip rates (gibbs.py --slip-sum, a soft term in the likelihood): along every cross-section, the model's slip
 rates added up should match the targets added up, within the uncertainty of that sum. Each subsection counts once
 in all: a cross-section crossing subsection i counts its slip rate with weight 1 / e_i, e_i its trace's extent in
 bearing, so that over all the cross-sections each subsection's weights add up to 1 (in strip k, w_ki = the fraction of
-its extent inside the strip). Integrated over the cross-sections, the term is
+its extent inside the strip; a subsection with no extent across the plate motion counts wholly in its midpoint's
+strip). Integrated over the cross-sections, the term is
 
     (1 / L0) x integral over s of ((model sum - target sum) / sigma(s))^2 ds
 
-taken over strips whose width is the subsections' mean trace length (8.5 km at 211,000 ruptures: 72 strips between
-the edges, the same width on beyond them over the rest of New Zealand with --slip-sum all, the default): each strip
-contributes (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2. Narrower strips only approximate the
-integral more closely (the term converges as they narrow; at 8.5 km within about 5% of its limit); L0 sets its
-weight (--slip-sum-l0, SLIP_SUM_L0 = 8.5 km by default, the strips' width, so that each strip's sum counts as one extra
-observation: 72 between the edges). For comparison, the target sums' decorrelation length along the plate motion
-between the edges is 120 km (the integral of their correlation at 211,000 ruptures), close to the span between the
-edges over the 5 sections of the Alpine and Wairau Faults there (George to Jacksons, Jacksons to Kaniere, Kaniere to
-Springs Junction, Springs Junction to Tophouse, Wairau; Wairau 2, cut by the NE edge, counted out), 122 km, which
-dominate the sums' uncertainty: an L0 of 120 km would count the regional sums' information once more (about 5
-measurements between the edges), 8.5 km about 14 times. sigma_k is the uncertainty of the strip's target
+taken over the strips: each contributes (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2. Narrower
+strips only approximate the integral more closely (the term converges as they narrow; at 8.5 km within about 5% of its
+limit); L0 sets its weight (--slip-sum-l0, SLIP_SUM_L0 = 8.5 km by default, the strips' width, so that each strip's
+sum counts as one extra observation: 72 between the edges). For comparison, the target sums' decorrelation length along
+the plate motion between the edges is 120 km (the integral of their correlation at 211,000 ruptures), close to the
+span between the edges over the 5 sections of the Alpine and Wairau Faults there (George to Jacksons, Jacksons to
+Kaniere, Kaniere to Springs Junction, Springs Junction to Tophouse, Wairau; Wairau 2, cut by the NE edge, counted out),
+122 km, which dominate the sums' uncertainty: an L0 of 120 km would count the regional sums' information once more
+(about 5 measurements between the edges), 8.5 km about 14 times. sigma_k is the uncertainty of the strip's target
 sum, with copies of one fault section's slip rate (its subsections, which share one rate and one uncertainty) fully
 correlated and sections independent: sigma_k^2 = sum over sections p of (sum over i in p of w_ki sigma_i)^2. Each
 subsection's sigma_i and target are the cleaned problem's own (sigma_i from its row's coefficients against the
@@ -54,12 +45,35 @@ rupture set's average slips: twice the CSV standard deviation in the NZSHM22 inp
 0). The subsections no rupture can reach (removed in cleaning) are left out of both sums. slip_sum_rows() builds the
 rows, sqrt(width / L0) / sigma_k x (sum_i w_ki model_i - target sum), one per strip.
 
-This script reports both (to plate_rate.txt beside --run's rate vectors, or --out): per plate-rate strip, the shares of
-the fault model's slip rates (fault_sections.geojson's SlipRate), of the targets (sect_slip_rates.csv, this logic-tree
-branch's scaled rates), of the best fit (nnls/nnls_vectors.npz beside --problem), of the posterior mean and, with kept
-draws, of every kept draw (their 2.5-97.5% range and the fraction inside --limits), with the faults that take most of
-it; and the summed slip rates' term, SW of the edges, between them and NE of them, for the best fit, the posterior mean
-and the kept draws, with the strips furthest from their target sums."""
+The plate rate (gibbs.py --plate-rate, a hard constraint): each strip's share of the plate rate, the average over its
+cross-sections of the faults' slip along the plate motion that each one crosses, over the plate rate:
+
+    share_k = sum over subsections i of v_ki x slip rate_i x p_i
+
+  v_ki: the fraction of strip k's cross-sections that cross subsection i (its trace's extent in bearing inside the
+        strip, over the strip's width), so a fault counts once however many of its subsections the strip holds, a
+        subsection across a strip edge counts in both strips in proportion, and one with no extent across the plate
+        motion (lying along a cross-section) not at all; every crustal subsection counts, those no rupture can reach
+        with a model slip rate of 0;
+  p_i:  the horizontal slip of the block on the Pacific side of subsection i relative to the block on the Australian
+        side (from its rake, dip and dip direction, Aki-Richards; the Pacific side is the one towards the pole), per unit
+        slip, projected on the local direction of plate motion and divided by the local plate rate: its share of the
+        plate rate per mm/yr of slip. Only the component along the plate motion is counted; the one across it (which
+        should add up to 0) is sensitive to the rakes and dips and is reported only.
+
+The faults can take up at most the whole plate rate (the subduction interfaces take up the rest, and the ruptures of
+these inputs scale the fault model's slip rates by 0.8), so 0.8 is an upper limit that needs no assumption beyond the
+inputs' own. A lower limit of 0 is not implied beyond the edges: some faults slip against the plate motion (p_i < 0 on
+533 of the 2,325 crustal subsections at 211,000 ruptures), and in the Bay of Plenty the targets' share is below 0
+(down to -0.10). plate_rows() builds the rows, one per strip holding a rupture.
+
+This script reports both (to plate_rate.txt beside --run's rate vectors, or --out; and plate_rate_strips.csv beside
+it, strip by strip): for the plate rate, the shares of the fault model's slip rates (fault_sections.geojson's
+SlipRate), of the targets (the cleaned problem's, this logic-tree branch's scaled rates), of the best fit
+(nnls/nnls_vectors.npz beside --problem), of the posterior mean and, with kept draws, of every kept draw (their 2.5-97.5%
+range and the fraction inside --limits), SW of the edges, between them and NE of them, with the strips that come
+closest to the upper limit and the faults that take most of their share; and the summed slip rates' term, in the same
+three parts, for the best fit, the posterior mean and the kept draws, with the strips furthest from their target sums."""
 import argparse
 import json
 import os
@@ -106,6 +120,24 @@ def plate_velocity(lon, lat, pole=POLE):
     return _velocity(lon, lat, pole) * (-1.0 if ve > 0 and vn > 0 else 1.0)
 
 
+def parse_limits(text):
+    """--plate-rate's and --limits' text, 'HI' (an upper limit only) or 'LO,HI', as (lo, hi), lo None without one."""
+    try:
+        v = [float(t) for t in str(text).split(',')]
+    except ValueError:
+        v = []
+    if len(v) == 1 and v[0] > 0:
+        return None, v[0]
+    if len(v) == 2 and v[0] < v[1] and v[1] > 0:
+        return v[0], v[1]
+    raise ValueError(f'{text!r}: give HI (0.8, say: at most that share of the plate rate in each strip) or LO,HI '
+                     '(LO < HI, HI above 0)')
+
+
+def describe_limits(lo, hi):
+    return f'at most {hi:g}' if lo is None else f'{lo:g}-{hi:g}'
+
+
 def _sections(rupture_dir):
     with open(os.path.join(rupture_dir, 'fault_sections.geojson')) as f:
         feats = json.load(f)['features']
@@ -129,52 +161,37 @@ def _position(pole, ends):
     return (lambda lon, lat: (wrap(bearing(plon, plat, lon, lat)) - s_sw) / (s_ne - s_sw)), float(span_km)
 
 
-def strips(rupture_dir, n_strips=8, pole=POLE, ends=(END_NE, END_SW)):
-    """The plate-rate strips between the two cross-sections and each subsection's part in them: dict(W, the strips x
-    subsections weights w_ki; p, each subsection's share of the plate rate per mm/yr of slip; q, the same for the
-    component across the plate motion; V, the local plate rate; edges, the strips' edges in position (0 at END_SW, 1 at
-    END_NE); width_km, their width halfway between the ends; sections, the geojson features; rate_cfm, the fault
-    model's slip rates, mm/yr; rate_target, the slip-rate targets, mm/yr, or None)."""
-    feats = _sections(rupture_dir)
-    u_of, span_km = _position(pole, ends)
+def _extent(ft, u_of):
+    """A subsection's trace segments' extents in position (lower, upper ends) and its midpoint's position."""
+    t = np.asarray(ft['geometry']['coordinates'], float)[:, :2]
+    u = u_of(t[:, 0], t[:, 1])
+    return (np.minimum(u[:-1], u[1:]), np.maximum(u[:-1], u[1:])), u_of(*(0.5 * (t[0] + t[-1])))
+
+
+def _overlap(seg, edges):
+    """Each strip's overlap (in position) with a subsection's trace segments."""
+    a, b = seg
+    return np.clip(np.minimum(b[None, :], edges[1:, None]) - np.maximum(a[None, :], edges[:-1, None]), 0.0, None).sum(1)
+
+
+def _projection(ft, pole):
+    """A subsection's share of the plate rate per mm/yr of slip along the plate motion (p) and across it (q), and the
+    local plate rate (V, mm/yr): see the module's description."""
+    pr = ft['properties']
+    t = np.asarray(ft['geometry']['coordinates'], float)[:, :2]
     plat, plon, _ = pole
-    edges = np.linspace(0.0, 1.0, n_strips + 1)
-    n = len(feats)
-    W = np.zeros((n_strips, n))
-    p, q, V = np.zeros(n), np.zeros(n), np.zeros(n)
-    for i, ft in enumerate(feats):
-        pr = ft['properties']
-        if pr.get('Partition', 'CRUSTAL') != 'CRUSTAL':
-            continue                                         # subduction interfaces: handled outside this workflow
-        t = np.asarray(ft['geometry']['coordinates'], float)[:, :2]
-        u = u_of(t[:, 0], t[:, 1])
-        a, b = np.minimum(u[:-1], u[1:]), np.maximum(u[:-1], u[1:])         # each trace segment's extent across
-        ov = np.clip(np.minimum(b[None, :], edges[1:, None]) - np.maximum(a[None, :], edges[:-1, None]), 0.0, None)
-        W[:, i] = ov.sum(1) / np.diff(edges)
-        if not W[:, i].any():
-            continue
-        dd, dip, rake = np.radians(pr['DipDir']), np.radians(pr['DipDeg']), np.radians(pr['Rake'])
-        st = dd - np.pi / 2                                  # strike, Aki-Richards (the hanging wall on the right)
-        shat, dhat = np.array([np.sin(st), np.cos(st)]), np.array([np.sin(dd), np.cos(dd)])
-        uh = np.cos(rake) * shat - np.sin(rake) * np.cos(dip) * dhat         # hanging wall relative to footwall
-        lon, lat = 0.5 * (t[0] + t[-1])
-        tp = np.radians(bearing(lon, lat, plon, plat))       # towards the pole: towards the Pacific side
-        that = np.array([np.sin(tp), np.cos(tp)])
-        if dhat @ that < 0:
-            uh = -uh                                         # the hanging wall on the Australian side
-        v = plate_velocity(lon, lat, pole)
-        V[i] = np.hypot(*v)
-        p[i] = uh @ v / V[i] ** 2
-        q[i] = uh @ that / V[i]
-    rate_target = None
-    f = os.path.join(rupture_dir, 'sect_slip_rates.csv')
-    if os.path.exists(f):
-        t = np.loadtxt(f, delimiter=',', skiprows=1)
-        if len(t) == n and np.array_equal(t[:, 0], np.arange(n)):
-            rate_target = t[:, 1] * 1e3
-    return dict(W=W, p=p, q=q, V=V, edges=edges, width_km=span_km / n_strips, sections=feats,
-                rate_cfm=np.array([ft['properties']['SlipRate'] for ft in feats], float), rate_target=rate_target,
-                pole=pole, ends=ends)
+    dd, dip, rake = np.radians(pr['DipDir']), np.radians(pr['DipDeg']), np.radians(pr['Rake'])
+    st = dd - np.pi / 2                                  # strike, Aki-Richards (the hanging wall on the right)
+    shat, dhat = np.array([np.sin(st), np.cos(st)]), np.array([np.sin(dd), np.cos(dd)])
+    uh = np.cos(rake) * shat - np.sin(rake) * np.cos(dip) * dhat         # hanging wall relative to footwall
+    lon, lat = 0.5 * (t[0] + t[-1])
+    tp = np.radians(bearing(lon, lat, plon, plat))       # towards the pole: towards the Pacific side
+    that = np.array([np.sin(tp), np.cos(tp)])
+    if dhat @ that < 0:
+        uh = -uh                                         # the hanging wall on the Australian side
+    v = plate_velocity(lon, lat, pole)
+    V = float(np.hypot(*v))
+    return float(uh @ v / V ** 2), float(uh @ that / V), V
 
 
 def rupture_matrix(rupture_dir, n_sections):
@@ -187,12 +204,6 @@ def rupture_matrix(rupture_dir, n_sections):
         raise ValueError(f'{rupture_dir}/average_slips.csv: rupture indices are not 0, 1, 2, ... in order')
     col = np.repeat(np.arange(len(ptr) - 1), np.diff(ptr))
     return sp.csr_matrix((D[col, 1], (idx, col)), shape=(n_sections, len(ptr) - 1))
-
-
-def share_matrix(st, S):
-    """Strips x ruptures: each rupture's contribution to each strip's share per unit rate (1/yr), A = W diag(p) S x 1000
-    (slip in mm)."""
-    return sp.csr_matrix(sp.csr_matrix(st['W'] * st['p'][None, :]) @ S * 1e3)
 
 
 def _slip_rows(P, slip_block):
@@ -225,25 +236,13 @@ def check_problem(P, S, slip_block='S'):
     return out
 
 
-def strip_rows(rupture_dir, P, n_strips=8, slip_block='S'):
-    """The rows gibbs.py keeps within --plate-rate's limits: A (strips x the cleaned problem's ruptures), each strip's
-    share of the plate rate per unit rate, and the strips (strips(), with S, the subsections x ruptures slip matrix)."""
-    st = strips(rupture_dir, n_strips)
-    S = rupture_matrix(rupture_dir, len(st['sections']))
-    if P['raw_shape'][1] != S.shape[1]:
-        raise ValueError(f'the inputs have {P["raw_shape"][1]} ruptures and the rupture set {S.shape[1]}')
-    check_problem(P, S, slip_block)
-    st['S'] = S
-    return sp.csr_matrix(share_matrix(st, S)[:, np.asarray(P['keep_cols'])]), st
-
-
-def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=(END_NE, END_SW),
-                  l0_km=SLIP_SUM_L0, S=None):
-    """The summed slip rates' rows (gibbs.py --slip-sum), in the likelihood beside the data: (A, b, info), A (strips x
-    the cleaned problem's ruptures) and b such that the term is ||A m - b||^2 / P['sigma']^2, each strip's
-    (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2 (see the module's description). region 'all': strips
-    over all of New Zealand; 'between': only the strips between the edges (a subsection across an edge counts by the
-    fraction of its extent inside); l0_km: L0, km."""
+def cross_sections(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=(END_NE, END_SW), S=None):
+    """The strips that the summed slip rates and the plate rate share (see the module's description), checked against
+    the cleaned problem's slip-rate rows: dict(feats, the geojson features; S, the subsections x ruptures slip matrix;
+    rows, sec, the slip-rate rows and their subsections; sig_i, tgt_i, each one's uncertainty and target, mm/yr; segs,
+    umid, length, each one's trace extents and midpoint in position and its trace length, km; N, the strips between the
+    edges; edges, every strip's edges in position (0 at END_SW, 1 at END_NE); k, each strip's number (< 0 SW of the
+    edges, >= N NE of them); keep, the strips of region; region, pole, ends, span_km, u_of)."""
     if region not in ('all', 'between'):
         raise ValueError(f'region {region!r}: use all or between')
     feats = _sections(rupture_dir)
@@ -261,9 +260,8 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
     segs, umid, length = [], np.zeros(len(sec)), np.zeros(len(sec))
     for j, i in enumerate(sec):
         t = np.asarray(feats[i]['geometry']['coordinates'], float)[:, :2]
-        u = u_of(t[:, 0], t[:, 1])
-        segs.append((np.minimum(u[:-1], u[1:]), np.maximum(u[:-1], u[1:])))
-        umid[j] = u_of(*(0.5 * (t[0] + t[-1])))
+        seg, umid[j] = _extent(feats[i], u_of)
+        segs.append(seg)
         dx = np.diff(t[:, 0]) * 111.32 * np.cos(np.radians(t[:, 1].mean()))
         length[j] = np.hypot(dx, np.diff(t[:, 1]) * 110.574).sum()
     N = max(1, int(round(span_km / length.mean())))          # strips between the edges: the mean trace length wide
@@ -274,20 +272,41 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
     else:
         k0, k1 = 0, N
     k0, k1 = min(k0, 0), max(k1, N)
-    edges = np.arange(k0, k1 + 1) / N
+    kidx = np.arange(k0, k1)                                 # strip numbers: < 0 SW of the edges, >= N NE of them
+    return dict(feats=feats, S=S, rows=rows, sec=sec, sig_i=sig_i, tgt_i=tgt_i, segs=segs, umid=umid, length=length,
+                N=N, edges=np.arange(k0, k1 + 1) / N, k=kidx,
+                keep=np.ones(len(kidx), bool) if region == 'all' else (kidx >= 0) & (kidx < N),
+                region=region, pole=pole, ends=ends, span_km=span_km, u_of=u_of)
+
+
+def _strip_lonlat(W, feats, idx):
+    lon = np.array([np.mean(np.asarray(feats[i]['geometry']['coordinates'], float)[:, 0]) for i in idx])
+    lat = np.array([np.mean(np.asarray(feats[i]['geometry']['coordinates'], float)[:, 1]) for i in idx])
+    cw = np.maximum(np.abs(W).sum(1), 1e-300)
+    return (np.abs(W) @ lon) / cw, (np.abs(W) @ lat) / cw
+
+
+def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=(END_NE, END_SW),
+                  l0_km=SLIP_SUM_L0, S=None, cs=None):
+    """The summed slip rates' rows (gibbs.py --slip-sum), in the likelihood beside the data: (A, b, info), A (strips x
+    the cleaned problem's ruptures) and b such that the term is ||A m - b||^2 / P['sigma']^2, each strip's
+    (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2 (see the module's description). region 'all': strips
+    over all of New Zealand; 'between': only the strips between the edges (a subsection across an edge counts by the
+    fraction of its extent inside); l0_km: L0, km; cs: cross_sections()'s strips, if already made (for region)."""
+    if cs is None:
+        cs = cross_sections(rupture_dir, P, region, slip_block, pole, ends, S)
+    feats, S, sec, sig_i, tgt_i, segs, umid = (cs[k] for k in ('feats', 'S', 'sec', 'sig_i', 'tgt_i', 'segs', 'umid'))
+    N, edges, kidx, span_km = cs['N'], cs['edges'], cs['k'], cs['span_km']
     W = np.zeros((len(edges) - 1, len(sec)))
     for j, (a, b) in enumerate(segs):
         e = (b - a).sum()
         if e > 1e-12:                                        # the fraction of the subsection's extent in each strip
-            W[:, j] = np.clip(np.minimum(b[None, :], edges[1:, None]) - np.maximum(a[None, :], edges[:-1, None]),
-                              0.0, None).sum(1) / e
+            W[:, j] = _overlap((a, b), edges) / e
         elif edges[0] <= umid[j] < edges[-1]:                # no extent across the plate motion: its midpoint's strip
             W[int(np.searchsorted(edges, umid[j], side='right')) - 1, j] = 1.0
-    if region == 'all' and not np.allclose(W.sum(0), 1.0, atol=1e-9):
+    if cs['region'] == 'all' and not np.allclose(W.sum(0), 1.0, atol=1e-9):
         raise ValueError('the strips do not cover every subsection once')        # cannot happen: a check
-    kidx = np.arange(k0, k1)                                 # strip numbers: < 0 SW of the edges, >= N NE of them
-    if region == 'between':
-        W, kidx = W[(kidx >= 0) & (kidx < N)], kidx[(kidx >= 0) & (kidx < N)]
+    W, kidx = W[cs['keep']], kidx[cs['keep']]
     par = np.array([feats[i]['properties']['ParentID'] for i in sec])
     upar, pinv = np.unique(par, return_inverse=True)
     M = sp.csr_matrix((np.ones(len(sec)), (pinv, np.arange(len(sec)))), shape=(len(upar), len(sec)))
@@ -304,15 +323,54 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
     Sk = sp.csr_matrix(S[:, np.asarray(P['keep_cols'])])[sec] * 1e3        # subsections x ruptures, mm per unit rate
     A = sp.csr_matrix(sp.diags(c) @ sp.csr_matrix(W) @ Sk)
     A.eliminate_zeros()
-    lon = np.array([np.mean(np.asarray(feats[i]['geometry']['coordinates'], float)[:, 0]) for i in sec])
-    lat = np.array([np.mean(np.asarray(feats[i]['geometry']['coordinates'], float)[:, 1]) for i in sec])
-    cw = np.maximum(W.sum(1), 1e-300)
+    lon, lat = _strip_lonlat(W, feats, sec)
     info = dict(N=N, k=kidx, W=W, sec=sec, target=T, sigma=sig_k, scale=c, weight=wt,
                 width_km=span_km / N, L0_km=L0_km, span_km=span_km,
-                mean_length_km=float(length.mean()),
-                region=region, ends=ends, pole=pole, lon=(W @ lon) / cw, lat=(W @ lat) / cw, subsections=W.sum(1),
+                mean_length_km=float(cs['length'].mean()),
+                region=cs['region'], ends=cs['ends'], pole=cs['pole'], lon=lon, lat=lat, subsections=W.sum(1),
                 sig_i=sig_i, tgt_i=tgt_i, n_parents=len(upar))
     return A, c * T, info
+
+
+def plate_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=(END_NE, END_SW), S=None, cs=None):
+    """The plate rate's rows (gibbs.py --plate-rate), kept within limits: (A, info), A (strips holding a rupture x the
+    cleaned problem's ruptures), each strip's share of the plate rate per unit rate (see the module's description), on
+    cross_sections()'s strips (cs, if already made, for region). info: dict(N; k, each row's strip number; V, the strips
+    x subsections weights v_ki; p, q, Vp, each subsection's shares per mm/yr of slip along and across the plate motion
+    and its local plate rate; rate_cfm, the fault model's slip rates; rate_target, the targets, mm/yr (0 where the
+    problem has none); empty, the strips of region with no rupture, left out; width_km, span_km, region, pole, ends,
+    lon, lat, sections)."""
+    if cs is None:
+        cs = cross_sections(rupture_dir, P, region, slip_block, pole, ends, S)
+    feats, S, edges = cs['feats'], cs['S'], cs['edges']
+    n = len(feats)
+    Vw = np.zeros((len(edges) - 1, n))
+    p, q, Vp = np.zeros(n), np.zeros(n), np.zeros(n)
+    for i, ft in enumerate(feats):
+        if ft['properties'].get('Partition', 'CRUSTAL') != 'CRUSTAL':
+            continue                                         # subduction interfaces: handled outside this workflow
+        seg, _ = _extent(ft, cs['u_of'])
+        Vw[:, i] = _overlap(seg, edges) * cs['N']            # over the strip's width, 1 / N in position
+        if Vw[:, i].any():
+            p[i], q[i], Vp[i] = _projection(ft, cs['pole'])
+    Vw, kidx = Vw[cs['keep']], cs['k'][cs['keep']]
+    A = sp.csr_matrix(sp.csr_matrix(Vw * p[None, :]) @ S * 1e3)[:, np.asarray(P['keep_cols'])]
+    A = sp.csr_matrix(A)
+    A.eliminate_zeros()
+    full = np.diff(A.indptr) > 0
+    rate_target = np.zeros(n)
+    rate_target[cs['sec']] = cs['tgt_i']
+    lon, lat = _strip_lonlat(Vw, feats, np.arange(n))
+    info = dict(N=cs['N'], k=kidx[full], V=Vw[full], p=p, q=q, Vp=Vp, sections=feats, empty=kidx[~full],
+                rate_cfm=np.array([ft['properties']['SlipRate'] for ft in feats], float), rate_target=rate_target,
+                width_km=cs['span_km'] / cs['N'], span_km=cs['span_km'], region=cs['region'], pole=cs['pole'],
+                ends=cs['ends'], lon=lon[full], lat=lat[full], n_sub=int((Vw[full] > 0).any(0).sum()))
+    return sp.csr_matrix(A[full]), info
+
+
+def _parts(k, N):
+    return {nm: m for nm, m in (('SW of the edges', k < 0), ('between the edges', (k >= 0) & (k < N)),
+                                ('NE of the edges', k >= N)) if m.any()}
 
 
 def describe_slip_sum(info, nnz=None):
@@ -328,23 +386,26 @@ def describe_slip_sum(info, nnz=None):
             f'subsections in {info["n_parents"]} sections' + (f'; {nnz:,} nonzeros' if nnz is not None else ''))
 
 
-def contributors(st, k, rates, top=4):
-    """The parent faults that take most of strip k's share, with their parts."""
+def describe_plate(info):
+    """A line on the plate rate's strips."""
+    k, N = info['k'], info['N']
+    where = (f'{len(k)} strips over all of New Zealand ({int((k < 0).sum())} SW of the edges, {int(((k >= 0) & (k < N)).sum())} '
+             f'between them, {int((k >= N).sum())} NE of them)' if info['region'] == 'all' else
+             f'{len(k)} strips between the edges')
+    inside = info['V'].any(0)
+    return (f'{where}, {info["width_km"]:.1f} km wide (the summed slip rates\' strips), perpendicular to the plate motion '
+            f'(Euler pole {-info["pole"][0]:.2f} S {info["pole"][1]:.2f} E, {info["pole"][2]:g} deg/Myr; '
+            f'{info["Vp"][inside].min():.1f}-{info["Vp"][inside].max():.1f} mm/yr): {int(inside.sum())} subsections'
+            + (f'; {len(info["empty"])} strips with no rupture left out' if len(info['empty']) else ''))
+
+
+def contributors(info, j, rates, top=4):
+    """The parent faults that take most of row j's share, with their parts."""
     out = {}
-    for i in np.flatnonzero(st['W'][k]):
-        name = st['sections'][i]['properties'].get('ParentName', str(i)).split(':')[0]
-        out[name] = out.get(name, 0.0) + st['W'][k, i] * rates[i] * st['p'][i]
+    for i in np.flatnonzero(info['V'][j]):
+        name = info['sections'][i]['properties'].get('ParentName', str(i)).split(':')[0]
+        out[name] = out.get(name, 0.0) + info['V'][j, i] * rates[i] * info['p'][i]
     return ', '.join(f'{a} {b:.2f}' for a, b in sorted(out.items(), key=lambda t: -abs(t[1]))[:top])
-
-
-def describe(st):
-    """A line on the plate-rate strips."""
-    inside = st['W'].any(0)
-    return (f'{st["W"].shape[0]} strips of {st["width_km"]:.0f} km between the cross-sections through '
-            f'{st["ends"][1][0]:.2f} E {-st["ends"][1][1]:.2f} S and {st["ends"][0][0]:.4f} E {-st["ends"][0][1]:.4f} S, '
-            f'perpendicular to the plate motion (Euler pole {-st["pole"][0]:.2f} S {st["pole"][1]:.2f} E, '
-            f'{st["pole"][2]:g} deg/Myr; {st["V"][inside].min():.1f}-{st["V"][inside].max():.1f} mm/yr): '
-            f'{int(inside.sum())} subsections')
 
 
 def main():
@@ -353,11 +414,9 @@ def main():
     ap.add_argument('--run', default=None, help='a results folder (spikeslab/) with rate_vectors.npz: the posterior mean '
                     'and kept draws')
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem (its nnls/ best fit is reported too)')
-    ap.add_argument('--strips', type=int, default=8, help='plate-rate strips between the two cross-sections (as '
-                    'gibbs.py\'s --plate-strips)')
-    ap.add_argument('--limits', default=None, help='LO,HI: the limits gibbs.py --plate-rate kept (counted against)')
-    ap.add_argument('--slip-sum-region', default='all', choices=['all', 'between'],
-                    help='the summed slip rates\' strips reported (as gibbs.py --slip-sum)')
+    ap.add_argument('--cross-sections', default='all', choices=['all', 'between'],
+                    help='the strips reported, for both quantities (as gibbs.py --cross-sections)')
+    ap.add_argument('--limits', default=None, help='HI or LO,HI: the limits gibbs.py --plate-rate kept (counted against)')
     ap.add_argument('--slip-sum-l0', type=float, default=SLIP_SUM_L0, metavar='KM',
                     help=f'the summed slip rates\' L0 in km (as gibbs.py --slip-sum-l0; default {SLIP_SUM_L0:g})')
     ap.add_argument('--slip-block', default='S')
@@ -367,73 +426,95 @@ def main():
     rd = find_rupture_set(a.ruptures, search=False)
     if rd is None:
         raise SystemExit(f'{a.ruptures}: no OpenSHA rupture set (indices.csv, or ruptures/indices.csv)')
+    if not os.path.exists(a.problem):
+        raise SystemExit(f'{a.problem}: no cleaned problem (the strips come from its slip-rate rows)')
+    try:
+        lim = parse_limits(a.limits) if a.limits else None
+    except ValueError as e:
+        raise SystemExit(f'--limits: {e}')
     out = a.out or os.path.join(a.run or os.path.dirname(os.path.abspath(a.problem)), 'plate_rate.txt')
     report_to(out)
-    st = strips(rd, a.strips)
-    S = rupture_matrix(rd, len(st['sections']))
-    A = share_matrix(st, S)
+    P = load_problem(a.problem)
+    cs = cross_sections(rd, P, a.cross_sections, a.slip_block)
+    kc = np.asarray(P['keep_cols'])
     vecs, Kd = {}, None
-    P = load_problem(a.problem) if os.path.exists(a.problem) else None
-    if P is not None:
-        bf = os.path.join(os.path.dirname(os.path.abspath(a.problem)), 'nnls', 'nnls_vectors.npz')
-        if os.path.exists(bf):
-            with np.load(bf) as z:
-                vecs['best fit'] = np.asarray(z['mean'], float)
+    bf = os.path.join(os.path.dirname(os.path.abspath(a.problem)), 'nnls', 'nnls_vectors.npz')
+    if os.path.exists(bf):
+        with np.load(bf) as z:
+            vecs['best fit'] = np.asarray(z['mean'], float)
     if a.run:
         with np.load(os.path.join(a.run, 'rate_vectors.npz')) as z:
             vecs['posterior mean'] = np.asarray(z['mean'], float)
             Kd, _ = kept_draws(z)
-    print('plate rate: the share of the relative plate motion that the faults take up, strip by strip from SW to NE')
-    print('   ' + describe(st))
-    lim = tuple(float(v) for v in a.limits.split(',')) if a.limits else None
-    cols = {'fault model': st['W'] @ (st['rate_cfm'] * st['p'])}
-    if st['rate_target'] is not None:
-        cols['targets'] = st['W'] @ (st['rate_target'] * st['p'])
-    if P is not None:
-        check_problem(P, S, a.slip_block)
-    cols.update({k: A @ v for k, v in vecs.items()})
-    K = None
-    if Kd is not None:
-        K = np.vstack([(A @ np.asarray(Kd[c:c + 250], np.float64).T).T for c in range(0, len(Kd), 250)])  # draws x strips
-    print('   across the plate motion (should add up to 0), the fault model: '
-          + ' '.join(f'{v:+.2f}' for v in st['W'] @ (st['rate_cfm'] * st['q'])))
-    head = '   strip ' + ''.join(f'{c:>16s}' for c in cols)
-    if K is not None:
-        head += f'{"kept draws, 2.5-97.5%":>26s}' + (f'{"inside":>9s}' if lim else '')
-    print(head + '   main contributors (fault model)')
-    for k in range(a.strips):
-        line = f'   {k + 1:5d} ' + ''.join(f'{v[k]:16.3f}' for v in cols.values())
-        if K is not None:
-            lo, hi = np.percentile(K[:, k], [2.5, 97.5])
-            line += f'{lo:16.3f} - {hi:7.3f}'
-            if lim:
-                line += f'{100 * np.mean((K[:, k] >= lim[0] - 1e-9) & (K[:, k] <= lim[1] + 1e-9)):8.1f}%'
-        print(line + '   ' + contributors(st, k, st['rate_cfm']))
-    if K is not None:
-        print(f'   kept draws: {len(K)}' + (f'; limits {lim[0]:g}-{lim[1]:g}: all strips inside in '
-                                           f'{100 * np.mean(np.all((K >= lim[0] - 1e-9) & (K <= lim[1] + 1e-9), 1)):.1f}% '
-                                           'of them' if lim else ''))
-    elif a.run:
-        print('   no kept draws in the rate vectors (REPRESENTATIVES = 0): the posterior mean only')
-    if P is None:
-        print('\nsummed slip rates: not reported (no cleaned problem, --problem)')
-        return
-    # the summed slip rates' term
-    As, bs, info = slip_sum_rows(rd, P, a.slip_sum_region, a.slip_block, l0_km=a.slip_sum_l0, S=S)
-    kc = np.asarray(P['keep_cols'])
-    sg = float(P['sigma'])
+    chunks = lambda f: np.vstack([f(np.asarray(Kd[c:c + 250], np.float64)[:, kc]) for c in range(0, len(Kd), 250)])
+
+    # the plate rate
+    A, info = plate_rows(rd, P, a.cross_sections, a.slip_block, cs=cs)
     k, N = info['k'], info['N']
-    parts = {'SW of the edges': k < 0, 'between the edges': (k >= 0) & (k < N), 'NE of the edges': k >= N}
-    parts = {nm: m for nm, m in parts.items() if m.any()}
+    print('plate rate: the share of the relative plate motion that the faults take up, strip by strip')
+    print('   ' + describe_plate(info))
+    cols = {'fault model': info['V'] @ (info['rate_cfm'] * info['p']),
+            'targets': info['V'] @ (info['rate_target'] * info['p'])}
+    cols.update({nm: A @ v[kc] for nm, v in vecs.items()})
+    K = chunks(lambda X: (A @ X.T).T) if Kd is not None else None                 # draws x strips
+    inside = (lambda X: (X >= (-np.inf if lim[0] is None else lim[0]) - 1e-9) & (X <= lim[1] + 1e-9)) if lim else None
+    across = info['V'] @ (info['rate_cfm'] * info['q'])
+    print('   across the plate motion (should add up to 0), the fault model: '
+          + ', '.join(f'{nm} {np.median(across[m]):+.2f} (median; {across[m].min():+.2f} to {across[m].max():+.2f})'
+                      for nm, m in _parts(k, N).items()))
+    rng = lambda lo, hi: f'{lo:+.3f} to {hi:+.3f}'
+    head = '   ' + f'{"(ranges over the strips)":22s}{"strips":>7s}' + ''.join(f'{c:>24s}' for c in cols)
+    if K is not None:
+        head += f'{"kept draws, 2.5-97.5%":>24s}' + (f'{"all strips inside":>20s}' if lim else '')
+    print(head)
+    for nm, m in _parts(k, N).items():
+        line = f'   {nm:22s}{int(m.sum()):7d}' + ''.join(f'{rng(v[m].min(), v[m].max()):>24s}' for v in cols.values())
+        if K is not None:
+            line += f'{rng(np.percentile(K[:, m], 2.5, 0).min(), np.percentile(K[:, m], 97.5, 0).max()):>24s}'
+            if lim:
+                line += f'{100 * np.mean(np.all(inside(K[:, m]), 1)):10.1f}% of draws'
+        print(line)
+    if K is not None and lim:
+        print(f'   kept draws: {len(K)}; limits {describe_limits(*lim)}: all strips inside in '
+              f'{100 * np.mean(np.all(inside(K), 1)):.1f}% of them')
+    elif K is None and a.run:
+        print('   no kept draws in the rate vectors (REPRESENTATIVES = 0): the posterior mean only')
+    if (cols['targets'] < 0).any():
+        print(f'   {int((cols["targets"] < 0).sum())} strips where the targets\' share is below 0 (down to '
+              f'{cols["targets"].min():+.3f}, around {info["lon"][np.argmin(cols["targets"])]:.2f} E '
+              f'{-info["lat"][np.argmin(cols["targets"])]:.2f} S): faults slipping against the plate motion')
+    top = K if K is not None else cols.get('posterior mean', cols.get('best fit', cols['targets']))[None, :]
+    hi_k = np.percentile(top, 97.5, 0) if K is not None else top[0]
+    print('   the strips whose share comes closest to the plate rate (' + ('kept draws\' 97.5%' if K is not None else
+          'posterior mean' if 'posterior mean' in cols else 'best fit' if 'best fit' in cols else 'targets') + '):')
+    for j in np.argsort(-hi_k)[:8]:
+        print(f'      strip {int(k[j]):+4d} ({info["lon"][j]:.2f} E, {-info["lat"][j]:.2f} S): '
+              + ', '.join(f'{c} {v[j]:.3f}' for c, v in cols.items())
+              + (f', kept draws {np.percentile(K[:, j], 2.5):.3f}-{np.percentile(K[:, j], 97.5):.3f}' if K is not None else '')
+              + f'; {contributors(info, j, info["rate_cfm"])} (fault model)')
+    csv = os.path.join(os.path.dirname(os.path.abspath(out)), 'plate_rate_strips.csv')
+    names = ['strip', 'lon', 'lat'] + [c.replace(' ', '_') for c in cols]
+    tab = [k, info['lon'], info['lat']] + list(cols.values())
+    if K is not None:
+        names += ['draws_2.5', 'draws_97.5'] + (['draws_inside_pct'] if lim else [])
+        tab += [np.percentile(K, 2.5, 0), np.percentile(K, 97.5, 0)] + ([100 * inside(K).mean(0)] if lim else [])
+    np.savetxt(csv, np.column_stack(tab), delimiter=',', header=','.join(names), comments='',
+               fmt=['%d', '%.4f', '%.4f'] + ['%.5f'] * (len(tab) - 3))
+    print(f'   strip by strip: {csv}')
+
+    # the summed slip rates' term
+    As, bs, sinfo = slip_sum_rows(rd, P, a.cross_sections, a.slip_block, l0_km=a.slip_sum_l0, cs=cs)
+    sg = float(P['sigma'])
+    k, N = sinfo['k'], sinfo['N']
+    parts = _parts(k, N)
     print('\nsummed slip rates: along each cross-section, the model\'s slip rates added up against the targets added up '
           '(the soft term gibbs.py --slip-sum adds to the misfit)')
-    print('   ' + describe_slip_sum(info))
-    print(f'   if the model matched the truth, the term would be near {sum(info["weight"] * m.sum() for m in parts.values()):.1f} '
+    print('   ' + describe_slip_sum(sinfo))
+    print(f'   if the model matched the truth, the term would be near {sum(sinfo["weight"] * m.sum() for m in parts.values()):.1f} '
           '(each strip weighted width / L0)')
     rows = {nm: ((As @ v[kc] - bs) / sg) ** 2 for nm, v in vecs.items()}
     if Kd is not None:
-        Rk = np.vstack([((As @ np.asarray(Kd[c:c + 250], np.float64)[:, kc].T).T - bs) / sg for c in range(0, len(Kd), 250)])
-        rows['kept draws'] = Rk ** 2
+        rows['kept draws'] = chunks(lambda X: ((As @ X.T).T - bs) / sg) ** 2
     print('   ' + f'{"":16s}' + ''.join(f'{nm:>26s}' for nm in ['all'] + list(parts)))
     for nm, q in rows.items():
         if q.ndim == 1:
@@ -445,14 +526,14 @@ def main():
     v = vecs.get('posterior mean', vecs.get('best fit'))
     if v is not None:
         nm = 'posterior mean' if 'posterior mean' in vecs else 'best fit'
-        z = (As @ v[kc] - bs) / sg / np.sqrt(info['weight'])           # (model sum - target sum) / sigma_k
+        z = (As @ v[kc] - bs) / sg / np.sqrt(sinfo['weight'])          # (model sum - target sum) / sigma_k
         sel = np.argsort(-np.abs(z))[:8]
         print(f'   the strips furthest from their target sums ({nm}; z = (model sum - target sum) / sigma_k; '
               f'{int((np.abs(z) > 2).sum())} of {len(z)} beyond 2):')
         for j in sel:
-            print(f'      strip {int(k[j]):+4d} ({info["lon"][j]:.2f} E, {-info["lat"][j]:.2f} S; '
-                  f'{info["subsections"][j]:.1f} subsections): target sum {info["target"][j]:7.2f} +- {info["sigma"][j]:6.2f} '
-                  f'mm/yr, model {info["target"][j] + z[j] * info["sigma"][j]:7.2f} (z {z[j]:+.2f})')
+            print(f'      strip {int(k[j]):+4d} ({sinfo["lon"][j]:.2f} E, {-sinfo["lat"][j]:.2f} S; '
+                  f'{sinfo["subsections"][j]:.1f} subsections): target sum {sinfo["target"][j]:7.2f} +- {sinfo["sigma"][j]:6.2f} '
+                  f'mm/yr, model {sinfo["target"][j] + z[j] * sinfo["sigma"][j]:7.2f} (z {z[j]:+.2f})')
 
 
 if __name__ == '__main__':

@@ -153,26 +153,32 @@ check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and '
       'gibbs.py\'s default too), recorded and passed to gibbs.py --mfd-monotonic --mfd-rise-sd, with its '
       'exact test in the band\'s self-test')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
-      and any("args += ['--plate-rate', f'{PLATE_RATE[0]:g},{PLATE_RATE[1]:g}']" in c
-              and "args += ['--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
-      and "'--plate-rate'" in src['gibbs.py'] and 'from plate_rate import describe, strip_rows' in src['gibbs.py']
+      and any("args += ['--plate-rate', PLATE_LIMITS]" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and "'--plate-rate'" in src['gibbs.py']
+      and 'from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows' in src['gibbs.py']
       and "'the plate rate')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0]
-      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c for _, c in cells)
-      and '\ndef check_problem(' in src['plate_rate.py'],
+      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "['--limits', PLATE_LIMITS]" in c for _, c in cells)
+      and '\ndef check_problem(' in src['plate_rate.py'] and '\ndef plate_rows(' in src['plate_rate.py'],
       'notebook PLATE_RATE = None (not imposed by default), recorded and passed to gibbs.py --plate-rate with the rupture set '
-      '(rows from plate_rate.py, checked against the slip-rate rows), with its exact test in the band\'s self-test; '
-      'plate_rate.txt reported for every run with a rupture set')
-check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ["'all'"] and 'slip_sum' in _cfg_keys
-      and any('if PLATE_RATE or SLIP_SUM:' in c for _, c in cells)
-      and "'--slip-sum', default=None, choices=['all', 'between']" in src['gibbs.py']
+      '(rows from plate_rate.py on the CROSS_SECTIONS strips, checked against the slip-rate rows), with its exact test in '
+      'the band\'s self-test; plate_rate.txt reported for every run with a rupture set')
+check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
+      and any('if PLATE_RATE is not None or SLIP_SUM:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
+      and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
+      and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
+      and '\ndef cross_sections(' in src['plate_rate.py'],
+      'notebook CROSS_SECTIONS = \'all\' (gibbs.py\'s and plate_rate.py\'s default too), recorded and passed with '
+      'SLIP_SUM or PLATE_RATE: the strips both use (plate_rate.py\'s cross_sections)')
+check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_sum' in _cfg_keys
+      and "'--slip-sum', action='store_true'" in src['gibbs.py']
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
       and "summed slip rates\\' term recorded apart" in src['gibbs.py'].split('\ndef selftest_balance')[1].split('\ndef ')[0]
       and '\ndef slip_sum_rows(' in src['plate_rate.py'] and 'SLIP_SUM_L0 = 8.5 ' in src['plate_rate.py']
       and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 8.5
       and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['8.5'] and 'slip_sum_l0' in _cfg_keys
-      and any("args += ['--slip-sum', SLIP_SUM, '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
-      and any("'--slip-sum-region', SLIP_SUM or 'all', '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
-      'notebook SLIP_SUM = \'all\' (added by default) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
+      and any("args += ['--slip-sum', '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
+      and any("'--cross-sections', CROSS_SECTIONS, '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
+      'notebook SLIP_SUM = True (added by default) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
@@ -299,7 +305,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'BAND', 'BAND_SOFT', 'MFD_MONOTONIC',
-                  'PLATE_RATE', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
+                  'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
 _figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])

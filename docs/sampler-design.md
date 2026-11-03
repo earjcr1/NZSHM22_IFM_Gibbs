@@ -63,7 +63,8 @@ first given.
 - **Constraint rows (early November 2026; optional).** `--mfd-monotonic` (`MFD_MONOTONIC`) and `--plate-rate`
   (`PLATE_RATE`) add rows after the likelihood's, ε × the quantity kept with d = 0 and ε = 1e-9, held within limits by
   the band's machinery: no magnitude bin's total above its lower neighbour's where the targets do not rise, and each
-  South Island strip's share of the Pacific–Australia plate rate within limits. Their χ² is negligible, so the kernel
+  strip's share of the Pacific–Australia plate rate within limits (at most 0.8 if imposed), on the summed slip rates'
+  8.5-km strips (`CROSS_SECTIONS`). Their χ² is negligible, so the kernel
   and the likelihood are unchanged. See REPORT.md, "A monotonic MFD" and "The plate rate". `--slip-sum` (`SLIP_SUM`)
   instead adds soft rows to the likelihood, after the balance term's: along every cross-section perpendicular to the
   plate motion, the model's slip rates added up against the targets added up, on by default, weighted as one extra

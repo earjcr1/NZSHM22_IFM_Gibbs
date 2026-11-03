@@ -103,8 +103,14 @@ def main():
     positive = band == 'positive'                      # BAND = 'positive': every prediction above zero
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
-    plate = cfg.get('plate_rate')
-    ssum = cfg.get('slip_sum')
+    plate = cfg.get('plate_rate')                      # None, an upper limit, or (low, high)
+    plate = (None if plate is None else (None, float(plate)) if isinstance(plate, (int, float))
+             else (float(plate[0]), float(plate[1])))
+    ssum = cfg.get('slip_sum')                         # True or False ('all' or 'between' in runs before CROSS_SECTIONS)
+    xsec = cfg.get('cross_sections') or (ssum if isinstance(ssum, str) else 'all')
+    xsec_txt = 'over all of New Zealand' if xsec == 'all' else 'between the Alpine and Cook Strait edges'
+    plate_txt = None if plate is None else (f'at most {plate[1]:g}' if plate[0] is None else
+                                            f'between {plate[0]:g} and {plate[1]:g}')
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
     dtm = cfg.get('down_the_middle')
     floor = cfg.get('floor', -10)
@@ -370,13 +376,13 @@ def main():
             'do not rise' + (f', and where they rise, the rise capped {cfg.get("mfd_rise_sd", 0.89):g} sd above the target '
                              'difference' if cfg.get('mfd_rise_sd', 0.89) >= 0 else '')
             + ' (a hard constraint)') if mono else 'not imposed'],
-           ['PLATE_RATE', 'None' if not plate else f'({plate[0]:g}, {plate[1]:g})',
-            f'each South Island strip\u2019s share of the plate rate within {plate[0]:g}\u2013{plate[1]:g} (a hard '
-            'constraint)' if plate else 'not imposed'],
-           ['SLIP_SUM', repr(ssum) if ssum else 'None',
-            ('the slip rates summed along each cross-section perpendicular to the plate motion, against the targets\u2019 '
-             'sums (a soft term; ' + ('all of New Zealand' if ssum == 'all' else 'between the edges') + ')') if ssum
-            else 'not added'],
+           ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
+            f'and PLATE_RATE use, 8.5 km wide {xsec_txt}'],
+           ['SLIP_SUM', str(bool(ssum)),
+            'the slip rates summed along each cross-section perpendicular to the plate motion, against the targets\u2019 '
+            'sums (a soft term)' if ssum else 'not added'],
+           ['PLATE_RATE', 'None' if not plate else f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
+            f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint)' if plate else 'not imposed'],
            ['DOWN_THE_MIDDLE', str(dtm), dtm_txt],
            ['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
            ['PRESET', repr(preset), f'{nrep} replicates × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
@@ -450,12 +456,12 @@ def main():
             'limit: a hard constraint.' if positive else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model.' if mono else '')
-         + (f' <b>The plate rate.</b> In each of the strips between the cross-sections where the Hope and Alpine Faults '
-            'go offshore, the South Island\u2019s crustal faults must take up between '
-            f'{plate[0]:g} and {plate[1]:g} of the Pacific\u2013Australia plate rate, each fault\u2019s slip vector '
-            f'projected on the local plate motion and added up across the strip ({tt("plate_rate.txt")}).' if plate else '')
+         + (f' <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
+            f'{xsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
+            'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '
+            f'cross-sections ({tt("plate_rate.txt")}).' if plate else '')
          + (' <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '
-            'motion, the model\u2019s slip rates added up should match the targets added up, within that sum\u2019s '
+            f'motion {xsec_txt}, the model\u2019s slip rates added up should match the targets added up, within that sum\u2019s '
             'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 8.5):g}' + ' km of the '
             'plate boundary counts as one measurement, and it is recorded apart from χ² (' + tt('plate_rate.txt') + ').'
             if ssum else ''))

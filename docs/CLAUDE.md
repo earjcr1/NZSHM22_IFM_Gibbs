@@ -100,17 +100,22 @@ on by default since early November 2026): no bin's total above its lower neighbo
 since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
 times the lower total; --mfd-rise-sd, 0.89 by default, command line only), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
-selftest_band. --plate-rate LO,HI --rupture-set DIR (PLATE_RATE, off by default; (0.4, 0.8) if imposed): each of
---plate-strips (8) strips' share of the Pacific-Australia plate rate within LO-HI, one constraint row per strip after
-the monotonic ones (plate_rate.py's strip_rows: cross-sections are great circles through the Beavan et al. 2002 pole,
-between END_SW, where the Alpine Fault goes offshore, and END_NE, the Needles / Wairarapa: Needles step-over in Cook
-Strait; each subsection weighted by the fraction of the strip's cross-sections crossing it, its slip vector projected
-on the local plate motion over the local rate; checked against the slip-rate rows; the start must be inside, no
-repair); exact test in selftest_band. --slip-sum all|between --rupture-set DIR (SLIP_SUM, 'all' by default since November 3rd, 2026): a soft term
+selftest_band. --cross-sections all|between (CROSS_SECTIONS, 'all' by default): the strips that --slip-sum and
+--plate-rate share (plate_rate.py's cross_sections: cross-sections are great circles through the Beavan et al. 2002
+pole; strips the mean subsection trace length wide, 8.5 km, 72 between END_SW, where the Alpine Fault goes offshore,
+and END_NE, the Needles / Wairarapa: Needles step-over in Cook Strait; 'all': 166 over all of New Zealand).
+--plate-rate HI or LO,HI --rupture-set DIR (PLATE_RATE, off by default; 0.8 if imposed, an upper limit only: the
+whole plate rate at the inputs' 0.8 of the fault model's slip rates; a lower limit of 0 is not implied beyond the
+edges, where some faults slip against the plate motion): each strip's share of the Pacific-Australia plate rate
+within the limits, one constraint row per strip holding a rupture after the monotonic ones (plate_rate.py's
+plate_rows: each crustal subsection weighted by the fraction of the strip's cross-sections crossing it, its slip
+vector projected on the local plate motion over the local rate; checked against the slip-rate rows; a start above HI
+scaled down to it, each chain by one factor); exact test in selftest_band (until November 3rd, 2026: 8 strips of
+76 km between the edges, --plate-strips, LO,HI only). --slip-sum --rupture-set DIR (SLIP_SUM, True by default since November 3rd, 2026): a soft term
 in the likelihood, rows after the balance term's (T.n_bal) and before n_fit, recorded apart as tr['slip_sum']
 (plate_rate.py's slip_sum_rows: per strip, (width / L0) ((sum_i w_ki (model_i - target_i)) / sigma_k)^2, w_ki the
 fraction of subsection i's extent along the plate motion in strip k, so each subsection's weights add to 1; sigma_k
-with each parent section's subsections fully correlated; strips the mean subsection trace length wide, 8.5 km; L0 =
+with each parent section's subsections fully correlated; on the --cross-sections strips; L0 =
 --slip-sum-l0 (SLIP_SUM_L0, 8.5 km by default, the strips' width: one extra observation per strip; 120 km would be the
 target sums' decorrelation length between the edges, about the span over its 5 Alpine-Wairau sections, 122 km); no whitening between strips, so the
 strip count only sets the integral's accuracy; the swap pairs' inner products include its rows, checked on a sample at
@@ -229,9 +234,10 @@ aside with it.
   includes their constant.
 
 Conventions that every new option follows (static_checks.py enforces the first): a model setting in the notebook is
-validated in the configuration cell, recorded in CONFIG, listed in cru_common.FIGURE_SETTINGS, part of RUN_NAME where it
-changes the results, passed to its script, given a default check in static_checks.py, shown in make_summary_pdf.py's
+validated in the configuration cell, recorded in CONFIG, listed in cru_common.FIGURE_SETTINGS, part of RUN_NAME where
+it changes the results, passed to its script, given a default check in static_checks.py, shown in make_summary_pdf.py's
 settings table, described in the notebook's markdown and in REPORT.md and CLAUDE.md, and pinned in run_quick_checks.sh
 where the quick checks' reference values would otherwise move. Every term outside chi2 that a run records (the balance
-term, the summed slip rates, the soft band) is recorded on chi2's scale (twice its share of the negative log posterior),
-apart from chi2, so the fit check stays over the data alone.
+term, the summed slip rates, the soft band) is recorded as its chi2-equivalent, the sum of its squared standardized
+deviations as chi2 is (twice its share of the negative log posterior, as chi2 is twice the likelihood's), apart from
+chi2, so the fit check stays over the data alone.
