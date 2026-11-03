@@ -379,8 +379,8 @@ def main():
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
             f'and PLATE_RATE use, 8.5 km wide {xsec_txt}'],
            ['SLIP_SUM', str(bool(ssum)),
-            'the slip rates summed along each cross-section perpendicular to the plate motion, against the targets\u2019 '
-            'sums (a soft term)' if ssum else 'not added'],
+            'the slip along the plate motion (each fault\u2019s slip vector projected on it) summed along each '
+            'cross-section perpendicular to it, against the targets\u2019 sums (a soft term)' if ssum else 'not added'],
            ['PLATE_RATE', 'None' if not plate else f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
             f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint)' if plate else 'not imposed'],
            ['DOWN_THE_MIDDLE', str(dtm), dtm_txt],
@@ -461,7 +461,8 @@ def main():
             'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '
             f'cross-sections ({tt("plate_rate.txt")}).' if plate else '')
          + (' <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '
-            f'motion {xsec_txt}, the model\u2019s slip rates added up should match the targets added up, within that sum\u2019s '
+            f'motion {xsec_txt}, the model\u2019s slip along the plate motion added up (each fault\u2019s slip vector projected on '
+            'it) should match the targets\u2019 added up, within that sum\u2019s '
             'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 8.5):g}' + ' km of the '
             'plate boundary counts as one measurement, and it is recorded apart from χ² (' + tt('plate_rate.txt') + ').'
             if ssum else ''))

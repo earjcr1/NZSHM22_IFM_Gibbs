@@ -67,7 +67,8 @@ first given.
   8.5-km strips (`CROSS_SECTIONS`). Their χ² is negligible, so the kernel
   and the likelihood are unchanged. See REPORT.md, "A monotonic MFD" and "The plate rate". `--slip-sum` (`SLIP_SUM`)
   instead adds soft rows to the likelihood, after the balance term's: along every cross-section perpendicular to the
-  plate motion, the model's slip rates added up against the targets added up, on by default, weighted as one extra
+  plate motion, the model's slip along the plate motion (each subsection's slip vector projected on it) added up
+  against the targets' added up, on by default, weighted as one extra
   observation per 8.5-km strip (`SLIP_SUM_L0`), and recorded apart from χ² (REPORT.md, "Summed slip rates").
 - **Slip-rate sections (October 2026).** Each fault section's slip rate is one measurement, copied in the inputs to its
   k subsections; cleaning now divides each section's rows by √k (`preliminaries.py --slip-sections auto`, the default;

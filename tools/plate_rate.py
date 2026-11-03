@@ -21,29 +21,34 @@ sum over its ruptures of rate x average slip, the rupture set's average_slips.cs
 rates. Each subsection's part in a strip comes from its trace's extent in bearing from the pole inside the strip.
 
 The summed slip rates (gibbs.py --slip-sum, a soft term in the likelihood): along every cross-section, the model's slip
-rates added up should match the targets added up, within the uncertainty of that sum. Each subsection counts once
-in all: a cross-section crossing subsection i counts its slip rate with weight 1 / e_i, e_i its trace's extent in
-bearing, so that over all the cross-sections each subsection's weights add up to 1 (in strip k, w_ki = the fraction of
-its extent inside the strip; a subsection with no extent across the plate motion counts wholly in its midpoint's
-strip). Integrated over the cross-sections, the term is
+along the plate motion added up should match the targets' added up, within the uncertainty of that sum. Each
+subsection's slip rate counts projected on the plate motion, c_i per unit slip: the horizontal slip of the block on its
+Pacific side relative to the one on its Australian side (as for the plate rate below), projected on the local
+direction of plate motion, so mm/yr along it. The projection is signed: a fault slipping against the plate motion
+subtracts, and one whose slip is across it (a normal fault striking along it, a thrust striking across it) adds little.
+Each subsection counts once in all: a cross-section crossing subsection i counts it with weight 1 / e_i, e_i its
+trace's extent in bearing, so that over all the cross-sections each subsection's weights add up to 1 (in strip k,
+w_ki = the fraction of its extent inside the strip; a subsection with no extent across the plate motion counts wholly
+in its midpoint's strip). Integrated over the cross-sections, the term is
 
     (1 / L0) x integral over s of ((model sum - target sum) / sigma(s))^2 ds
 
-taken over the strips: each contributes (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2. Narrower
+taken over the strips: each contributes (width / L0) x ((sum_i w_ki c_i (model_i - target_i)) / sigma_k)^2. Narrower
 strips only approximate the integral more closely (the term converges as they narrow; at 8.5 km within about 5% of its
 limit); L0 sets its weight (--slip-sum-l0, SLIP_SUM_L0 = 8.5 km by default, the strips' width, so that each strip's
-sum counts as one extra observation: 72 between the edges). For comparison, the target sums' decorrelation length along
-the plate motion between the edges is 120 km (the integral of their correlation at 211,000 ruptures), close to the
+sum counts as one extra observation: 72 between the edges). For comparison, the unprojected target sums' (until
+November 3rd, 2026) decorrelation length along the plate motion between the edges was 120 km (the integral of their correlation at 211,000 ruptures), close to the
 span between the edges over the 5 sections of the Alpine and Wairau Faults there (George to Jacksons, Jacksons to
 Kaniere, Kaniere to Springs Junction, Springs Junction to Tophouse, Wairau; Wairau 2, cut by the NE edge, counted out),
 122 km, which dominate the sums' uncertainty: an L0 of 120 km would count the regional sums' information once more
 (about 5 measurements between the edges), 8.5 km about 14 times. sigma_k is the uncertainty of the strip's target
 sum, with copies of one fault section's slip rate (its subsections, which share one rate and one uncertainty) fully
-correlated and sections independent: sigma_k^2 = sum over sections p of (sum over i in p of w_ki sigma_i)^2. Each
+correlated and sections independent: sigma_k^2 = sum over sections p of (sum over i in p of w_ki c_i sigma_i)^2 (a
+strip whose subsections all slip across the plate motion, sigma_k = 0, is left out). Each
 subsection's sigma_i and target are the cleaned problem's own (sigma_i from its row's coefficients against the
 rupture set's average slips: twice the CSV standard deviation in the NZSHM22 inputs, the rate itself where that is
 0). The subsections no rupture can reach (removed in cleaning) are left out of both sums. slip_sum_rows() builds the
-rows, sqrt(width / L0) / sigma_k x (sum_i w_ki model_i - target sum), one per strip.
+rows, sqrt(width / L0) / sigma_k x (sum_i w_ki c_i model_i - target sum), one per strip.
 
 The plate rate (gibbs.py --plate-rate, a hard constraint): each strip's share of the plate rate, the average over its
 cross-sections of the faults' slip along the plate motion that each one crosses, over the plate rate:
@@ -239,7 +244,8 @@ def check_problem(P, S, slip_block='S'):
 def cross_sections(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=(END_NE, END_SW), S=None):
     """The strips that the summed slip rates and the plate rate share (see the module's description), checked against
     the cleaned problem's slip-rate rows: dict(feats, the geojson features; S, the subsections x ruptures slip matrix;
-    rows, sec, the slip-rate rows and their subsections; sig_i, tgt_i, each one's uncertainty and target, mm/yr; segs,
+    rows, sec, the slip-rate rows and their subsections; sig_i, tgt_i, each one's uncertainty and target, mm/yr; proj,
+    each one's slip along the plate motion per unit slip (c_i); segs,
     umid, length, each one's trace extents and midpoint in position and its trace length, km; N, the strips between the
     edges; edges, every strip's edges in position (0 at END_SW, 1 at END_NE); k, each strip's number (< 0 SW of the
     edges, >= N NE of them); keep, the strips of region; region, pole, ends, span_km, u_of)."""
@@ -257,9 +263,11 @@ def cross_sections(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends
     sig_i = rs / coef * 1e3                                  # each subsection's uncertainty, mm/yr
     tgt_i = np.asarray(P['d'], float)[rows] / rs * sig_i     # and its target, mm/yr
     u_of, span_km = _position(pole, ends)
-    segs, umid, length = [], np.zeros(len(sec)), np.zeros(len(sec))
+    segs, umid, length, proj = [], np.zeros(len(sec)), np.zeros(len(sec)), np.zeros(len(sec))
     for j, i in enumerate(sec):
         t = np.asarray(feats[i]['geometry']['coordinates'], float)[:, :2]
+        p_j, _, V_j = _projection(feats[i], pole)
+        proj[j] = p_j * V_j                                  # its slip along the plate motion per unit slip
         seg, umid[j] = _extent(feats[i], u_of)
         segs.append(seg)
         dx = np.diff(t[:, 0]) * 111.32 * np.cos(np.radians(t[:, 1].mean()))
@@ -273,7 +281,7 @@ def cross_sections(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends
         k0, k1 = 0, N
     k0, k1 = min(k0, 0), max(k1, N)
     kidx = np.arange(k0, k1)                                 # strip numbers: < 0 SW of the edges, >= N NE of them
-    return dict(feats=feats, S=S, rows=rows, sec=sec, sig_i=sig_i, tgt_i=tgt_i, segs=segs, umid=umid, length=length,
+    return dict(feats=feats, S=S, rows=rows, sec=sec, sig_i=sig_i, tgt_i=tgt_i, proj=proj, segs=segs, umid=umid, length=length,
                 N=N, edges=np.arange(k0, k1 + 1) / N, k=kidx,
                 keep=np.ones(len(kidx), bool) if region == 'all' else (kidx >= 0) & (kidx < N),
                 region=region, pole=pole, ends=ends, span_km=span_km, u_of=u_of)
@@ -290,7 +298,7 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
                   l0_km=SLIP_SUM_L0, S=None, cs=None):
     """The summed slip rates' rows (gibbs.py --slip-sum), in the likelihood beside the data: (A, b, info), A (strips x
     the cleaned problem's ruptures) and b such that the term is ||A m - b||^2 / P['sigma']^2, each strip's
-    (width / L0) x ((sum_i w_ki (model_i - target_i)) / sigma_k)^2 (see the module's description). region 'all': strips
+    (width / L0) x ((sum_i w_ki c_i (model_i - target_i)) / sigma_k)^2 (see the module's description). region 'all': strips
     over all of New Zealand; 'between': only the strips between the edges (a subsection across an edge counts by the
     fraction of its extent inside); l0_km: L0, km; cs: cross_sections()'s strips, if already made (for region)."""
     if cs is None:
@@ -307,28 +315,29 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
     if cs['region'] == 'all' and not np.allclose(W.sum(0), 1.0, atol=1e-9):
         raise ValueError('the strips do not cover every subsection once')        # cannot happen: a check
     W, kidx = W[cs['keep']], kidx[cs['keep']]
+    Wc = W * cs['proj'][None, :]                             # w_ki c_i: along the plate motion
     par = np.array([feats[i]['properties']['ParentID'] for i in sec])
     upar, pinv = np.unique(par, return_inverse=True)
     M = sp.csr_matrix((np.ones(len(sec)), (pinv, np.arange(len(sec)))), shape=(len(upar), len(sec)))
-    Bk = (M @ sp.csr_matrix(W * sig_i[None, :]).T).T.toarray()          # strips x sections: each section's share
+    Bk = (M @ sp.csr_matrix(Wc * sig_i[None, :]).T).T.toarray()         # strips x sections: each section's share
     sig_k = np.sqrt((Bk ** 2).sum(1))
-    keep = sig_k > 0
-    W, kidx, sig_k = W[keep], kidx[keep], sig_k[keep]
-    T = W @ tgt_i
+    keep = sig_k > 1e-12 * max(sig_k.max(), 1e-300)
+    W, Wc, kidx, sig_k = W[keep], Wc[keep], kidx[keep], sig_k[keep]
+    T = Wc @ tgt_i
     L0_km = float(l0_km)
     if not L0_km > 0:
         raise ValueError(f'L0 = {l0_km!r} km: give a positive length')
     wt = span_km / N / L0_km                                 # width / L0
     c = np.sqrt(wt) / sig_k * float(P['sigma'])
     Sk = sp.csr_matrix(S[:, np.asarray(P['keep_cols'])])[sec] * 1e3        # subsections x ruptures, mm per unit rate
-    A = sp.csr_matrix(sp.diags(c) @ sp.csr_matrix(W) @ Sk)
+    A = sp.csr_matrix(sp.diags(c) @ sp.csr_matrix(Wc) @ Sk)
     A.eliminate_zeros()
     lon, lat = _strip_lonlat(W, feats, sec)
     info = dict(N=N, k=kidx, W=W, sec=sec, target=T, sigma=sig_k, scale=c, weight=wt,
                 width_km=span_km / N, L0_km=L0_km, span_km=span_km,
                 mean_length_km=float(cs['length'].mean()),
                 region=cs['region'], ends=cs['ends'], pole=cs['pole'], lon=lon, lat=lat, subsections=W.sum(1),
-                sig_i=sig_i, tgt_i=tgt_i, n_parents=len(upar))
+                sig_i=sig_i, tgt_i=tgt_i, proj=cs['proj'], n_parents=len(upar))
     return A, c * T, info
 
 
@@ -507,8 +516,8 @@ def main():
     sg = float(P['sigma'])
     k, N = sinfo['k'], sinfo['N']
     parts = _parts(k, N)
-    print('\nsummed slip rates: along each cross-section, the model\'s slip rates added up against the targets added up '
-          '(the soft term gibbs.py --slip-sum adds to the misfit)')
+    print('\nsummed slip rates: along each cross-section, the model\'s slip along the plate motion added up against the '
+          'targets\' added up (the soft term gibbs.py --slip-sum adds to the misfit)')
     print('   ' + describe_slip_sum(sinfo))
     print(f'   if the model matched the truth, the term would be near {sum(sinfo["weight"] * m.sum() for m in parts.values()):.1f} '
           '(each strip weighted width / L0)')

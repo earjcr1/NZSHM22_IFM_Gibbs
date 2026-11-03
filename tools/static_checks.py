@@ -174,13 +174,14 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
       and "summed slip rates\\' term recorded apart" in src['gibbs.py'].split('\ndef selftest_balance')[1].split('\ndef ')[0]
       and '\ndef slip_sum_rows(' in src['plate_rate.py'] and 'SLIP_SUM_L0 = 8.5 ' in src['plate_rate.py']
+      and "Wc = W * cs['proj'][None, :]" in src['plate_rate.py']
       and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 8.5
       and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['8.5'] and 'slip_sum_l0' in _cfg_keys
       and any("args += ['--slip-sum', '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
       and any("'--cross-sections', CROSS_SECTIONS, '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
       'notebook SLIP_SUM = True (added by default) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
-      'subsection once), recorded apart from '
+      'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
 check(re.findall(r'^BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None'] and 'band_soft' in _cfg_keys
       and any("args += ['--log-band', BAND_SOFT]" in c for _, c in cells) and "'--log-band'" in src['gibbs.py']

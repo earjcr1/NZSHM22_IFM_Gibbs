@@ -31,8 +31,8 @@ quantity kept, d = 0, eps = 1e-9, so they add nothing measurable to chi2): no ma
 neighbour's where the targets do not rise, and each strip's share of the Pacific-Australia plate rate within limits
 (plate_rate.py builds those rows from the rupture set's geometry and slips, on the strips of cross-sections
 perpendicular to the plate motion that --slip-sum uses too, --cross-sections). Two soft terms can join the misfit
-beside the data, each recorded apart from chi2 on chi2's scale: --slip-sum, the slip rates summed along each
-cross-section perpendicular to the plate motion against the targets' sums (rows of G and d, so the kernel is unchanged),
+beside the data, each recorded apart from chi2 on chi2's scale: --slip-sum, the slip along the plate motion summed
+along each cross-section perpendicular to it against the targets' sums (rows of G and d, so the kernel is unchanged),
 and --log-band, a soft band, a Gaussian penalty on each prediction's log ratio to its target, which is not quadratic
 in the rates and is kept by Metropolis steps within the kernel's updates. See --help for the rest.
 
@@ -2646,8 +2646,9 @@ def main():
                          'with eps = 1e-9; a start above HI is scaled down to it')
     ap.add_argument('--slip-sum', action='store_true',
                     help='with --rupture-set: a soft term in the likelihood, beside the data: along every cross-section '
-                         'perpendicular to the plate motion, the model\'s slip rates added up against the targets added up, '
-                         'within the uncertainty of that sum (copies of one fault section\'s slip rate correlated), each '
+                         'perpendicular to the plate motion, the model\'s slip along the plate motion added up (each '
+                         'subsection\'s slip vector projected on the local plate motion, signed) against the targets\' '
+                         'added up, within the uncertainty of that sum (copies of one fault section\'s slip rate correlated), each '
                          'subsection counting once in all; on the --cross-sections strips, each weighted its width over '
                          'L0 (--slip-sum-l0; at the default, each strip one extra observation, 72 between the Alpine and '
                          'Cook Strait edges) (plate_rate.py). Recorded apart from chi2')
@@ -2742,7 +2743,8 @@ def main():
             raise SystemExit(f'--slip-sum: {e}')
         n_bal = G_fit.shape[0]
         G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), A_ss])), np.r_[d_fit, b_ss]
-        print('summed slip rates: along each cross-section, the model\'s slip rates added up against the targets added up, '
+        print('summed slip rates: along each cross-section, the model\'s slip along the plate motion added up against the '
+              'targets\' added up, '
               'a soft term in the likelihood beside the data (recorded apart from chi2); ' + describe_slip_sum(ss_info, A_ss.nnz)
               + '; the slip-rate rows checked against the rupture set')
     n_fit, mono = G_fit.shape[0], None             # the rows in the likelihood; --mfd-monotonic's constraint rows follow
