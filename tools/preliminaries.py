@@ -384,10 +384,14 @@ def main():
                          'SR_max per parent fault), each a split normal in mm/yr with its mode at the inputs\' factor (0.8) '
                          'x SR_pref (cfm_sliprates.py); needs --rupture-set')
     ap.add_argument('--rupture-set', default=None, help='the OpenSHA rupture set (for --cfm-sliprates)')
-    ap.add_argument('--cfm-sigmas', type=float, default=2.0,
-                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2)')
+    ap.add_argument('--cfm-sigmas', type=float, default=1.0,
+                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 1, as the inputs read them)')
     ap.add_argument('--cfm-factor', type=float, default=2.0,
                     help='--cfm-sliprates: each side\'s sd multiplied by this (default 2, the inputs\' doubling)')
+    ap.add_argument('--slip-rate-factor', type=float, default=None,
+                    help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
+                         'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22, as '
+                         'they are); needs --rupture-set')
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()
@@ -407,17 +411,24 @@ def main():
     say(f'== raw: G {A.shape[0]} x {A.shape[1]}, nnz {A.nnz}; d {d_raw.shape}; min entry {A.data.min():.4g}, max {A.data.max():.4g}')
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
     L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
-    if args.cfm_sliprates:
-        from cfm_sliprates import rebuild
+    if args.cfm_sliprates or args.slip_rate_factor is not None:
+        from cfm_sliprates import rebuild, rescale_inputs
         from cru_common import find_rupture_set
+        what = '--cfm-sliprates' if args.cfm_sliprates else '--slip-rate-factor'
         rd_c = find_rupture_set(args.rupture_set) if args.rupture_set else None
         if rd_c is None:
-            raise SystemExit('--cfm-sliprates needs --rupture-set (the OpenSHA rupture set: its fault_sections.geojson, '
+            raise SystemExit(f'{what} needs --rupture-set (the OpenSHA rupture set: its fault_sections.geojson, '
                              'indices.csv and average_slips.csv)')
+        if args.slip_rate_factor is not None and not args.slip_rate_factor > 0:
+            raise SystemExit('--slip-rate-factor must be positive')
         try:
-            A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas, args.cfm_factor)
+            if args.cfm_sliprates:
+                A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
+                                                               args.cfm_factor, args.slip_rate_factor)
+            else:
+                A, lines_c = rescale_inputs(A, d_raw, rd_c, args.slip_rate_factor)
         except ValueError as e:
-            raise SystemExit(f'--cfm-sliprates: {e}')
+            raise SystemExit(f'{what}: {e}')
         for ln in lines_c:
             say(ln)
 
@@ -598,7 +609,8 @@ def main():
                  mfd_uncertainty=mfd_spec, mfd_scale=mfd_c,
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
-                                                                    f'{args.cfm_sigmas:g}', f'{args.cfm_factor:g}']))
+                                                                    f'{args.cfm_sigmas:g}', f'{args.cfm_factor:g}']),
+                 slip_rate_factor=args.slip_rate_factor)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 

@@ -81,7 +81,8 @@ def load_problem(path):
                 mfd_scale=float(z['mfd_scale']) if 'mfd_scale' in z.files else 1.0,
                 split_lo2=z['split_lo2'].astype(np.float64) if 'split_lo2' in z.files else None,
                 split_hi2=z['split_hi2'].astype(np.float64) if 'split_hi2' in z.files else None,
-                cfm_sliprates=[str(v) for v in z['cfm_sliprates']] if 'cfm_sliprates' in z.files else None)
+                cfm_sliprates=[str(v) for v in z['cfm_sliprates']] if 'cfm_sliprates' in z.files else None,
+                slip_rate_factor=float(z['slip_rate_factor']) if 'slip_rate_factor' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -657,7 +658,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

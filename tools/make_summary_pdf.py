@@ -120,6 +120,7 @@ def main():
     g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
+    srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     if grp:
         isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
         positive = any(v == 'positive' for v in g_band.values())
@@ -146,7 +147,7 @@ def main():
 
     pre = read(os.path.join(RUN, 'prelim_summary.txt'))
     m_ = re.search(r'SR_min and SR_max at ([\d.]+) sigma, times ([\d.]+)', pre or '')   # --cfm-sliprates' reading
-    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (2.0, 2.0)
+    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (1.0, 2.0)
     cfm_k = cfm_fa / cfm_ns                            # each side's sd over its width
     raw_rows, raw_cols, raw_nnz = grab(pre, r'== raw: G (\d+) x (\d+), nnz (\d+)', 'raw size', int, (1, 2, 3))
     pen_rows, pen_par = grab(pre, r'(\d+) penalty rows contain .*?they apply to (\d+) parameters', 'penalty rows', int, (1, 2))
@@ -445,8 +446,10 @@ def main():
                     'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
                     if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate'],
                    ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
-                    f'(mode 0.8 \u00d7 SR_pref; SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}), the slip sums too'
-                    if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them']]
+                    f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
+                    if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
+                   ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
+                    'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')]]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
                   'every prediction kept above zero (a hard constraint)' if positive else
@@ -566,9 +569,10 @@ def main():
             'recorded apart; \u03c7\u00b2 still counts the paleo rows\u2019 Gaussian misfit, for comparison.' if pmis == 'years' else '')
          + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
-            'its mode at 0.8 \u00d7 SR_pref (the inputs\u2019 factor), its sd below the mode '
-            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + '0.8 \u00d7 (SR_pref \u2212 SR_min) and above it '
-            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + '0.8 \u00d7 (SR_max \u2212 SR_pref) '
+            f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): its '
+            f'mode at {srf:g} \u00d7 SR_pref, its sd below the mode '
+            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_pref \u2212 SR_min) and above it '
+            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_max \u2212 SR_pref) '
             f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')
             + '; a side of zero width takes the other\u2019s). The inputs\u2019 Gaussian has one sd, twice the half range, for both sides; '
             'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '

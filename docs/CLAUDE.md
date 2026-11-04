@@ -99,9 +99,17 @@ preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, False by 
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
 SlipRate, checked constant; sigma from the row's coefficients against average_slips.csv), side sds --cfm-factor x f x
-(SR_pref - SR_min or SR_max - SR_pref) / --cfm-sigmas (defaults 2 and 2: SR_min/SR_max at 2 sd, doubled as the inputs
-double their SD, so each side's sd is f x its full width, the same numbers as a 1-sd reading undoubled; the user is
-checking the reading with colleagues), a zero-width side taking the other's and min = pref = max giving sd = the mode;
+(SR_pref - SR_min or SR_max - SR_pref) / --cfm-sigmas: f, the assumed fraction of the slip rate the ruptures take up,
+scales the whole distribution (the user, 2026-11-04: at f = 0.01 an sd of several mm/yr would be absurd), where the
+inputs scale only their targets. Defaults 1 and 2: SR_min/SR_max at 1 sd and doubled, as the inputs read and double
+theirs, so each side's sd is 2f x its width and sigma_ref a median 0.80 of the inputs' (5-95% 0.75-0.90; the rest from
+the inputs' rounding of SD to 0.01 mm/yr and the 12 zero-width sides). Tried the same day and dropped: 2 and 2 (sigma
+0.40 of the inputs'; slip chi2 698 against 507 in a short run) and f on the mode only. The user is checking the
+reading with colleagues. --slip-rate-factor F (SLIP_RATE_FACTOR, 0.8 by default, passed only when not 0.8; with
+--rupture-set): f replaced by F, scaling every slip-rate distribution as a whole, the CFM's (rebuild's srf) or, without
+--cfm-sliprates, the inputs' Gaussians from their own f (cfm_sliprates.rescale_inputs: coefficients x f/F, targets
+unchanged in sd units); recorded as the problem's slip_rate_factor. A zero-width side takes the other's and
+min = pref = max gives sd = the mode (as the inputs: sigma = 0.8 x SlipRate there);
 the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
 split_hi2 = (sigma_ref/sigma_hi)^2 saved per cleaned row (load_problem; None without it; cru_common.split_weights).
 plate_rate.cross_sections reads each subsection's target and sigma from its row, so --slip-sum sums the modes with
