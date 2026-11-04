@@ -300,27 +300,61 @@ static double lw_change(const double *data, const int32_t *indices, int64_t p0, 
     return bad0 ? -INFINITY : acc;
 }
 
-/* --log-band, an off rupture switched on to m: bounds on the penalty's change from the cached log ratios Q (current
-   predictions y > 0), without logarithms: with t = G_ji m / y, log(1 + t) lies in [max(0, t - t^2/2), t], and the
-   row's change L (2 q + L) over that interval is bounded at its ends or at its vertex -q */
-static void lw_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *IY,
-                      const double *LW, const double *Q, double m, double *lo, double *hi)
-{
-    double alo = 0.0, ahi = 0.0;
-    for (int64_t p = p0; p < p1; p++) {
-        const int32_t j = indices[p];
-        const double w = LW[j];
-        if (w <= 0.0) continue;
-        const double t = data[p] * m * IY[j], q = Q[j];   /* IY: 1 / y, cached with Q */
-        const double L1 = t, L0 = fmax(0.0, t - 0.5 * t * t);
-        const double f0 = L0 * (2.0 * q + L0), f1 = L1 * (2.0 * q + L1);
-        double fl = fmin(f0, f1);
-        if (-q > L0 && -q < L1) fl = -q * q;
-        alo += w * fl;
-        ahi += w * fmax(f0, f1);
-    }
-    *lo = alo - 1e-9 * (fabs(alo) + 1e-12);
-    *hi = ahi + 1e-9 * (fabs(ahi) + 1e-12);
+/* --log-band: the dot products G_i.r of col_dots and, for each chain, three sums over the column with its rows'
+   bound coefficients A (4 per row: a1 = 2 w q / y, bhi = w (1 + max(-q, 0)) / y^2, blo = w max(q, 0) / y^2, 0; w the row's
+   weight, q = ln(y / d), y the current prediction; 0 on unpenalized rows): s1 = sum g a1, s2 = sum g^2 bhi,
+   s3 = sum g^2 blo. Each dot product is summed exactly as col_dots sums it (the same expression in the column's
+   order), so it is the same number. The column is read once for all the chains. */
+static inline void col_dots_lw(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1,
+                               double *const *r, double *const *A, double *dt, double *s1, double *s2, double *s3) {
+    double d0 = 0.0, d1 = 0.0, d2 = 0.0, d3 = 0.0;
+    double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0, h0 = 0.0, h1 = 0.0, h2 = 0.0, h3 = 0.0;
+    double l0 = 0.0, l1 = 0.0, l2 = 0.0, l3 = 0.0;
+    const double *r0 = r[0], *r1 = r[1], *r2 = r[2], *r3 = r[3], *A0 = A[0], *A1 = A[1], *A2 = A[2], *A3 = A[3];
+    if (kg >= 4)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p]; const double gg = g * g;
+            const double *e0 = A0 + 4 * j, *e1 = A1 + 4 * j, *e2 = A2 + 4 * j, *e3 = A3 + 4 * j;
+            d0 += g * r0[j]; d1 += g * r1[j]; d2 += g * r2[j]; d3 += g * r3[j];
+            a0 += g * e0[0]; a1 += g * e1[0]; a2 += g * e2[0]; a3 += g * e3[0];
+            h0 += gg * e0[1]; h1 += gg * e1[1]; h2 += gg * e2[1]; h3 += gg * e3[1];
+            l0 += gg * e0[2]; l1 += gg * e1[2]; l2 += gg * e2[2]; l3 += gg * e3[2];
+        }
+    else if (kg == 3)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p]; const double gg = g * g;
+            const double *e0 = A0 + 4 * j, *e1 = A1 + 4 * j, *e2 = A2 + 4 * j;
+            d0 += g * r0[j]; d1 += g * r1[j]; d2 += g * r2[j];
+            a0 += g * e0[0]; a1 += g * e1[0]; a2 += g * e2[0];
+            h0 += gg * e0[1]; h1 += gg * e1[1]; h2 += gg * e2[1];
+            l0 += gg * e0[2]; l1 += gg * e1[2]; l2 += gg * e2[2];
+        }
+    else if (kg == 2)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p]; const double gg = g * g;
+            const double *e0 = A0 + 4 * j, *e1 = A1 + 4 * j;
+            d0 += g * r0[j]; d1 += g * r1[j];
+            a0 += g * e0[0]; a1 += g * e1[0];
+            h0 += gg * e0[1]; h1 += gg * e1[1];
+            l0 += gg * e0[2]; l1 += gg * e1[2];
+        }
+    else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p]; const double gg = g * g;
+            const double *e0 = A0 + 4 * j;
+            d0 += data[p] * r0[indices[p]];
+            a0 += g * e0[0]; h0 += gg * e0[1]; l0 += gg * e0[2];
+        }
+    dt[0] = d0; dt[1] = d1; dt[2] = d2; dt[3] = d3;
+    s1[0] = a0; s1[1] = a1; s1[2] = a2; s1[3] = a3;
+    s2[0] = h0; s2[1] = h1; s2[2] = h2; s2[3] = h3;
+    s3[0] = l0; s3[1] = l1; s3[2] = l2; s3[3] = l3;
+}
+
+/* --log-band: a row's bound coefficients (col_dots_lw), from its current prediction y > 0 */
+static inline void lw_coef(double *e, double w, double y, double ld) {
+    const double q = log(y) - ld, iy = 1.0 / y, iy2 = iy * iy;
+    e[0] = 2.0 * w * q * iy; e[1] = w * (1.0 + (q < 0.0 ? -q : 0.0)) * iy2; e[2] = w * (q > 0.0 ? q : 0.0) * iy2; e[3] = 0.0;
 }
 
 static inline void band_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
@@ -352,16 +386,16 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *LW, const double *LD, const double *DY)
 {
     const double s2 = sigma * sigma;
-    double *QC = NULL, *IYC = NULL;                /* --log-band: each chain's rows' log ratios ln(y / d) and 1 / y */
+    double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
+                                                      and each chain's odds pi / (1 - pi) of a rupture on, per bin */
     if (LW) {
-        QC = (double *)malloc(sizeof(double) * (size_t)K * (size_t)N);
-        IYC = (double *)malloc(sizeof(double) * (size_t)K * (size_t)N);
-        for (int64_t k = 0; k < K; k++)
-            for (int64_t j = 0; j < N; j++) {
-                const double y = R[k * N + j] + DY[j];
-                QC[k * N + j] = LW[j] > 0.0 ? log(y) - LD[j] : 0.0;
-                IYC[k * N + j] = LW[j] > 0.0 ? 1.0 / y : 0.0;
-            }
+        AC = (double *)calloc((size_t)K * (size_t)N * 4, sizeof(double));
+        ODD = (double *)malloc(sizeof(double) * (size_t)K * (size_t)SB);
+        for (int64_t k = 0; k < K; k++) {
+            for (int64_t j = 0; j < N; j++)
+                if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], R[k * N + j] + DY[j], LD[j]);
+            for (int64_t b = 0; b < SB; b++) ODD[k * SB + b] = exp(LOD[k * SB + b]);
+        }
     }
     for (int64_t sw = 0; sw < nsweeps; sw++) {
       for (int64_t i = 0; i < n; i++) {
@@ -370,11 +404,16 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         const double aa = empty ? 0.0 : 1.0 / inv_csq[i];
         for (int64_t k0 = 0; k0 < K; k0 += 4) {
             const int64_t kg = K - k0 < 4 ? K - k0 : 4;
-            double dt[4] = {0.0, 0.0, 0.0, 0.0};
+            double dt[4] = {0.0, 0.0, 0.0, 0.0}, S1[4] = {0.0}, S2[4] = {0.0}, S3[4] = {0.0};
             if (!empty) {
                 double *rg[4];
                 for (int64_t q = 0; q < 4; q++) rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
-                col_dots(kg, data, indices, p0, p1, rg, dt);
+                if (AC) {                     /* --log-band: the dot products and the bound sums in one pass */
+                    double *ag[4];
+                    for (int64_t q = 0; q < 4; q++) ag[q] = AC + 4 * (k0 + (q < kg ? q : 0)) * N;
+                    col_dots_lw(kg, data, indices, p0, p1, rg, ag, dt, S1, S2, S3);
+                } else
+                    col_dots(kg, data, indices, p0, p1, rg, dt);
             }
             for (int64_t q = 0; q < kg; q++) {
                 const int64_t k = k0 + q;
@@ -416,20 +455,40 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     /* on or off given m: log odds = log(pi/(1-pi)) + log L(m) - log L(0); with the rupture switched off
                        the residual is r0 = r - x_i G_i, so G_i.r0 = dot - x_i ||G_i||^2 */
                     double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's group */
-                    if (!empty) { const double d0 = dot - xi * aa; lr -= (2.0 * m * d0 + m * m * aa) / (2.0 * s2); }
+                    double xl = 0.0;          /* the likelihood's part of the log odds, lr - LOD */
+                    if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
                     if (LW && !empty) {
                         /* --log-band: the soft band's penalty on at m against off, dp, exactly in the log odds: on with
                            probability 1 / (1 + exp(-(lr - dp))), that is, when dp < lr - logit(u) (off impossible if a
-                           penalized row would then be predicted at 0). For an off rupture the cached log ratios bound
-                           dp without logarithms, which settles most decisions; otherwise dp is computed exactly */
-                        const double uu = unif(s), g = lr - (log(uu) - log1p(-uu));
-                        int on = -1;
+                           penalized row would then be predicted at 0). For an off rupture, bounds on dp from the column's sums
+                           (col_dots_lw, in the same pass as the dot products) settle nearly every decision, most of them
+                           without logarithms; otherwise dp is computed exactly. The decisions are the exact ones */
+                        const double uu = unif(s);
+                        double g = 0.0;
+                        int on = -1, have_g = 0;
                         if (xi == 0.0) {
-                            double dlo, dhi;
-                            lw_bounds(data, indices, p0, p1, IYC + k * N, LW, QC + k * N, m, &dlo, &dhi);
-                            if (dhi < g) on = 1; else if (dlo >= g) on = 0;
+                            /* bounds on dp from the column's sums: with t = G_ji m / y >= 0 on each penalized row,
+                               ln(1 + t) lies in [t - t^2/2, t], so dp = sum w (L^2 + 2 q L) lies in
+                               [m s1 - m^2 s3, m s1 + m^2 s2] (col_dots_lw) */
+                            const double sm1 = m * S1[q], mm = m * m;
+                            double dlo = sm1 - mm * S3[q], dhi = sm1 + mm * S2[q];
+                            dlo -= 1e-9 * (fabs(dlo) + 1e-12); dhi += 1e-9 * (fabs(dhi) + 1e-12);
+                            /* stays off, without logarithms: on needs u < 1 / (1 + exp(dp - lr)) <= exp(lr - dlo)
+                               = odds exp(X), X = -xl - dlo, and exp(X) <= 1 + X + X^2/2 (X <= 0), 1 + X + X^2 (X <= 1) */
+                            const double X = -xl - dlo;
+                            if (X <= 1.0) {
+                                const double E = X <= 0.0 ? 1.0 + X + 0.5 * X * X : 1.0 + X + X * X;
+                                if (uu >= ODD[k * SB + SBIN[i]] * E * (1.0 + 1e-9)) on = 0;
+                            }
+                            if (on < 0) {
+                                g = lr - (log(uu) - log1p(-uu)); have_g = 1;
+                                if (dhi < g) on = 1; else if (dlo >= g) on = 0;
+                            }
                         }
-                        if (on < 0) on = lw_change(data, indices, p0, p1, r, DY, LW, LD, -xi, m - xi) < g;
+                        if (on < 0) {
+                            if (!have_g) g = lr - (log(uu) - log1p(-uu));
+                            on = lw_change(data, indices, p0, p1, r, DY, LW, LD, -xi, m - xi) < g;
+                        }
                         xn = on ? m : 0.0;
                     } else {
                         const double pon = lr >= 0.0 ? 1.0 / (1.0 + exp(-lr)) : exp(lr) / (1.0 + exp(lr));
@@ -480,14 +539,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 const double dl = xn - xi;
                 if (dl != 0.0 && !empty) {
                     for (int64_t p = p0; p < p1; p++) r[indices[p]] += data[p] * dl;
-                    if (QC)                   /* --log-band: the changed rows' log ratios */
+                    if (AC)                   /* --log-band: the changed rows' bound coefficients */
                         for (int64_t p = p0; p < p1; p++) {
                             const int32_t j = indices[p];
-                            if (LW[j] > 0.0) {
-                                const double y = r[j] + DY[j];
-                                QC[k * N + j] = log(y) - LD[j];
-                                IYC[k * N + j] = 1.0 / y;
-                            }
+                            if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], r[j] + DY[j], LD[j]);
                         }
                 }
                 x[i] = xn;
@@ -495,7 +550,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         }
       }
     }
-    if (QC) { free(QC); free(IYC); }
+    if (AC) { free(AC); free(ODD); }
     if (pkind == 3 && CNT)                         /* each chain's ruptures switched on, per bin, for the fractions on */
         for (int64_t k = 0; k < K; k++) {
             int64_t *cn = CNT + k * SB;

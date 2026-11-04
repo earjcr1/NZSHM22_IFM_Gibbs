@@ -90,8 +90,9 @@ F^0.95; about 1.5 minutes at 211k), kept beside the problem as
 <problem>_band<F>_start.npz and reused when the problem, band, start and bounds match (band_start_key). The best fit
 and randomized_nnls.py ignore it (REPORT.md, "The band"). --log-band TAU (BAND_SOFT, off by default; with
 --positive): a soft band, 1/2 (log10(y / d) / TAU)^2 on each positive-target row (slip subsections 1/k), kept exactly by
-Metropolis steps in the kernel (lw_change in the on/off log odds and on slab moves and swaps; lw_bounds with cached
-log ratios QC and 1/y settle most off ruptures without logs), T.lw = dict(W, LD, DY, rows, tau); selftest_logband in
+Metropolis steps in the kernel (lw_change in the on/off log odds and on slab moves and swaps; for off ruptures, bounds
+linear and quadratic in the proposed rate from per-row coefficients kept per chain, summed in col_dots_lw's pass with the
+dot products, settle nearly all decisions, most without logs, the same draws), T.lw = dict(W, LD, DY, rows, tau); selftest_logband in
 the full set; NULL arrays without it, so runs are bit-identical. --positive (BAND = 'positive'), an alternative,
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
