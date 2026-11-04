@@ -85,8 +85,8 @@ Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAN
 positive) act on the subsections' slip-rate rows and the paleo rows separately (Target.set_groups; the MFD bins get no
 band, which would count them twice); they replace, in the notebook, BAND and BAND_SOFT, which acted on every
 positive-target row through the older flags below, still there for older runs and tests and not combinable with the new
-ones. Defaults: SLIP_BAND = PALEO_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'gaussian' by
-default; with --rupture-set and a hard paleo band): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
+ones. Defaults: SLIP_BAND = PALEO_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'years' by default since 2026-11-05,
+'gaussian' before; with --rupture-set and a hard paleo band): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
 constraint rows are) and each scored instead by -2 ln of its site's recurrence-interval PDF in years, a sinh-arcsinh
 curve in log rate through the four quantiles of paleo_constraint_data.json with its mode at 1/bestEstimate exactly
 (paleo_misfit.py: fit_site, tables; cubic Hermite tables with slopes and a curvature bound kappa per site), kept by the
@@ -106,7 +106,7 @@ Gaussian, the recorded predictions unscaled), with tr['mfd_log_rows'] and tr['mf
 scores the MFD block in log10 (its spread the rest of the mean); selftest_mfdlog (both backends, against a grid
 integral, with positivity and swaps) in the full set; without it every run is bit-identical (REPORT.md, "The MFD bins'
 misfit in log10").
-preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, False by default; the notebook passes CFM_FILE):
+preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
 SlipRate, checked constant; sigma from the row's coefficients against average_slips.csv), side sds --cfm-factor x f x

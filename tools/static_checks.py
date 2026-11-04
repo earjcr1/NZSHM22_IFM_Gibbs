@@ -196,12 +196,12 @@ check(re.findall(r'^SLIP_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
       'notebook SLIP_BAND_SOFT = PALEO_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
       '--slip-log-band and --paleo-log-band (with that group\'s positivity; kept by a Metropolis step in the kernel, its '
       'exact test in the full self-test set)')
-check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] and 'paleo_misfit' in _cfg_keys
+check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'years'"] and 'paleo_misfit' in _cfg_keys
       and any("args += ['--paleo-misfit', PALEO_MISFIT]" in c for _, c in cells)
       and "'--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log']" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_paleo()') == 1 and 'static double pm_f(' in src['gibbs.py']
       and '\ndef fit_site(' in src['paleo_misfit.py'] and '\ndef tables(' in src['paleo_misfit.py'],
-      "notebook PALEO_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'years': each site's recurrence-interval PDF, "
+      "notebook PALEO_MISFIT = 'years' (by default since 2026-11-05, each site's recurrence-interval PDF; 'gaussian': the inputs', "
       'paleo_misfit.py\'s curves), recorded and passed to gibbs.py --paleo-misfit, with its exact test in the full '
       'self-test set')
 check(re.findall(r'^MFD_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] and 'mfd_misfit' in _cfg_keys
@@ -211,7 +211,7 @@ check(re.findall(r'^MFD_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] an
       "notebook MFD_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'log10': each bin's total scored in log10, its "
       'positivity kept), recorded and passed to gibbs.py --mfd-misfit, with its exact test in the full self-test set and '
       'block_fit.py scoring the bins as the run did')
-check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['False'] and 'cfm_sliprates' in _cfg_keys
+check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and any("args += ['--cfm-sliprates', os.path.expanduser(CFM_FILE)]" in c and "if not SLIP_AS_GIVEN:" in c
           and "'--slip-sd-multiplier', str(SLIP_SD_MULTIPLIER)" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
       and "'--cfm-sliprates', default=None" in src['preliminaries.py'] and '\ndef rebuild(' in src['cfm_sliprates.py']
@@ -221,7 +221,7 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['False'] and 
       and "'--slip-sd-multiplier', type=float, default=None" in src['preliminaries.py']
       and src['gibbs.py'].count('ok &= selftest_split()') == 1 and 'static double sp_lik(' in src['gibbs.py']
       and "P.get('split_lo2') is not None" in src['gibbs.py'] and 'split_weights(' in src['block_fit.py'],
-      'notebook CFM_SLIPRATES = False (the inputs\' Gaussians by default; True: each slip rate a split normal from the CFM, '
+      'notebook CFM_SLIPRATES = True (by default since 2026-11-05: each slip rate a split normal from the CFM; False: the inputs\', '
       'cfm_sliprates.py), SLIP_RATE_FACTOR = 0.8 and SLIP_SD_MULTIPLIER = 2 (the inputs\' own), recorded and passed to '
       'preliminaries.py --cfm-sliprates, --slip-rate-factor and --slip-sd-multiplier; gibbs.py evaluates the split misfit '
       'exactly (its test in the full self-test set) and block_fit.py weighs it')
