@@ -156,7 +156,7 @@ def main():
 
     pre = read(os.path.join(RUN, 'prelim_summary.txt'))
     m_ = re.search(r'SR_min and SR_max at ([\d.]+) sigma, times ([\d.]+)', pre or '')   # --cfm-sliprates' reading
-    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (1.0, 2.0)
+    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (2.0, 2.0)
     cfm_k = cfm_fa / cfm_ns                            # each side's sd over its width
     raw_rows, raw_cols, raw_nnz = grab(pre, r'== raw: G (\d+) x (\d+), nnz (\d+)', 'raw size', int, (1, 2, 3))
     pen_rows, pen_par = grab(pre, r'(\d+) penalty rows contain .*?they apply to (\d+) parameters', 'penalty rows', int, (1, 2))

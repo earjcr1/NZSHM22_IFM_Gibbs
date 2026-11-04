@@ -384,8 +384,8 @@ def main():
                          'SR_max per parent fault), each a split normal in mm/yr with its mode at the inputs\' factor (0.8) '
                          'x SR_pref (cfm_sliprates.py); needs --rupture-set')
     ap.add_argument('--rupture-set', default=None, help='the OpenSHA rupture set (for --cfm-sliprates)')
-    ap.add_argument('--cfm-sigmas', type=float, default=1.0,
-                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 1, as the inputs read them)')
+    ap.add_argument('--cfm-sigmas', type=float, default=2.0,
+                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2; the inputs read them as 1)')
     ap.add_argument('--slip-sd-multiplier', type=float, default=None,
                     help='each slip-rate sd this many times its uncertainty, before the slip-rate factor (default 2, the '
                          'inputs\' doubling; 1: the uncertainties as given): with --cfm-sliprates, each side this x the '

@@ -13,8 +13,9 @@ normal in the slip rate itself (mm/yr, linear, as measured in the field):
   - its mode is f SR_pref, f the slip-rate factor, the assumed fraction of a fault's slip rate the ruptures take up
     (--slip-rate-factor; by default the inputs' own, 0.8, f = target x sigma / SlipRate, checked on every row);
   - below the mode its sd is sigma_lo = FACTOR f (SR_pref - SR_min) / NSIG, above it sigma_hi = FACTOR f (SR_max - SR_pref) / NSIG:
-    SR_min and SR_max read as NSIG sigma either side (default 1, as the inputs read them) and the result multiplied by
-    FACTOR (--slip-sd-multiplier, default 2, the inputs' doubling), so by default each side's sd is 2 f times its width. The factor f, the
+    SR_min and SR_max read as NSIG sigma either side (default 2, the reading agreed with colleagues on 2026-11-05; the
+    inputs read them as 1) and the result multiplied by FACTOR (--slip-sd-multiplier, default 2, the inputs' doubling),
+    so by default each side's sd is f times its width (after the doubling, SR_min and SR_max at 1 sd). The factor f, the
     assumed fraction of a fault's slip rate the ruptures take up, scales the whole distribution, sds included, as a
     fixed factor on an uncertain rate must (the inputs scale only their targets, so their sigma is 1/f too wide);
   - a side of zero width takes the other side's; a fault with SR_min = SR_pref = SR_max, its sd = the mode itself
@@ -32,7 +33,7 @@ import os
 import numpy as np
 import scipy.sparse as sp
 
-NSIG_DEFAULT, FACTOR_DEFAULT = 1.0, 2.0       # SR_min and SR_max at 1 sd, doubled: the inputs' reading
+NSIG_DEFAULT, FACTOR_DEFAULT = 2.0, 2.0       # SR_min and SR_max at 2 sd, doubled (the inputs read them at 1)
 
 
 def load_cfm(path):

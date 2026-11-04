@@ -112,10 +112,11 @@ split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs'
 SlipRate, checked constant; sigma from the row's coefficients against average_slips.csv), side sds --cfm-factor x f x
 (SR_pref - SR_min or SR_max - SR_pref) / --cfm-sigmas: f, the assumed fraction of the slip rate the ruptures take up,
 scales the whole distribution (the user, 2026-11-04: at f = 0.01 an sd of several mm/yr would be absurd), where the
-inputs scale only their targets. Defaults 1 and 2: SR_min/SR_max at 1 sd and doubled, as the inputs read and double
-theirs, so each side's sd is 2f x its width and sigma_ref a median 0.80 of the inputs' (5-95% 0.75-0.90; the rest from
-the inputs' rounding of SD to 0.01 mm/yr and the 12 zero-width sides). Tried the same day and dropped: 2 and 2 (sigma
-0.40 of the inputs'; slip chi2 698 against 507 in a short run) and f on the mode only. The user is checking the
+inputs scale only their targets. Defaults 2 and 2 since 2026-11-05 (the reading the user agreed with colleagues):
+SR_min/SR_max at 2 sd and doubled, so each side's sd is f x its width and sigma_ref a median 0.40 of the inputs' (short
+run: slip chi2 698 against 507); the same sds as the 1-sd reading with SLIP_SD_MULTIPLIER = 1 (the user's run
+_1793831887, _sdx1). Before that, 1 and 2 (the inputs' reading; sigma_ref 0.80 of theirs, 5-95% 0.75-0.90); f on the
+mode only was tried and dropped. The user is checking the
 reading with colleagues. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
 2 by default; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
 multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
