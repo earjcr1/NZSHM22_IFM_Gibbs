@@ -144,31 +144,30 @@ check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'ban
       "notebook BAND = 'positive' (every prediction above zero; a number: the band, each within that factor of its target), "
       'recorded and passed to gibbs.py --band or --positive, '
       'with its exact test in both self-test sets')
-check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
-      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and not any('MFD_RISE_SD' in c for _, c in cells)
+check(not re.findall(r'^MFD_MONOTONIC = ', cells[0][1], re.M) and 'mfd_monotonic' not in _cfg_keys
+      and not any('--mfd-monotonic' in c or 'MFD_RISE_SD' in c for _, c in cells)
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
-
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = True (imposed by default, a rising target\'s rise capped at gibbs.py\'s 0.89 sd; '
-      'gibbs.py\'s default too), recorded and passed to gibbs.py --mfd-monotonic --mfd-rise-sd, with its '
-      'exact test in the band\'s self-test')
-check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['None'] and 'plate_rate' in _cfg_keys
-      and any("args += ['--plate-rate', PLATE_LIMITS]" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      'MFD_MONOTONIC out of the notebook since November 4th, 2026: gibbs.py --mfd-monotonic, command line only (a rising '
+      'target\'s rise capped at --mfd-rise-sd 0.89 sd), with its exact test in the band\'s self-test')
+check(not re.findall(r'^PLATE_RATE = ', cells[0][1], re.M) and 'plate_rate' not in _cfg_keys
+      and not any('--plate-rate' in c or 'PLATE_LIMITS' in c for _, c in cells)
       and "'--plate-rate'" in src['gibbs.py']
       and 'from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows' in src['gibbs.py']
       and "'the plate rate')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0]
-      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "['--limits', PLATE_LIMITS]" in c for _, c in cells)
+      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "'--limits'" not in c for _, c in cells)
+      and "'--limits'" in src['plate_rate.py']
       and '\ndef check_problem(' in src['plate_rate.py'] and '\ndef plate_rows(' in src['plate_rate.py'],
-      'notebook PLATE_RATE = None (not imposed by default), recorded and passed to gibbs.py --plate-rate with the rupture set '
-      '(rows from plate_rate.py on the CROSS_SECTIONS strips, checked against the slip-rate rows), with its exact test in '
-      'the band\'s self-test; plate_rate.txt reported for every run with a rupture set')
+      'PLATE_RATE out of the notebook since November 4th, 2026: gibbs.py --plate-rate with --rupture-set, command line '
+      'only (rows from plate_rate.py on the --cross-sections strips), with its exact test in the band\'s self-test; '
+      'plate_rate.txt still reported for every run with a rupture set, without limits (plate_rate.py --limits counts them)')
 check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
-      and any('if PLATE_RATE is not None or SLIP_SUM:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
+      and any('if SLIP_SUM:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
       and '\ndef cross_sections(' in src['plate_rate.py'],
       'notebook CROSS_SECTIONS = \'all\' (gibbs.py\'s and plate_rate.py\'s default too), recorded and passed with '
-      'SLIP_SUM or PLATE_RATE: the strips both use (plate_rate.py\'s cross_sections)')
+      'SLIP_SUM: its strips (plate_rate.py\'s cross_sections; gibbs.py --plate-rate uses them too)')
 check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_sum' in _cfg_keys
       and "'--slip-sum', action='store_true'" in src['gibbs.py']
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
@@ -186,7 +185,7 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_
 check(re.findall(r'^BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None'] and 'band_soft' in _cfg_keys
       and any("args += ['--log-band', BAND_SOFT]" in c for _, c in cells) and "'--log-band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
-      and 'static void lw_bounds(' in src['gibbs.py'],
+      and 'static inline void col_dots_lw(' in src['gibbs.py'],
       'notebook BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py --log-band (with positivity; '
       'kept by a Metropolis step in the kernel, its exact test in the full self-test set)')
 check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
@@ -305,8 +304,8 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'BAND', 'BAND_SOFT', 'MFD_MONOTONIC',
-                  'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
+MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'BAND', 'BAND_SOFT',
+                  'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
 _figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])
@@ -326,7 +325,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('BAND', 'BAND_SOFT', 'MFD_MONOTONIC', 'PLATE_RATE', 'SLIP_SUM', 'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
+_unpinned = [s_ for s_ in ('BAND', 'BAND_SOFT', 'SLIP_SUM', 'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
       + (f': not {_unpinned}' if _unpinned else ''))

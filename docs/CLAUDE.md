@@ -96,8 +96,8 @@ dot products, settle nearly all decisions, most without logs, the same draws), T
 the full set; NULL arrays without it, so runs are bit-identical. --positive (BAND = 'positive'), an alternative,
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
-rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (MFD_MONOTONIC,
-on by default since early November 2026): no bin's total above its lower neighbour's where the target is not (and,
+rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (command line only since November 4th, 2026; before, the notebook's
+MFD_MONOTONIC, on by default from early November 2026): no bin's total above its lower neighbour's where the target is not (and,
 since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
 times the lower total; --mfd-rise-sd, 0.89 by default, command line only), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
@@ -105,7 +105,8 @@ selftest_band. --cross-sections all|between (CROSS_SECTIONS, 'all' by default): 
 --plate-rate share (plate_rate.py's cross_sections: cross-sections are great circles through the Beavan et al. 2002
 pole; strips the mean subsection trace length wide, 8.5 km, 72 between END_SW, where the Alpine Fault goes offshore,
 and END_NE, the Needles / Wairarapa: Needles step-over in Cook Strait; 'all': 166 over all of New Zealand).
---plate-rate HI or LO,HI --rupture-set DIR (PLATE_RATE, off by default; 0.8 if imposed, an upper limit only: the
+--plate-rate HI or LO,HI --rupture-set DIR (command line only since November 4th, 2026; before, the notebook's
+PLATE_RATE, off by default; 0.8 if imposed, an upper limit only: the
 whole plate rate at the inputs' 0.8 of the fault model's slip rates; a lower limit of 0 is not implied beyond the
 edges, where some faults slip against the plate motion): each strip's share of the Pacific-Australia plate rate
 within the limits, one constraint row per strip holding a rupture after the monotonic ones (plate_rate.py's

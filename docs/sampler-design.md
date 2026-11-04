@@ -60,8 +60,8 @@ first given.
   each update drawn within the rates the band allows. The defaults since are positivity (`--positive`, `BAND = 'positive'`:
   every prediction above zero, with no other limit), no balance term and a slab floor of 1e-10. The chains start from a penalized least-squares fit moved inside it, made once per problem. See
   REPORT.md, "The band".
-- **Constraint rows (early November 2026; optional).** `--mfd-monotonic` (`MFD_MONOTONIC`) and `--plate-rate`
-  (`PLATE_RATE`) add rows after the likelihood's, ε × the quantity kept with d = 0 and ε = 1e-9, held within limits by
+- **Constraint rows (early November 2026; optional).** `--mfd-monotonic` and `--plate-rate` (notebook settings
+  until November 4th, 2026; command line only since) add rows after the likelihood's, ε × the quantity kept with d = 0 and ε = 1e-9, held within limits by
   the band's machinery: no magnitude bin's total above its lower neighbour's where the targets do not rise, and each
   strip's share of the Pacific–Australia plate rate within limits (at most 0.8 if imposed), on the summed slip rates'
   8.5-km strips (`CROSS_SECTIONS`). Their χ² is negligible, so the kernel

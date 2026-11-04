@@ -117,7 +117,7 @@ def main():
     tau = cfg.get('band_soft') or None                 # the soft band's width in decades, or None
     dec = lambda t: f'{t:g} decade' + ('' if t == 1 else 's')
     l0 = cfg.get('slip_sum_l0', 8.5)
-    dtm = cfg.get('down_the_middle')                   # the balance term: shown only for older runs that used it
+    dtm = cfg.get('down_the_middle')                   # the balance term: False, True or 'zero-model'
     floor = cfg.get('floor', -10)
     preset = cfg.get('preset', 'n/a')
     reps = cfg.get('representatives')
@@ -394,7 +394,7 @@ def main():
          + (f' The OpenSHA solution for the same rupture set ({tt(refname)}) supplies the fault geometry and named '
             'faults for the figures, and a reference model drawn in black on every figure.' if ref else '')
          + ' One configuration cell sets everything; this run used:')
-    dtm_txt = {True: 'a balance term, one weight for every data type',
+    dtm_txt = {False: 'no balance term: the Gaussian misfit alone', True: 'a balance term, one weight for every data type',
                'zero-model': 'a balance term, each data type\u2019s own weight'}.get(dtm, str(dtm))
     table([['setting', 'value', 'meaning'],
            ['SLIP_SECTIONS', repr(cfg.get('slip_sections')), 'how the slip-rate rows count (\u2019auto\u2019: each fault '
@@ -408,20 +408,21 @@ def main():
            ['BAND_SOFT', 'None' if not tau else f'{tau:g}',
             f'each prediction within {dec(tau)} of its target at 1 sd (a soft band: a penalty on the log ratio of '
             'prediction to target, beside the misfit)' if tau else 'no soft band'],
-           ['MFD_MONOTONIC', str(mono), ('no magnitude bin\u2019s total above its lower neighbour\u2019s where the targets '
-            'do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target difference'
-                             if rise_cap else '')
-            + ' (a hard constraint)') if mono else 'not imposed'],
+          ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
+                 'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
+                                          'difference' if rise_cap else '') + ' (a hard constraint; a notebook setting '
+                 'until November 4th, 2026, gibbs.py --mfd-monotonic since)']] if mono else []) + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
-            f'and PLATE_RATE use, 8.5 km wide {xsec_txt}'],
+            + ('and PLATE_RATE use' if plate else 'uses') + f', 8.5 km wide {xsec_txt}'],
            ['SLIP_SUM', str(bool(ssum)),
             'the slip along the plate motion (each fault\u2019s slip vector projected on it) summed along each '
             'cross-section perpendicular to it, against the targets\u2019 sums (a soft term)' if ssum else 'not added']]
           + ([['SLIP_SUM_L0', f'{l0:g}', f'the summed slip rates\u2019 weight: each {l0:g} km of the plate boundary counts '
                'as one measurement']] if ssum else [])
-          + [['PLATE_RATE', 'None' if not plate else f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
-            f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint)' if plate else 'not imposed']]
-          + ([['DOWN_THE_MIDDLE', str(dtm), dtm_txt]] if dtm else [])
+          + ([['PLATE_RATE', f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
+               f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint; a notebook setting until '
+               'November 4th, 2026, gibbs.py --plate-rate since)']] if plate else [])
+          + [['DOWN_THE_MIDDLE', str(dtm), dtm_txt]]
           + [['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
            ['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
                                      if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
