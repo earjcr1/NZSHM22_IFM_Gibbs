@@ -105,14 +105,17 @@ inputs scale only their targets. Defaults 1 and 2: SR_min/SR_max at 1 sd and dou
 theirs, so each side's sd is 2f x its width and sigma_ref a median 0.80 of the inputs' (5-95% 0.75-0.90; the rest from
 the inputs' rounding of SD to 0.01 mm/yr and the 12 zero-width sides). Tried the same day and dropped: 2 and 2 (sigma
 0.40 of the inputs'; slip chi2 698 against 507 in a short run) and f on the mode only. The user is checking the
-reading with colleagues. --slip-rate-factor F (SLIP_RATE_FACTOR, 0.8 by default, passed only when not 0.8; with
---rupture-set): f replaced by F, scaling every slip-rate distribution as a whole, the CFM's (rebuild's srf) or, without
---cfm-sliprates, the inputs' Gaussians from their own f (cfm_sliprates.rescale_inputs: coefficients x f/F, targets
-unchanged in sd units); recorded as the problem's slip_rate_factor. --slip-sd-multiplier K (SLIP_SD_MULTIPLIER, 2 by
-default, passed only when not 2; replaced --cfm-factor): each slip-rate sd K times its uncertainty, the CFM's sides
-(rebuild's factor) or, without --cfm-sliprates, the inputs' sigma = 2 SD rescaled by K / 2 (their multiplier checked: 2
-on every row with an SD; the 8 subsections with an SD of 0 keep sigma = the rate); for switching the doubling off (K = 1)
-when slip-rate uncertainties estimated from the data come in. A zero-width side takes the other's and
+reading with colleagues. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
+2 by default; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
+multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
+K x F x its uncertainty: the CFM's sides (rebuild's srf and factor) or, without --cfm-sliprates, the inputs' Gaussians
+(cfm_sliprates.rescale_inputs: sd K x F x SD; their own convention, checked, is target 0.8 x SlipRate, sd 2 x SD, the
+factor on the targets only, an implementation error upstream in the NZSHM22 code as the user reads it, 2026-11-05; the
+8 subsections with an SD of 0 keep sd = the target). So since 2026-11-05 the default runs' slip sds are 0.8 of the
+inputs' (coefficients and targets x 1.25 in sd units); K = 2.5 with F = 0.8 reproduces the inputs bit for bit (every run
+before then; run_quick_checks.sh pins it, for TESTING.md's values). K = 1 switches the doubling off, for slip-rate
+uncertainties estimated from the data. Recorded as the problem's slip_rate_factor and slip_sd_multiplier. Without either
+flag preliminaries.py leaves the inputs as given. A zero-width side takes the other's and
 min = pref = max gives sd = the mode (as the inputs: sigma = 0.8 x SlipRate there);
 the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
 split_hi2 = (sigma_ref/sigma_hi)^2 saved per cleaned row (load_problem; None without it; cru_common.split_weights).
@@ -157,7 +160,8 @@ within the limits, one constraint row per strip holding a rupture after the mono
 plate_rows: each crustal subsection weighted by the fraction of the strip's cross-sections crossing it, its slip
 vector projected on the local plate motion over the local rate; checked against the slip-rate rows; a start above HI
 scaled down to it, each chain by one factor); exact test in selftest_band (until November 3rd, 2026: 8 strips of
-76 km between the edges, --plate-strips, LO,HI only). --slip-sum --rupture-set DIR (SLIP_SUM, True by default since November 3rd, 2026): a soft term
+76 km between the edges, --plate-strips, LO,HI only). --slip-sum --rupture-set DIR (SLIP_SUM, True by default from November 3rd, 2026, False since November 5th: the user wants
+to see whether every target can be well fitted without it, from the new constraints and positivity alone): a soft term
 in the likelihood, rows after the balance term's (T.n_bal) and before n_fit, recorded apart as tr['slip_sum']
 (plate_rate.py's slip_sum_rows: per strip, (width / L0) ((sum_i w_ki c_i (model_i - target_i)) / sigma_k)^2, w_ki the
 fraction of subsection i's extent along the plate motion in strip k, so each subsection's weights add to 1; c_i its

@@ -387,13 +387,15 @@ def main():
     ap.add_argument('--cfm-sigmas', type=float, default=1.0,
                     help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 1, as the inputs read them)')
     ap.add_argument('--slip-sd-multiplier', type=float, default=None,
-                    help='each slip-rate sd this many times its uncertainty (default: the inputs\' 2, sigma = 2 SD; 1: the '
-                         'uncertainties as given): with --cfm-sliprates, each side 2 x its width to SR_min or SR_max (read '
-                         'at --cfm-sigmas); without it, the inputs\' sd rescaled from their own doubling; needs --rupture-set')
+                    help='each slip-rate sd this many times its uncertainty, before the slip-rate factor (default 2, the '
+                         'inputs\' doubling; 1: the uncertainties as given): with --cfm-sliprates, each side this x the '
+                         'factor x its width to SR_min or SR_max (read at --cfm-sigmas); without it, sd = this x the factor x '
+                         'SlipRateStdDev (2.5 with 0.8: the inputs as given, sd = 2 SD); needs --rupture-set. Without this '
+                         'and --slip-rate-factor the inputs are left as given')
     ap.add_argument('--slip-rate-factor', type=float, default=None,
                     help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
-                         'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22, as '
-                         'they are); needs --rupture-set')
+                         'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22; the '
+                         'inputs put it on their targets only); needs --rupture-set')
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()

@@ -171,7 +171,7 @@ check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and
       and '\ndef cross_sections(' in src['plate_rate.py'],
       'notebook CROSS_SECTIONS = \'all\' (gibbs.py\'s and plate_rate.py\'s default too), recorded and passed with '
       'SLIP_SUM: its strips (plate_rate.py\'s cross_sections; gibbs.py --plate-rate uses them too)')
-check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_sum' in _cfg_keys
+check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['False'] and 'slip_sum' in _cfg_keys
       and "'--slip-sum', action='store_true'" in src['gibbs.py']
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
       and "summed slip rates\\' term recorded apart" in src['gibbs.py'].split('\ndef selftest_balance')[1].split('\ndef ')[0]
@@ -181,7 +181,7 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_
       and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['8.5'] and 'slip_sum_l0' in _cfg_keys
       and any("args += ['--slip-sum', '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
       and any("'--cross-sections', CROSS_SECTIONS, '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
-      'notebook SLIP_SUM = True (added by default) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
+      'notebook SLIP_SUM = False (off by default since 2026-11-05) and SLIP_SUM_L0 = 8.5 (km, gibbs.py\'s and plate_rate.py\'s '
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
@@ -205,8 +205,8 @@ check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] 
       'paleo_misfit.py\'s curves), recorded and passed to gibbs.py --paleo-misfit, with its exact test in the full '
       'self-test set')
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['False'] and 'cfm_sliprates' in _cfg_keys
-      and any("args += ['--cfm-sliprates', os.path.expanduser(CFM_FILE)]" in c and "args += ['--rupture-set', RUPTURE_DIR]" in c
-          for _, c in cells)
+      and any("args += ['--cfm-sliprates', os.path.expanduser(CFM_FILE)]" in c and "if not SLIP_AS_GIVEN:" in c
+          and "'--slip-sd-multiplier', str(SLIP_SD_MULTIPLIER)" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
       and "'--cfm-sliprates', default=None" in src['preliminaries.py'] and '\ndef rebuild(' in src['cfm_sliprates.py']
       and re.findall(r'^SLIP_RATE_FACTOR = (\S+)', cells[0][1], re.M) == ['0.8'] and 'slip_rate_factor' in _cfg_keys
       and "'--slip-rate-factor', type=float, default=None" in src['preliminaries.py'] and '\ndef rescale_inputs(' in src['cfm_sliprates.py']

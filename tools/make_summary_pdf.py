@@ -452,7 +452,8 @@ def main():
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
                    ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
-                    + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the uncertainties as given)' if sdx == 1 else '')]]
+                    + ', before the slip-rate factor' + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the uncertainties as given)'
+                       if sdx == 1 else ' (with 0.8, the inputs\u2019 slip rates exactly as given)' if sdx == 2.5 else '')]]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
                   'every prediction kept above zero (a hard constraint)' if positive else

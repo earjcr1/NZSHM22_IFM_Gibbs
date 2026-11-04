@@ -107,29 +107,29 @@ def inputs_slip(A, d, rupture_dir):
 
 
 def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
-    """--slip-rate-factor or --slip-sd-multiplier without --cfm-sliprates: the inputs' slip-rate Gaussians changed from
-    their own factor f (0.8) to srf, scaling each as a whole, target and sigma alike, and from their own multiplier on
-    SlipRateStdDev (2: sigma = 2 SD) to mult (sigma -> sigma srf / f x mult / 2; rows with an SD of 0, whose sigma is the
-    rate itself, take the factor only). In units of sigma: coefficients / (srf / f x mult / 2), targets x 2 / mult.
-    Returns (A, d, report lines)."""
+    """Without --cfm-sliprates: the inputs' slip-rate Gaussians with the slip-rate factor on the whole distribution.
+    The inputs (NZSHM22) put their factor f (0.8) on the targets only, sigma = 2 SD in unscaled mm/yr; an implementation
+    error upstream, in the NZSHM22 code, as the user reads it (the uncertainty scaling postdating the slip-rate factor).
+    Here each becomes target srf x SlipRate, sigma mult x srf x SD (srf default f, mult default 2), and a row with an SD
+    of 0, whose sigma is the rate itself (f x SlipRate), sigma srf x SlipRate. The inputs' own convention is mult = 2.5
+    (2.5 x 0.8 = 2), which leaves them as they are. In units of sigma: coefficients / s, targets x (srf / f) / s, s each
+    row's sigma new over old. Returns (A, d, report lines)."""
     I = inputs_slip(A, d, rupture_dir)
     ns = I['ns']
-    srf_ = I['f'] if srf is None else float(srf)
-    mult_ = I['m'] if mult is None else float(mult)
-    ms = np.where(I['sd0'], 1.0, mult_ / I['m'])                     # each row's change of sd from the multiplier
-    sig_scale = srf_ / I['f'] * ms                                      # each row's sd in mm/yr, new / old
+    f = float(round(I['f'], 9))                                         # 0.8, to rounding
+    srf_ = f if srf is None else float(srf)
+    mult_ = 2.0 if mult is None else float(mult)
+    s = np.where(I['sd0'], srf_ / f, mult_ * srf_ / I['m'])            # each row's sd in mm/yr, new / old
     scale = np.ones(A.shape[0])
-    scale[:ns] = 1.0 / sig_scale
+    scale[:ns] = 1.0 / s
     d2 = np.array(d, np.float64)
-    d2[:ns] = d[:ns] * (srf_ / I['f']) / sig_scale
-    L = []
-    if srf_ != I['f']:
-        L.append(f'== slip-rate factor {srf_:g} (the inputs\' {I["f"]:g}): each slip-rate Gaussian scaled as a whole, its '
-                 f'target and its sd in mm/yr by {srf_ / I["f"]:g}')
-    if mult_ != I['m']:
-        L.append(f'== slip-rate sd multiplier {mult_:g} (the inputs\' {I["m"]:g}): each slip-rate sd {mult_:g} x SlipRateStdDev '
-                 f'(times the slip-rate factor over {I["f"]:g}), by {mult_ / I["m"]:g}; the {int(I["sd0"].sum())} subsections '
-                 'with an SD of 0 keep the rate itself')
+    d2[:ns] = d[:ns] * (srf_ / f) / s
+    same = bool(np.all(s == 1.0) and srf_ == f)
+    L = [f'== slip-rate Gaussians with the slip-rate factor on the whole distribution: target {srf_:g} x SlipRate, sd '
+         f'{mult_:g} x {srf_:g} x SlipRateStdDev = {mult_ * srf_:g} x SD (the inputs: target {f:g} x SlipRate, sd {I["m"]:g} x SD, '
+         'the factor on the targets only)' + ('; the inputs unchanged' if same else
+         f'; each sd {np.median(s[~I["sd0"]]):g} times the inputs\' in mm/yr') + f'; the {int(I["sd0"].sum())} subsections with '
+         f'an SD of 0 keep sd = the target']
     return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
