@@ -536,7 +536,7 @@ def main():
          + (f' The best fit leaves {fmt(start_out)} rows outside the band, so the chains cannot start from it as it '
             'stands (step 5).' if band and start_out else ''))
     figure('nnls/fig_rate_magnitude_nnls.png', 'Best fit: each rupture\u2019s rate against its magnitude bin (ruptures at '
-           'zero in the band at the bottom), each bin\u2019s target (black line) and total (orange)'
+           'zero on the axis at the bottom; dashed: the slab floor), each bin\u2019s target (black line) and total (orange)'
            + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '. Lower panel: each bin\u2019s total '
            'over its target, with the band within one uncertainty.', FW * 0.6)
     ns_phys = drawn_in('nnls/fig_slip_rates_nnls.txt', 'slip rates in mm/yr')
@@ -781,7 +781,7 @@ def main():
          f'{fmt(p_chi2, "{:.1f}")}' + (f'; {refname}: {r_pchi2:.1f}' if r_pchi2 is not None else '') + ').')
     xs = ' Faint x\u2019s: each kept draw\u2019s' if n_kept else ''
     figure(f'{a.prior}/fig_rate_magnitude.png', 'Posterior: each rupture\u2019s posterior mean rate against its magnitude '
-           'bin, each bin\u2019s target (black line) and total of the means (orange dot)'
+           'bin (dashed: the slab floor; means below the axis, 0 included, on it), each bin\u2019s target (black line) and total of the means (orange dot)'
            + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '.' + (xs + ' bin totals.' if xs else '')
            + ' Lower panel: each bin\u2019s total over its target.', FW * 0.6)
     ps_phys = drawn_in(f'{a.prior}/fig_slip_rates.txt', 'slip rates in mm/yr')
