@@ -119,6 +119,7 @@ def main():
     g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': cfg.get('paleo_band')} if grp else {}
     g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
+    cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
     if grp:
         isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
         positive = any(v == 'positive' for v in g_band.values())
@@ -144,6 +145,9 @@ def main():
     data_name = os.path.basename(str(cfg.get('data_dir', '')).rstrip('/')) or 'the inputs'
 
     pre = read(os.path.join(RUN, 'prelim_summary.txt'))
+    m_ = re.search(r'SR_min and SR_max at ([\d.]+) sigma, times ([\d.]+)', pre or '')   # --cfm-sliprates' reading
+    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (2.0, 2.0)
+    cfm_k = cfm_fa / cfm_ns                            # each side's sd over its width
     raw_rows, raw_cols, raw_nnz = grab(pre, r'== raw: G (\d+) x (\d+), nnz (\d+)', 'raw size', int, (1, 2, 3))
     pen_rows, pen_par = grab(pre, r'(\d+) penalty rows contain .*?they apply to (\d+) parameters', 'penalty rows', int, (1, 2))
     soft = grab(pre, r'(\d+) rows after the slip-rate rows have a target of 0', 'soft zero-forcing rows', int)
@@ -326,7 +330,8 @@ def main():
     parts = ((([f'positivity on the {" and ".join(pos_g)} rows'] if pos_g else [])
               + [f'a band on the {k} rows (factor {float(g_band[k]):g})' for k in band_g]
               + [f'a soft band on the {k} rows ({dec(float(g_soft[k]))} at 1 sd)' for k in soft_g]
-              + (['the paleo rows scored by their recurrence-interval PDFs'] if pmis != 'gaussian' else [])) if grp else
+              + (['the paleo rows scored by their recurrence-interval PDFs'] if pmis != 'gaussian' else [])
+              + (['the slip rates as lopsided distributions from the CFM'] if cfm else [])) if grp else
              ([f'the band (factor {band:g})'] if band else ['positivity'] if positive else [])
              + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else [])) + (['a monotonic MFD'] if mono else []) \
         + (['the summed slip rates'] if ssum else []) + ([f'the plate rate ({plate_txt})'] if plate else [])
@@ -438,7 +443,10 @@ def main():
                 + [['PALEO_MISFIT', repr(pmis), 'the paleo rows scored by each site\u2019s recurrence-interval PDF in years '
                     '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate), in place of '
                     'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
-                    if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate']]
+                    if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate'],
+                   ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
+                    f'(mode 0.8 \u00d7 SR_pref; SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}), the slip sums too'
+                    if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them']]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
                   'every prediction kept above zero (a hard constraint)' if positive else
@@ -556,6 +564,16 @@ def main():
             + '. The ranges are lopsided, and the Gaussian caps a site\u2019s misfit, so this penalizes paleo rates predicted '
             'well below their targets far more. It is kept exactly by the same Metropolis steps as the soft band, and '
             'recorded apart; \u03c7\u00b2 still counts the paleo rows\u2019 Gaussian misfit, for comparison.' if pmis == 'years' else '')
+         + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
+            'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
+            'its mode at 0.8 \u00d7 SR_pref (the inputs\u2019 factor), its sd below the mode '
+            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + '0.8 \u00d7 (SR_pref \u2212 SR_min) and above it '
+            + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + '0.8 \u00d7 (SR_max \u2212 SR_pref) '
+            f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')
+            + '; a side of zero width takes the other\u2019s). The inputs\u2019 Gaussian has one sd, twice the half range, for both sides; '
+            'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '
+            'which sum the modes. The misfit, each residual weighed by its own side\u2019s sd, is evaluated exactly in every '
+            'update.' if cfm else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '

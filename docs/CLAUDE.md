@@ -51,7 +51,7 @@ targets and the central 96% of the best fit's predictions, from prelim_results.n
 problem share them; values beyond sit on the edges as triangles. In place of the result set's label, each shows the
 run's settings, SLIP_SECTIONS to FLOOR (cru_common.run_settings, from workflow_config.json next to --problem; --config),
 and the rates-by-magnitude figure gives the chi2 over the bin rows.
-paleo_misfit.py (the paleo rows' curves for --paleo-misfit, from the rupture set's paleo_constraint_data.json: a report of their fit with python paleo_misfit.py RUPTURE_SET). rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
+paleo_misfit.py (the paleo rows' curves for --paleo-misfit, from the rupture set's paleo_constraint_data.json: a report of their fit with python paleo_misfit.py RUPTURE_SET). cfm_sliprates.py (preliminaries.py --cfm-sliprates: the slip-rate rows rebuilt from the NZ CFM's SR_pref/SR_min/SR_max; a report with python cfm_sliprates.py CFM_CSV RUPTURE_SET --A --d). rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
 moves, single box only) are set aside in cru_retired_scripts.zip; restore them only if that work resumes.
 Development tools, also in tools/ and not run by the notebook: run_nb.py (runs the notebook headless, cell by cell,
 with configuration values overridden from the command line: "PRESET='quick'", CELLS=5, ...), run_quick_checks.sh
@@ -95,6 +95,23 @@ sums; the NumPy twin _pm_f_np); recorded as tr['paleo_misfit'] beside chi2, whic
 for comparison (their predictions unscaled before recording); the swap pairs' inner products lose the paleo rows'
 share; selftest_paleo (both backends, against a grid integral; and set_groups against set_positive and set_band) in the
 full set; without it every run is bit-identical (REPORT.md, "The paleo rows' misfit").
+preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, False by default; the notebook passes CFM_FILE):
+each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
+split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
+SlipRate, checked constant; sigma from the row's coefficients against average_slips.csv), side sds --cfm-factor x f x
+(SR_pref - SR_min or SR_max - SR_pref) / --cfm-sigmas (defaults 2 and 2: SR_min/SR_max at 2 sd, doubled as the inputs
+double their SD, so each side's sd is f x its full width, the same numbers as a 1-sd reading undoubled; the user is
+checking the reading with colleagues), a zero-width side taking the other's and min = pref = max giving sd = the mode;
+the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
+split_hi2 = (sigma_ref/sigma_hi)^2 saved per cleaned row (load_problem; None without it; cru_common.split_weights).
+plate_rate.cross_sections reads each subsection's target and sigma from its row, so --slip-sum sums the modes with
+sigma_ref unchanged in code. gibbs.py reads the weights from the problem (T.split; spike-and-slab only, no transfers):
+the misfit sum w(e) e^2, w = split_lo2 below the target and split_hi2 above, concave in m, so the on-chain slice uses
+the exact likelihood (lbctx's sp fields, sp_lik; lb_floor's endpoint bound still holds), off chains draw their slab
+value first and get their exact change in one pass over the column (col_split, with the soft band's bound sums), the
+on/off decisions use sp_change, the swaps sp_swap; recorded chi2 is the split misfit; NumPy twins; selftest_split (both
+backends, with and without the soft band, against a grid integral) in the full set; block_fit.py and plot_slip_rates.py
+weigh residuals by side; without it every run is bit-identical (REPORT.md, "Slip rates from the CFM").
 --band F (the notebook's BAND = 10 until November 4th, 2026; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and
 FLOOR = -10 came with it, until BAND = 'positive' and PRESET = 'conservative' became the defaults on 2026-11-02): every data row with a positive target (each subsection's slip-rate row, each MFD bin, each paleo row)
 keeps its prediction within d/F to F d, a hard constraint for any prior (Target.set_band; the kernel's band_bounds
@@ -240,7 +257,7 @@ aside with it.
   one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate and paleo prediction above zero by default (SLIP_BAND = PALEO_BAND = 'positive', --slip-band and --paleo-band positive)
   and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
-  tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True, no band on either group and PALEO_MISFIT = 'gaussian', under which TESTING.md's quick-preset
+  tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True, no band on either group, PALEO_MISFIT = 'gaussian' and CFM_SLIPRATES = False, under which TESTING.md's quick-preset
   reference values were measured); the notebook runs it alone,
   always with swap moves (--swap-cos 0.99), from the best fit and without stored draws. Sharing the fraction on by magnitude
   bin and tectonic domain or slip-rate section, pooled or not, was tried in October 2026 and changed no fit (REPORT.md).

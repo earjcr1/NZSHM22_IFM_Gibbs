@@ -25,6 +25,9 @@ undone for display). The 1:1 line is unaffected, and a section mean within the s
 target + 1, is within one measurement uncertainty of its target. With one measurement per section (the default), a
 single subsection may stray further: in the likelihood it carries sqrt(k) times that uncertainty. On the log scale the
 band reaches the bottom wherever the target is below 1: a prediction of 0 is then within one uncertainty.
+With slip rates from the CFM (preliminaries.py --cfm-sliprates), each row's unit is the mean of its two sides' sds
+(sigma_ref); the band shows that, while chi2 and the counts within one or two uncertainties use the side each
+residual is on (its sd below or above the target).
 
 Axes: fixed for the problem by its targets and its best fit (all of the targets, and the central 96% of the best fit's
 section means, from prelim_results.npz next to --problem), so that every model's figure for one problem has the same
@@ -61,6 +64,7 @@ import textwrap
 
 import numpy as np
 
+from cru_common import split_weights
 from cru_common import (CATEGORICAL, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
                         run_settings, settings_lines, slip_sections)
@@ -136,6 +140,10 @@ def main():
     ks = np.bincount(sec, minlength=S)
     weighted = mode != 'none'                            # one measurement per section (rows divided by sqrt(k))
     ts = np.bincount(sec, weights=t, minlength=S) / ks   # each section's target (its copies share it)
+    rep_row = rows[np.unique(sec, return_index=True)[1]] if (ks > 0).all() else None   # a row of each section (its copies
+    sw = (lambda e: np.sqrt(split_weights(P, rep_row, e)) * e) if rep_row is not None else (lambda e: e)   # share its sds)
+    chi_w = lambda yw_: float(np.sum(split_weights(P, rows, yw_ - dw) * (yw_ - dw) ** 2))   # chi2 as the likelihood counts it
+    rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
     col = neighbour_colours(ts)                          # each section's colour, unlike its neighbours'
@@ -169,8 +177,8 @@ def main():
         del K
         data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s, q=q, used=used,
                          ndraws=0 if Y is None else len(Y), xs=Xk,
-                         chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(rs) <= 1)), in2=float(np.mean(np.abs(rs) <= 2)),
-                         in1r=float(np.mean(np.abs(r) <= 1)), in2r=float(np.mean(np.abs(r) <= 2)),
+                         chi2=chi_w(yw), in1=float(np.mean(np.abs(sw(rs)) <= 1)), in2=float(np.mean(np.abs(sw(rs)) <= 2)),
+                         in1r=float(np.mean(np.abs(rw(r)) <= 1)), in2r=float(np.mean(np.abs(rw(r)) <= 2)),
                          groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]), model=model))
         del Y
     mm = 'model' if all(D['model'] for D in data) else 'mean model'   # single models (a best fit): no mean
@@ -182,8 +190,8 @@ def main():
         ys = np.bincount(sec, weights=y, minlength=S) / ks
         with np.errstate(divide='ignore', invalid='ignore'):
             ratio_s = np.where(ts > 0, ys / ts, np.nan)
-        ref.update(y=y, ys=ys, chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(ys - ts) <= 1)),
-                   in2=float(np.mean(np.abs(ys - ts) <= 2)), q=np.nanpercentile(ratio_s, [5, 50, 95]))
+        ref.update(y=y, ys=ys, chi2=chi_w(yw), in1=float(np.mean(np.abs(sw(ys - ts)) <= 1)),
+                   in2=float(np.mean(np.abs(sw(ys - ts)) <= 2)), q=np.nanpercentile(ratio_s, [5, 50, 95]))
         head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the slip-rate rows, as the likelihood '
                     f'weights them, {ref["chi2"]:.1f}; {100 * ref["in1"]:.0f}% of sections within one measurement '
                     f'uncertainty of their targets, {100 * ref["in2"]:.0f}% within two; section mean / target: median '

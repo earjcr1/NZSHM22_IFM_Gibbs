@@ -28,7 +28,7 @@ import tempfile
 
 import numpy as np
 
-from cru_common import block_labels, block_measurements, ess, load_problem, split_rhat, report_to
+from cru_common import block_labels, block_measurements, ess, load_problem, split_rhat, split_weights, report_to
 
 
 def run_file(r):
@@ -54,7 +54,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
         c = {}
         for m in meas:
             res = y[:, :, m['rows']].astype(np.float64) - d[m['rows']]
-            c[m['name']] = np.sum(res ** 2, axis=2) / sig2           # chains x draws
+            c[m['name']] = np.sum(split_weights(P, m['rows'], res) * res ** 2, axis=2) / sig2   # chains x draws (--cfm-sliprates:
+                                                                                                 # each side's weight)
         per_run.append(c)
         for k in range(y.shape[0]):                                   # pooled mean and variance of every prediction
             yk = y[k].astype(np.float64)
@@ -76,7 +77,12 @@ def block_stats(P, runs, first=('S', 'MFD')):
                    rhat=rh, by_run=[float(x.mean()) for x in x_runs],
                    mcse_by_run=[float(x.std() / np.sqrt(e)) for x, e in zip(x_runs, n_eff)])
         if rows is not None:
-            out.update(mean_model=float(np.sum((ybar[rows] - d[rows]) ** 2) / sig2), spread=float(np.sum(var[rows]) / sig2))
+            e = ybar[rows] - d[rows]
+            mm = float(np.sum(split_weights(P, rows, e) * e ** 2) / sig2)
+            # the spread: the draws' variance about the mean model; with split normals (--cfm-sliprates) the rest of the
+            # mean chi2, as the weights make the split inexact
+            out.update(mean_model=mm, spread=float(np.sum(var[rows]) / sig2) if P.get('split_lo2') is None
+                       else float(allx.mean()) - mm)
         return out
 
     stats = {}

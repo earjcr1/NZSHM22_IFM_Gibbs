@@ -78,7 +78,19 @@ def load_problem(path):
                 slip_sections=str(z['slip_sections']) if 'slip_sections' in z.files else 'none',
                 chi2_expect=tuple(float(v) for v in z['chi2_expect']) if 'chi2_expect' in z.files else None,
                 mfd_uncertainty=str(z['mfd_uncertainty']) if 'mfd_uncertainty' in z.files else 'as-given',
-                mfd_scale=float(z['mfd_scale']) if 'mfd_scale' in z.files else 1.0)
+                mfd_scale=float(z['mfd_scale']) if 'mfd_scale' in z.files else 1.0,
+                split_lo2=z['split_lo2'].astype(np.float64) if 'split_lo2' in z.files else None,
+                split_hi2=z['split_hi2'].astype(np.float64) if 'split_hi2' in z.files else None,
+                cfm_sliprates=[str(v) for v in z['cfm_sliprates']] if 'cfm_sliprates' in z.files else None)
+
+
+def split_weights(P, rows, res):
+    """--cfm-sliprates: each residual's weight in the misfit, (sigma_ref / sigma_lo)^2 below its row's target and
+    (sigma_ref / sigma_hi)^2 above (1 on rows without a split normal, and on problems cleaned without it). res: residuals
+    (prediction - target) of rows `rows`, any leading shape."""
+    if P.get('split_lo2') is None:
+        return np.ones_like(res, dtype=np.float64)
+    return np.where(res < 0, P['split_lo2'][rows], P['split_hi2'][rows])
 
 
 def slip_sections(G, d, rows, keep_rows=None, spec='auto', rtol=1e-9):
@@ -645,7 +657,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

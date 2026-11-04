@@ -111,7 +111,25 @@ static double texp(uint64_t *s, double beta, double lo, double hi) {
    Spike-and-slab's slab may be tilted: everything times exp(gam z), a density m^(gam - 1) in m (gam = 0: log-uniform;
    1/2: uniform in sqrt m).  The halfway prior (mA > 0) mixes a linear and a log-uniform range, each normalized over the
    box and its edges: density mA exp(z - zhi) + mB in z, inside the box, times the same edges. */
-typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0, muz, kz, gam, mA, mB; } lbctx;
+typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0, muz, kz, gam, mA, mB;
+                 /* --cfm slip rates (sp = 1): the likelihood exactly, -sum w(e) e^2 sk over the rupture's column, e = sr_j +
+                    G_ji (m - sxi), w = SL2_j below its target (e < 0) and SH2_j above; sL0 its value at m0 */
+                 int sp; const double *sg; const int32_t *si; int64_t sp0, sp1; const double *sr, *SL2, *SH2;
+                 double sxi, sk, sL0; } lbctx;
+/* w(e) e^2 with w = l below 0 and h above, without a branch (the sign of a residual is unpredictable):
+   ((h + l) e^2 + (h - l) e |e|) / 2 */
+static inline double sp_w2(double e, double l, double h) { return 0.5 * ((h + l) * e * e + (h - l) * e * fabs(e)); }
+/* the split misfit's log likelihood at m (lbctx's sp fields): concave in m, a Gaussian on each side of each row's target */
+static double sp_lik(const lbctx *c, double m) {
+    const double dm = m - c->sxi;
+    double acc = 0.0;
+    for (int64_t p = c->sp0; p < c->sp1; p++) {
+        const int32_t j = c->si[p];
+        const double e = c->sr[j] + c->sg[p] * dm;
+        acc += sp_w2(e, c->SL2[j], c->SH2[j]);
+    }
+    return -acc * c->sk;
+}
 static inline double lb_prior(const lbctx *c, double z) {
     if (c->pk == 2) return -(z - c->muz) * (z - c->muz) * c->kz;      /* hierarchical: log m ~ Normal(muz, 1/(2 kz)) */
     if (c->mA > 0.0) {
@@ -131,6 +149,7 @@ static inline double lb_ld(const lbctx *c, double z) {
     double p = lb_prior(c, z);
     if (p == -INFINITY) return -INFINITY;
     double m = exp(z);
+    if (c->sp) return sp_lik(c, m) - c->sL0 + p - c->lp0;
     return -(m - c->m0) * (m + c->m0 - 2.0 * c->mu) * c->inv2s2 + p - c->lp0;
 }
 /* A lower bound on lb_ld(c, z) over a stretch [za, zb] of the box (zlo <= z <= zhi and zmin <= z <= zmax, where the
@@ -142,9 +161,14 @@ static inline double lb_ld(const lbctx *c, double z) {
    rounding of lb_ld itself (about 1e-15 of it): wherever the bound exceeds y, so does every evaluation of lb_ld. */
 static double lb_floor(const lbctx *c, double za, double zb) {
     const double ma = fmax(exp(za) * (1.0 - 1e-12) - 1e-300, 0.0), mb = exp(zb) * (1.0 + 1e-12) + 1e-300;
+    const double pm = c->mA > 0.0 ? log(c->mA * exp(za - c->zhi) + c->mB) : 0.0;
+    if (c->sp) {                                      /* the split likelihood: concave in m, so at least its smaller end */
+        const double la = sp_lik(c, ma), lb = sp_lik(c, mb);
+        const double size = fabs(la) + fabs(lb) + fabs(c->sL0) + fabs(c->lp0) + fabs(c->gam) * fmax(fabs(za), fabs(zb)) + fabs(pm);
+        return fmin(la, lb) - c->sL0 + (c->mA > 0.0 ? pm : fmin(c->gam * za, c->gam * zb)) - c->lp0 - 1e-9 * (size + 1.0);
+    }
     const double fa = -(ma - c->m0) * (ma + c->m0 - 2.0 * c->mu) * c->inv2s2;
     const double fb = -(mb - c->m0) * (mb + c->m0 - 2.0 * c->mu) * c->inv2s2;
-    const double pm = c->mA > 0.0 ? log(c->mA * exp(za - c->zhi) + c->mB) : 0.0;
     const double size = (mb + fabs(c->m0)) * (mb + fabs(c->m0) + 2.0 * fabs(c->mu)) * c->inv2s2 + fabs(c->lp0)
                         + fabs(c->gam) * fmax(fabs(za), fabs(zb)) + fabs(pm);
     return fmin(fa, fb) + (c->mA > 0.0 ? pm : fmin(c->gam * za, c->gam * zb)) - c->lp0 - 1e-9 * (size + 1.0);
@@ -238,6 +262,7 @@ void kernel_consts(int64_t n, const double *lo, const double *hi, double zlo, do
         LLO[i] = lo[i] > 0.0 ? log(lo[i]) : -INFINITY;
         LHI[i] = log(hi[i]);
         lbctx c;
+        c.sp = 0;
         c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.ku = KU ? KU[i] : 0.0; c.zmax = LHI[i]; c.gam = gam;
         slab_consts(&c, SC + 4 * i);
         if (MIX) {
@@ -398,6 +423,146 @@ static inline void lw_coef(double *e, double w, double y, double ld) {
     e[0] = 2.0 * w * q * iy; e[1] = w * (1.0 + (q < 0.0 ? -q : 0.0)) * iy2; e[2] = w * (q > 0.0 ? q : 0.0) * iy2; e[3] = 0.0;
 }
 
+/* --cfm slip rates: the change of the split misfit, sum w(e) e^2, between the residuals r + G_i d0 and r + G_i d1 */
+static double sp_change(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
+                        const double *SL2, const double *SH2, double d0, double d1) {
+    double acc = 0.0;
+    for (int64_t p = p0; p < p1; p++) {
+        const int32_t j = indices[p];
+        const double e0 = r[j] + data[p] * d0, e1 = r[j] + data[p] * d1;
+        acc += sp_w2(e1, SL2[j], SH2[j]) - sp_w2(e0, SL2[j], SH2[j]);
+    }
+    return acc;
+}
+/* --cfm slip rates: for each off chain q (pre[q]) of a group, the split misfit's change if it switched on at mq[q], DQ[q],
+   in one pass over the column; with the soft band (A), also its bound sums s1, s2, s3 (col_dots_lw's). One function per
+   group size, with the sums in registers (chains not off are given m = 0, so they add nothing to DQ). */
+static void col_split1(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
+                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
+                       double *s1, double *s2, double *s3) {
+    const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
+    if (A) {
+        const double *A0 = A[0];
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+        }
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+        }
+    DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
+}
+static void col_split2(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
+                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
+                       double *s1, double *s2, double *s3) {
+    const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
+    const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
+    if (A) {
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+        }
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+        }
+    DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
+    DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
+}
+static void col_split3(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
+                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
+                       double *s1, double *s2, double *s3) {
+    const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
+    const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
+    const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
+    if (A) {
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        const double *A2 = A[2];
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
+        }
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+        }
+    DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
+    DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
+    DQ[2] = d2; s1[2] = a2; s2[2] = b2; s3[2] = c2;
+}
+static void col_split4(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
+                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
+                       double *s1, double *s2, double *s3) {
+    const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
+    const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
+    const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
+    const double *r3 = r[3], m3 = pre[3] ? mq[3] : 0.0; double d3 = 0.0, a3 = 0.0, b3 = 0.0, c3 = 0.0;
+    if (A) {
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        const double *A2 = A[2];
+        const double *A3 = A[3];
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
+            { const double e0 = r3[j], e1 = e0 + g * m3; d3 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double *e = A3 + 4 * j; a3 += g * e[0]; b3 += gg * e[1]; c3 += gg * e[2]; }
+        }
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e0 = r3[j], e1 = e0 + g * m3; d3 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+        }
+    DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
+    DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
+    DQ[2] = d2; s1[2] = a2; s2[2] = b2; s3[2] = c2;
+    DQ[3] = d3; s1[3] = a3; s2[3] = b3; s3[3] = c3;
+}
+static void col_split(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
+                      double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
+                      double *s1, double *s2, double *s3) {
+    for (int64_t q = 0; q < 4; q++) DQ[q] = s1[q] = s2[q] = s3[q] = 0.0;
+    if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
+    else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
+    else if (kg == 2) col_split2(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
+    else              col_split1(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
+}
+
 static inline void band_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
                                const double *RLO, const double *RHI, double xi, double *lo, double *hi) {
     double a = -INFINITY, b = INFINITY;
@@ -424,7 +589,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
                double gam, const double *MIX, const double *RLO, const double *RHI,
-               const double *LW, const double *LD, const double *DY, const pmctx *PM)
+               const double *LW, const double *LD, const double *DY, const pmctx *PM, const double *SL2, const double *SH2)
 {
     const double s2 = sigma * sigma;
     double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
@@ -448,7 +613,30 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         for (int64_t k0 = 0; k0 < K; k0 += 4) {
             const int64_t kg = K - k0 < 4 ? K - k0 : 4;
             double dt[4] = {0.0, 0.0, 0.0, 0.0}, S1[4] = {0.0}, S2[4] = {0.0}, S3[4] = {0.0};
-            if (!empty) {
+            double mpre[4] = {0.0}, DQ[4] = {0.0};
+            int pre[4] = {0, 0, 0, 0};
+            if (SL2 && pkind == 3 && !empty) {        /* --cfm slip rates: each off chain's slab draw first (its draws in
+                                                         the same order as below), then its exact change in one pass */
+                for (int64_t q = 0; q < kg; q++) {
+                    const int64_t k = k0 + q;
+                    if (X[k * n + i] != 0.0) continue;
+                    lbctx c;
+                    c.sp = 0;
+                    c.pk = 1; c.muz = 0.0; c.kz = 0.0; c.gam = gam; c.mA = 0.0; c.mB = 0.0;
+                    c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0;
+                    c.zmin = LLO[i];
+                    c.zmax = LHI[i];
+                    c.mu = 0.0; c.inv2s2 = 0.0;
+                    mpre[q] = slab_draw_m(rng + 4 * k, &c, SC + 4 * i);
+                    pre[q] = 1;
+                }
+                double *rg[4], *ag[4];
+                for (int64_t q = 0; q < 4; q++) {
+                    rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
+                    ag[q] = AC ? AC + 4 * (k0 + (q < kg ? q : 0)) * N : NULL;
+                }
+                col_split(kg, data, indices, p0, p1, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3);
+            } else if (!empty) {
                 double *rg[4];
                 for (int64_t q = 0; q < 4; q++) rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
                 if (AC) {                     /* --log-band: the dot products and the bound sums in one pass */
@@ -471,6 +659,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 if (RLO && !empty && !off) band_bounds(data, indices, p0, p1, r, RLO, RHI, xi, &blo, &bhi);
                 if (pkind == 3) {             /* spike-and-slab: x_i is 0 (off) or its slab value (on) */
                     lbctx c;
+                    c.sp = 0;
                     c.pk = 1; c.muz = 0.0; c.kz = 0.0; c.gam = gam; c.mA = 0.0; c.mB = 0.0;
                     c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0;
                     c.zmin = LLO[i];
@@ -480,7 +669,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     if (xi > 0.0) {           /* on: exact slice update of the slab value under likelihood x slab */
                         const double z0 = log(xi);
                         c.m0 = xi; c.lp0 = lb_prior(&c, z0);
-                        if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
+                        if (!empty && SL2) {      /* --cfm slip rates: the likelihood evaluated exactly */
+                            c.sp = 1; c.sg = data; c.si = indices; c.sp0 = p0; c.sp1 = p1; c.sr = r; c.SL2 = SL2; c.SH2 = SH2;
+                            c.sxi = xi; c.sk = 0.5 / s2; c.sL0 = sp_lik(&c, xi);
+                        } else if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
                         if (RLO) {            /* the band: the slice within the rates it allows (z0 always among them) */
                             if (blo > 0.0) c.zmin = fmin(fmax(c.zmin, log(blo)), z0);
                             c.zmax = fmax(fmin(c.zmax, log(bhi)), z0);
@@ -493,13 +685,16 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             if (!(log(unif(s)) < -dp)) m = xi;
                         }
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
-                        m = slab_draw_m(s, &c, SC + 4 * i);
+                        m = pre[q] ? mpre[q] : slab_draw_m(s, &c, SC + 4 * i);   /* --cfm slip rates: drawn above */
                     }
                     /* on or off given m: log odds = log(pi/(1-pi)) + log L(m) - log L(0); with the rupture switched off
                        the residual is r0 = r - x_i G_i, so G_i.r0 = dot - x_i ||G_i||^2 */
                     double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's group */
                     double xl = 0.0;          /* the likelihood's part of the log odds, lr - LOD */
-                    if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
+                    if (!empty && SL2) {      /* --cfm slip rates: the split misfit's change, exactly */
+                        xl = (pre[q] ? DQ[q] : sp_change(data, indices, p0, p1, r, SL2, SH2, -xi, m - xi)) / (2.0 * s2);
+                        lr -= xl;
+                    } else if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
                     if (LW && !empty) {
                         /* --log-band: the soft band's penalty on at m against off, dp, exactly in the log odds: on with
                            probability 1 / (1 + exp(-(lr - dp))), that is, when dp < lr - logit(u) (off impossible if a
@@ -549,6 +744,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     SM[k * n + i] = m;
                 } else if (pkind >= 1) {
                     lbctx c;
+                    c.sp = 0;
                     c.pk = (int)pkind; c.muz = 0.0; c.kz = 0.0; c.gam = 0.0;
                     c.mA = MIX ? MIX[2 * i] : 0.0; c.mB = MIX ? MIX[2 * i + 1] : 0.0;
                     if (pkind == 2) { c.muz = MUZ[k * n + i]; c.kz = KZ[k]; }
@@ -653,10 +849,28 @@ static double lw_swap(const int64_t *indptr, const int32_t *indices, const doubl
     }
     return acc;
 }
+/* --cfm slip rates: the split misfit's change when m_i and m_j are exchanged (the two columns' rows merged) */
+static double sp_swap(const int64_t *indptr, const int32_t *indices, const double *data, int64_t i, int64_t j,
+                      double dl, const double *r, const double *SL2, const double *SH2)
+{
+    int64_t p = indptr[i], q = indptr[j];
+    const int64_t pe = indptr[i + 1], qe = indptr[j + 1];
+    double acc = 0.0;
+    while (p < pe || q < qe) {
+        int32_t row; double dv;
+        if (q >= qe || (p < pe && indices[p] < indices[q])) { row = indices[p]; dv = data[p] * dl; p++; }
+        else if (p >= pe || indices[q] < indices[p]) { row = indices[q]; dv = -data[q] * dl; q++; }
+        else { row = indices[p]; dv = data[p] * dl - data[q] * dl; p++; q++; }
+        const double e0 = r[row], e1 = e0 + dv;
+        acc += sp_w2(e1, SL2[row], SH2[row]) - sp_w2(e0, SL2[row], SH2[row]);
+    }
+    return acc;
+}
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
               const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
-              const double *RLO, const double *RHI, const double *LW, const double *LD, const double *DY, const pmctx *PM)
+              const double *RLO, const double *RHI, const double *LW, const double *LD, const double *DY, const pmctx *PM,
+              const double *SL2, const double *SH2)
 {
     const double s2 = sigma * sigma;
     for (int64_t k = 0; k < K; k++) {
@@ -671,7 +885,8 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) ci += data[p] * r[indices[p]];
             for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) cj += data[p] * r[indices[p]];
             const double dl = mj - mi;
-            const double dchi = 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
+            const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
+                                    : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
             const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LD, PM) : 0.0);
             if (log(unif(s)) < -0.5 * dchi / s2 + dlp && (!RLO || swap_in_band(indptr, indices, data, i, j, dl, r, RLO, RHI))) {
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
@@ -806,11 +1021,11 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P] + [P, P]
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 3 + [P]
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 3 + [P] + [P, P]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -849,6 +1064,8 @@ class Target:
         self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
         self.slip_sum = None                       # --slip-sum: dict(expect) of the summed slip rates' rows
         self.lw = None                             # --log-band: dict(W, LD, DY): each row's weight, log target, target
+        self.split = None                          # --cfm-sliprates (in the problem): dict(L2, H2), each row's weight
+                                                   # below and above its target (1 on rows without a split normal)
         self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
@@ -992,6 +1209,18 @@ def _pm_ptr(T):
     return ctypes.addressof(pm['_c'])
 
 
+def _sp_ptrs(T):
+    """--cfm slip rates: the split misfit's weights below and above each row's target (1 on rows without it), or NULLs."""
+    if getattr(T, 'split', None) is None:
+        return None, None
+    return _ptr(T.split['L2']), _ptr(T.split['H2'])
+
+
+def _sp_w(T, rows, e):
+    """--cfm slip rates: each residual's weight, below or above its row's target."""
+    return np.where(e < 0, T.split['L2'][rows], T.split['H2'][rows])
+
+
 def _pm_f_np(pm, t, v):
     """NumPy twin of pm_f: the half misfits of tables t at v = ln y."""
     t, v = np.asarray(t, np.int64), np.asarray(v, float)
@@ -1054,7 +1283,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
-                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T))
+                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -1076,7 +1305,7 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
                      _ptr(pi), _ptr(pj), _ptr(gij), _ptr(T.beta), T.sigma,
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
-                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T))
+                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -1174,6 +1403,8 @@ def _lb_slice_py(g, c, z0, w):
         if p == -np.inf:
             return -np.inf
         m = np.exp(z)
+        if 'lik' in c:                                   # --cfm slip rates: the likelihood exactly
+            return c['lik'](m) - c['L0'] + p - c['lp0']
         return -(m - c['m0']) * (m + c['m0'] - 2.0 * c['mu']) * c['inv2s2'] + p - c['lp0']
     c['lp0'] = 0.0
     c['lp0'] = lprior(z0)
@@ -1320,9 +1551,17 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
             dot, aa = float(R[k, rows] @ vals), T.csq[i]
             if T.rlo is not None:
                 blo, bhi = _band_bounds_np(T, R[k, rows], rows, vals, xi)
+        sp_ = getattr(T, 'split', None) is not None and not empty   # --cfm slip rates: the likelihood exactly
+        if sp_:
+            rk = R[k, rows].copy()
+            def splik(mm, rk=rk, xi=xi):
+                e = rk + vals * (mm - xi)
+                return -float(np.sum(_sp_w(T, rows, e) * e * e)) / (2.0 * s2)
         if xi > 0:
             c['m0'] = xi
-            if not empty:
+            if sp_:
+                c.update(lik=splik, L0=splik(xi))
+            elif not empty:
                 c.update(mu=xi - dot / aa, inv2s2=0.5 * aa / s2)
             if T.rlo is not None:
                 _band_slice_limits(c, blo, bhi, np.log(xi))
@@ -1334,8 +1573,11 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
         else:
             m = np.exp(_slab_draw_py(g, c))
         lr = LOD[k, T.ss['bins'][i]]
-        if not empty:
+        if sp_:
+            lr -= -splik(m) + splik(0.0)
+        elif not empty:
             lr -= (2.0 * m * (dot - xi * aa) + m * m * aa) / (2.0 * s2)
+        if not empty:
             if T.lw is not None:                         # --log-band: on at m against off, in the log odds
                 lr -= _lw_change_np(T, R[k], rows, vals, -xi, m - xi)
         pon = 1.0 / (1.0 + np.exp(-lr)) if lr >= 0 else np.exp(lr) / (1.0 + np.exp(lr))
@@ -1371,7 +1613,15 @@ def swaps_numpy(T, X, R, g, nacc):
             ri, vi = T.indices[T.indptr[i]:T.indptr[i + 1]], T.data[T.indptr[i]:T.indptr[i + 1]]
             rj, vj = T.indices[T.indptr[j]:T.indptr[j + 1]], T.data[T.indptr[j]:T.indptr[j + 1]]
             dl = mj - mi
-            dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
+            if getattr(T, 'split', None) is not None:     # --cfm slip rates: the split misfit's change, exactly
+                rows_ = np.union1d(ri, rj)
+                dv_ = np.zeros(len(rows_))
+                np.add.at(dv_, np.searchsorted(rows_, ri), vi * dl)
+                np.add.at(dv_, np.searchsorted(rows_, rj), -vj * dl)
+                e0_ = R[k, rows_]; e1_ = e0_ + dv_
+                dchi = float(np.sum(_sp_w(T, rows_, e1_) * e1_ ** 2 - _sp_w(T, rows_, e0_) * e0_ ** 2))
+            else:
+                dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
             dlp = -dl * (T.beta[i] - T.beta[j])
             if T.lw is not None:                         # --log-band: the soft band's change
                 rows = np.union1d(ri, rj)
@@ -1587,6 +1837,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         raise NotImplementedError('transfer moves need the C kernel')
     if transfers and T.pkind == 2:
         raise NotImplementedError('transfer moves are not implemented for the hierarchical prior')
+    if T.split is not None and (transfers or T.pkind != 3):
+        raise NotImplementedError('the split misfit (--cfm-sliprates) is implemented for spike-and-slab without transfer moves')
     if T.rlo is not None and (transfers or T.pkind == 2):
         raise NotImplementedError('the band is not implemented for transfer moves or the hierarchical prior')
     H = T.hier
@@ -1709,7 +1961,10 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             y = y.copy()
             y[:, pr_] /= PMr['eps']
             Rd = y - Dd
-        tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
+        if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
+            tr['chi2'][:, rec] = np.sum(_sp_w(T, np.arange(nd), Rd) * Rd ** 2, 1) / T.sigma ** 2
+        else:
+            tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
         if T.rlo is not None:                                # rows outside the band: always 0, a check
             tr.setdefault('band_outside', np.zeros((K, n_rec), np.int64))[:, rec] = T.band_outside(R)
         if T.balance is not None and nd < nbal:              # the balance term, and each type's relative shortfall
@@ -2253,6 +2508,80 @@ def selftest_swaps(backends=('c', 'numpy')):
         print(f'   {be:6s} ({x[..., 0].mean():+.4f}, {x[..., 1].mean():+.4f}) exact ({ex[0]:+.4f}, {ex[1]:+.4f}) '
               f'z = ({zs[0]:+.2f}, {zs[1]:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
     print('SELFTEST (swap moves)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_split(backends=('c', 'numpy')):
+    """The split misfit (--cfm-sliprates: a row weighed (s_ref / s_lo)^2 below its target, (s_ref / s_hi)^2 above) on two
+    spike-and-slab rates and two rows, one of them strongly lopsided, with swap moves, without and with the soft band on
+    it, against a grid integral: P(on) and E[log10 m | on] of each rate, and chi2 as the split misfit counts it."""
+    from scipy.special import betaln
+    print('split misfit (--cfm-sliprates): spike-and-slab with swaps vs a grid integral')
+    ok = True
+    G2 = np.array([[1.0, 0.6], [0.4, 1.0]])
+    d2, sig, L2v, H2v = np.array([0.05, 0.04]), 0.02, np.array([1.0, 6.0]), np.array([1.0, 0.15])
+    lo10, su, a_, b_ = np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+    for tau in (None, 0.3):
+        wl = 0.0 if tau is None else 1.0 / (2.0 * (tau * LN10) ** 2)
+
+        def Lb(m1, m2):
+            m1, m2 = np.broadcast_arrays(m1, m2)
+            out = np.zeros(m1.shape)
+            for j in range(2):
+                y = G2[j, 0] * m1 + G2[j, 1] * m2
+                e = y - d2[j]
+                out += np.where(e < 0, L2v[j], H2v[j]) * e * e / (2 * sig ** 2)
+                if j == 1 and wl > 0:
+                    with np.errstate(divide='ignore'):
+                        out += np.where(y > 0, wl * np.log(np.maximum(y, 1e-300) / d2[j]) ** 2, np.inf)
+            return np.exp(-out), out
+        L1, L2_, L12 = Lb(10 ** u[0], 0.0)[0], Lb(0.0, 10 ** u[1])[0], Lb(M1, M2)[0] * gw[0][:, None] * gw[1][None, :]
+        w00 = pg[0] * Lb(0.0, 0.0)[0]
+        w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2_), pg[2] * L12.sum()
+        W_ = w00 + w10 + w01 + w11
+        p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+        e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+               (pg[1] * (gw[1] * u[1]) @ L2_ + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+        for be in backends:
+            T = Target(sp.csc_matrix(G2), d2, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                       pairs=(np.array([0]), np.array([1]), np.array([G2[:, 0] @ G2[:, 1]])))
+            T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+            T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+            T.pkind = 3
+            T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+            T.split = dict(L2=np.ascontiguousarray(L2v), H2=np.ascontiguousarray(H2v))
+            if wl > 0:
+                T.lw = dict(W=np.array([0.0, wl]), LD=np.log(d2), DY=np.ascontiguousarray(d2), rows=np.array([1]), tau=tau)
+            K, sw = (8, 40000) if be == 'c' else (4, 4000)
+            tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 31, monitor=(0, 1), verbose=False,
+                        keep_samples=False, swaps=True)
+            Mo = tr['mon'][:, sw // 10:, :]
+            for i in range(2):
+                on = (Mo[:, :, i] > 0).astype(float)
+                pr = on.mean()
+                if on.std() == 0:
+                    zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+                else:
+                    zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+                uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+                zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+                ok &= abs(zp) < 4 and abs(zu) < 4
+                print(f'   {be:5s} {"soft band" if wl else "         "} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); '
+                      f'E[log10 m | on] {uu.mean():.4f} (exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+            m_ = Mo[:, :, :].reshape(-1, 2)                    # chi2 recorded as the split misfit counts it
+            e_ = m_ @ G2.T - d2
+            chi_ = np.sum(np.where(e_ < 0, L2v, H2v) * e_ ** 2, 1) / sig ** 2
+            ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
+    print('SELFTEST (split misfit)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -3022,6 +3351,7 @@ def main():
         ok &= selftest_band()
         ok &= selftest_logband()
         ok &= selftest_paleo()
+        ok &= selftest_split()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -3329,6 +3659,20 @@ def main():
             raise SystemExit('swap moves: the pairs\' inner products do not match the columns (a bookkeeping error)')
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
+    if P.get('split_lo2') is not None:             # --cfm-sliprates: the slip-rate rows' split misfit, from the problem
+        if not spike_mode or a.transfers:
+            raise SystemExit('the problem\'s slip rates are split normals (preliminaries.py --cfm-sliprates): the sampler '
+                             'handles them under spike-and-slab, without --transfers')
+        L2_, H2_ = np.ones(T.N), np.ones(T.N)
+        nd_ = P['G'].shape[0]
+        L2_[:nd_], H2_[:nd_] = P['split_lo2'], P['split_hi2']
+        T.split = dict(L2=np.ascontiguousarray(L2_), H2=np.ascontiguousarray(H2_))
+        sk_ = np.flatnonzero((L2_ != 1.0) | (H2_ != 1.0))
+        sk_ = np.log10(np.sqrt(L2_[sk_] / H2_[sk_]))            # log10 (sigma_hi / sigma_lo)
+        c_ = P.get('cfm_sliprates') or ['?', '?', '?']
+        print(f'slip rates from the CFM ({c_[0]}; SR_min and SR_max at {c_[1]} sigma, times {c_[2]}): each slip-rate row a split '
+              f'normal, {len(sk_)} of them lopsided, sd above / below the mode median {10 ** np.median(sk_):.2f} (5-95% {10 ** np.percentile(sk_, 5):.2f}-'
+              f'{10 ** np.percentile(sk_, 95):.2f}); their misfit evaluated exactly in every update and swap')
     band_rows = None
     grp = any(v is not None for v in (a.slip_band, a.paleo_band, a.slip_log_band, a.paleo_log_band))
     if grp and (a.positive or a.band is not None or a.log_band is not None):

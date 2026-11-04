@@ -379,6 +379,15 @@ def main():
                     help='keep the rows after the slip-rate rows that have a target of 0 and a single entry (soft zero-forcing '
                          'penalties, 1e4 in the NZSHM22 inputs) as the inputs give them, instead of forcing their ruptures to 0 '
                          'as the penalty rows do (they then cap those ruptures softly, and the fit check leaves them out)')
+    ap.add_argument('--cfm-sliprates', default=None, metavar='CSV',
+                    help='rebuild the slip-rate rows from the NZ Community Fault Model (NZ_CFM_v1_0.csv: SR_pref, SR_min, '
+                         'SR_max per parent fault), each a split normal in mm/yr with its mode at the inputs\' factor (0.8) '
+                         'x SR_pref (cfm_sliprates.py); needs --rupture-set')
+    ap.add_argument('--rupture-set', default=None, help='the OpenSHA rupture set (for --cfm-sliprates)')
+    ap.add_argument('--cfm-sigmas', type=float, default=2.0,
+                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2)')
+    ap.add_argument('--cfm-factor', type=float, default=2.0,
+                    help='--cfm-sliprates: each side\'s sd multiplied by this (default 2, the inputs\' doubling)')
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()
@@ -397,6 +406,20 @@ def main():
     d_raw = load_vector(args.d)
     say(f'== raw: G {A.shape[0]} x {A.shape[1]}, nnz {A.nnz}; d {d_raw.shape}; min entry {A.data.min():.4g}, max {A.data.max():.4g}')
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
+    L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
+    if args.cfm_sliprates:
+        from cfm_sliprates import rebuild
+        from cru_common import find_rupture_set
+        rd_c = find_rupture_set(args.rupture_set) if args.rupture_set else None
+        if rd_c is None:
+            raise SystemExit('--cfm-sliprates needs --rupture-set (the OpenSHA rupture set: its fault_sections.geojson, '
+                             'indices.csv and average_slips.csv)')
+        try:
+            A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas, args.cfm_factor)
+        except ValueError as e:
+            raise SystemExit(f'--cfm-sliprates: {e}')
+        for ln in lines_c:
+            say(ln)
 
     G, d, keep_r, keep_c, info = clean(A, d_raw, args.huge, not args.keep_empty_rows, not args.keep_soft_penalties)
     N, n = G.shape
@@ -572,7 +595,10 @@ def main():
         say(f'   no magnitude-bin rows, so --mfd-uncertainty {mfd_spec!r} has nothing to do')
     save_problem(args.out, G, d, sig, args.lo, args.hi, keep_r, keep_c, block, bnames, branges, raw_shape=A.shape,
                  row_scale=row_scale, section=section, slip_sections=str(spec), chi2_expect=np.array(chi2_exp),
-                 mfd_uncertainty=mfd_spec, mfd_scale=mfd_c)
+                 mfd_uncertainty=mfd_spec, mfd_scale=mfd_c,
+                 split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
+                 cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
+                                                                    f'{args.cfm_sigmas:g}', f'{args.cfm_factor:g}']))
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 
