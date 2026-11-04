@@ -54,8 +54,8 @@ posterior 16%, 50% and 84% points, their difference and their ratio, and per row
 Kept draws: when the rate vectors hold the kept draws that select_draws.py adds (REPRESENTATIVES above 0, the
 notebook's default; about 3,000), each one's section means are drawn as x's at their sections' targets in place of the
 16-84% bars, in the sections' colours darkened a little and faint, so that where the draws gather shows darkest
-(cru_common.draw_xs); those beyond the axes (on the log scale, 0 included) sit on their edges, and the section means'
-dots get a dark outline. Their predictions are read from those the runs recorded (cru_common.kept_predictions; one
+(cru_common.draw_xs); those beyond the axes (on the log scale, 0 included) sit on their edges.
+Their predictions are read from those the runs recorded (cru_common.kept_predictions; one
 draw per run is recomputed from its rates as a check), and without kept draws, or if the runs do not match them, the
 bars are drawn instead; the tables keep the 16%, 50% and 84% points over every recorded draw.
 
@@ -372,7 +372,7 @@ def main():
                 kb = ts > 0 if log else np.ones(S, bool)
                 ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.0,
                           zorder=2.2, path_effects=outline)
-            ec, ew = (INK, 0.6) if D['xs'] is not None else (MUTED, 0.4)   # over the x's, a darker outline
+            ec, ew = MUTED, 0.4                      # a thin grey edge, so the pale colours show
             scatter_edges(ax, ts, D['ys'], lo_e, hi_e, dict(s=20, c=col, edgecolors=ec, linewidths=ew, zorder=2.5),
                           dict(s=24, c=col, edgecolors=ec, linewidths=ew, zorder=2.5))
             # labels stacked in the empty corner below the 1:1 line (the panel's diagonal), with leader lines
@@ -399,7 +399,7 @@ def main():
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
     few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
-    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=INK if kx else MUTED, mew=0.6 if kx else 0.4) for c in few), 'section mean')]
+    handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=MUTED, mew=0.4) for c in few), 'section mean')]
     if bars:
         handles.append((tuple(Line2D([], [], color=c, lw=1.0, path_effects=outline) for c in few),
                         'posterior 16–84% of the section mean'))
