@@ -349,7 +349,7 @@ def main():
                               linewidths=0.45, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.45, zorder=3.2))
             if D['xs'] is not None:                  # each kept draw's predictions, as x's, within the axes
                 draw_xs(ax, np.broadcast_to(t, D['xs'].shape), np.clip(D['xs'], *lim), np.broadcast_to(col, D['xs'].shape),
-                        alpha=0.06)
+                        alpha=0.05)
             elif D['q'] is not None:                 # posterior 16-84% of each prediction, within the axes
                 ax.vlines(t, np.clip(D['q'][0], *lim), np.clip(D['q'][2], *lim), colors=col, lw=1.3, zorder=2.2,
                           path_effects=outline)

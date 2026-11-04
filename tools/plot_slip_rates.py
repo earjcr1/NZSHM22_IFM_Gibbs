@@ -367,7 +367,7 @@ def main():
             if D['xs'] is not None:                  # each kept draw's section means, as x's, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
                 Xv = np.clip(D['xs'][:, kb], *lim)
-                draw_xs(ax, np.broadcast_to(ts[kb], Xv.shape), Xv, np.broadcast_to(col[kb], Xv.shape), alpha=0.038)
+                draw_xs(ax, np.broadcast_to(ts[kb], Xv.shape), Xv, np.broadcast_to(col[kb], Xv.shape), alpha=0.025)
             elif D['q'] is not None:                 # posterior 16-84% of each section mean, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
                 ax.vlines(ts[kb], np.clip(D['q'][0][kb], *lim), np.clip(D['q'][2][kb], *lim), colors=col[kb], lw=1.0,
