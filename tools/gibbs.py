@@ -282,20 +282,51 @@ static inline void col_dots(int64_t kg, const double *data, const int32_t *indic
 /* --log-band: the change of the soft band's penalty, the sum over a column's penalized rows (LW > 0) of
    LW (ln(y / d))^2, between the predictions y + G_i d0 and y + G_i d1 (y = r + DY, the current prediction): +INFINITY if
    a prediction would not be above 0 at d1, -INFINITY if one is not at d0 (that state impossible) */
+/* --paleo-misfit: the paleo rows' tables (NULL without it). Row j's table is I[j] (-1: none); table t is the half misfit
+   f at v = ln y (y the row's prediction, as the row is scaled), the cubic Hermite interpolant of the values F and slopes D
+   on the grid V0[t] + H k (k = 0 .. NG - 1), continued linearly beyond it; K[t] the largest |f''| of the interpolant */
+typedef struct { const int32_t *I; const double *V0, *F, *D, *K; double H; int64_t NG; } pmctx;
+
+static double pm_f(const pmctx *pm, int32_t t, double v, double *fp)
+{
+    const int64_t ng = pm->NG;
+    const double *F = pm->F + (size_t)t * (size_t)ng, *D = pm->D + (size_t)t * (size_t)ng, h = pm->H;
+    const double x = (v - pm->V0[t]) / h;
+    if (!(x > 0.0)) { if (fp) *fp = D[0]; return F[0] + D[0] * (v - pm->V0[t]); }
+    if (x >= (double)(ng - 1)) {
+        if (fp) *fp = D[ng - 1];
+        return F[ng - 1] + D[ng - 1] * (v - (pm->V0[t] + h * (double)(ng - 1)));
+    }
+    int64_t k = (int64_t)x;
+    if (k > ng - 2) k = ng - 2;
+    const double s = x - (double)k, s2 = s * s, s3 = s2 * s;
+    if (fp) *fp = (6.0 * s2 - 6.0 * s) * (F[k] - F[k + 1]) / h + (3.0 * s2 - 4.0 * s + 1.0) * D[k] + (3.0 * s2 - 2.0 * s) * D[k + 1];
+    return (2.0 * s3 - 3.0 * s2 + 1.0) * F[k] + (s3 - 2.0 * s2 + s) * h * D[k] + (-2.0 * s3 + 3.0 * s2) * F[k + 1]
+           + (s3 - s2) * h * D[k + 1];
+}
+
+/* --log-band and --paleo-misfit: the change of the penalties, the sum over a column's penalized rows of LW (ln(y / d))^2
+   (the soft band, LW > 0) and of the paleo rows' half misfits f(ln y) (PM), between the predictions y + G_i d0 and
+   y + G_i d1 (y = r + DY, the current prediction): +INFINITY if a prediction would not be above 0 at d1, -INFINITY if
+   one is not at d0 (that state impossible) */
 static double lw_change(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
-                        const double *DY, const double *LW, const double *LD, double d0, double d1)
+                        const double *DY, const double *LW, const double *LD, double d0, double d1, const pmctx *PM)
 {
     double acc = 0.0;
     int bad0 = 0;
     for (int64_t p = p0; p < p1; p++) {
         const int32_t j = indices[p];
         const double w = LW[j];
-        if (w <= 0.0) continue;
+        const int32_t t = PM ? PM->I[j] : -1;
+        if (w <= 0.0 && t < 0) continue;
         const double y = r[j] + DY[j], y0 = y + data[p] * d0, y1 = y + data[p] * d1;
         if (y1 <= 0.0) return INFINITY;
         if (y0 <= 0.0) { bad0 = 1; continue; }
-        const double l0 = log(y0) - LD[j], l1 = log(y1) - LD[j];
-        acc += w * (l1 * l1 - l0 * l0);
+        if (w > 0.0) {
+            const double l0 = log(y0) - LD[j], l1 = log(y1) - LD[j];
+            acc += w * (l1 * l1 - l0 * l0);
+        }
+        if (t >= 0) acc += pm_f(PM, t, log(y1), NULL) - pm_f(PM, t, log(y0), NULL);
     }
     return bad0 ? -INFINITY : acc;
 }
@@ -351,6 +382,16 @@ static inline void col_dots_lw(int64_t kg, const double *data, const int32_t *in
     s3[0] = l0; s3[1] = l1; s3[2] = l2; s3[3] = l3;
 }
 
+/* --paleo-misfit: a paleo row's share of the bound coefficients, added to e: with t = G_ji m / y >= 0 and
+   L = ln(1 + t) in [t - t^2/2, t], f(v + L) - f(v) lies in f'(v) L +- K L^2 / 2, so in [f' t - (max(f', 0) + K) t^2 / 2,
+   f' t + (max(-f', 0) + K) t^2 / 2]: a1 += f' / y, bhi += (max(-f', 0) + K) / (2 y^2), blo += (max(f', 0) + K) / (2 y^2) */
+static inline void pm_coef(double *e, const pmctx *pm, int32_t t, double y) {
+    double fp;
+    (void)pm_f(pm, t, log(y), &fp);
+    const double iy = 1.0 / y, iy2 = iy * iy, kap = pm->K[t];
+    e[0] += fp * iy; e[1] += 0.5 * ((fp < 0.0 ? -fp : 0.0) + kap) * iy2; e[2] += 0.5 * ((fp > 0.0 ? fp : 0.0) + kap) * iy2;
+}
+
 /* --log-band: a row's bound coefficients (col_dots_lw), from its current prediction y > 0 */
 static inline void lw_coef(double *e, double w, double y, double ld) {
     const double q = log(y) - ld, iy = 1.0 / y, iy2 = iy * iy;
@@ -383,7 +424,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
                double gam, const double *MIX, const double *RLO, const double *RHI,
-               const double *LW, const double *LD, const double *DY)
+               const double *LW, const double *LD, const double *DY, const pmctx *PM)
 {
     const double s2 = sigma * sigma;
     double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
@@ -392,8 +433,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         AC = (double *)calloc((size_t)K * (size_t)N * 4, sizeof(double));
         ODD = (double *)malloc(sizeof(double) * (size_t)K * (size_t)SB);
         for (int64_t k = 0; k < K; k++) {
-            for (int64_t j = 0; j < N; j++)
+            for (int64_t j = 0; j < N; j++) {
                 if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], R[k * N + j] + DY[j], LD[j]);
+                if (PM && PM->I[j] >= 0) pm_coef(AC + 4 * (k * N + j), PM, PM->I[j], R[k * N + j] + DY[j]);
+            }
             for (int64_t b = 0; b < SB; b++) ODD[k * SB + b] = exp(LOD[k * SB + b]);
         }
     }
@@ -446,7 +489,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         /* --log-band: the slice step, reversible under the rest of the target, is a proposal that
                            the soft band's change accepts or not (Metropolis), so the update stays exact */
                         if (LW && !empty && m != xi) {
-                            const double dp = lw_change(data, indices, p0, p1, r, DY, LW, LD, 0.0, m - xi);
+                            const double dp = lw_change(data, indices, p0, p1, r, DY, LW, LD, 0.0, m - xi, PM);
                             if (!(log(unif(s)) < -dp)) m = xi;
                         }
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
@@ -487,7 +530,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         }
                         if (on < 0) {
                             if (!have_g) g = lr - (log(uu) - log1p(-uu));
-                            on = lw_change(data, indices, p0, p1, r, DY, LW, LD, -xi, m - xi) < g;
+                            on = lw_change(data, indices, p0, p1, r, DY, LW, LD, -xi, m - xi, PM) < g;
                         }
                         xn = on ? m : 0.0;
                     } else {
@@ -543,6 +586,11 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         for (int64_t p = p0; p < p1; p++) {
                             const int32_t j = indices[p];
                             if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], r[j] + DY[j], LD[j]);
+                            if (PM && PM->I[j] >= 0) {
+                                double *e = AC + 4 * (k * N + j);
+                                if (!(LW[j] > 0.0)) e[0] = e[1] = e[2] = 0.0;
+                                pm_coef(e, PM, PM->I[j], r[j] + DY[j]);
+                            }
                         }
                 }
                 x[i] = xn;
@@ -582,7 +630,7 @@ static int swap_in_band(const int64_t *indptr, const int32_t *indices, const dou
 /* --log-band: the soft band's change when m_i and m_j are exchanged (the two columns' rows merged); +INFINITY if a
    prediction would not be above 0 */
 static double lw_swap(const int64_t *indptr, const int32_t *indices, const double *data, int64_t i, int64_t j,
-                      double dl, const double *r, const double *DY, const double *LW, const double *LD)
+                      double dl, const double *r, const double *DY, const double *LW, const double *LD, const pmctx *PM)
 {
     int64_t p = indptr[i], q = indptr[j];
     const int64_t pe = indptr[i + 1], qe = indptr[j + 1];
@@ -593,18 +641,22 @@ static double lw_swap(const int64_t *indptr, const int32_t *indices, const doubl
         else if (p >= pe || indices[q] < indices[p]) { row = indices[q]; dv = -data[q] * dl; q++; }
         else { row = indices[p]; dv = data[p] * dl - data[q] * dl; p++; q++; }
         const double w = LW[row];
-        if (w <= 0.0) continue;
+        const int32_t t = PM ? PM->I[row] : -1;
+        if (w <= 0.0 && t < 0) continue;
         const double y = r[row] + DY[row], y1 = y + dv;
         if (y1 <= 0.0) return INFINITY;
-        const double l0 = log(y) - LD[row], l1 = log(y1) - LD[row];
-        acc += w * (l1 * l1 - l0 * l0);
+        if (w > 0.0) {
+            const double l0 = log(y) - LD[row], l1 = log(y1) - LD[row];
+            acc += w * (l1 * l1 - l0 * l0);
+        }
+        if (t >= 0) acc += pm_f(PM, t, log(y1), NULL) - pm_f(PM, t, log(y), NULL);
     }
     return acc;
 }
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
               const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
-              const double *RLO, const double *RHI, const double *LW, const double *LD, const double *DY)
+              const double *RLO, const double *RHI, const double *LW, const double *LD, const double *DY, const pmctx *PM)
 {
     const double s2 = sigma * sigma;
     for (int64_t k = 0; k < K; k++) {
@@ -620,7 +672,7 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) cj += data[p] * r[indices[p]];
             const double dl = mj - mi;
             const double dchi = 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
-            const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LD) : 0.0);
+            const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LD, PM) : 0.0);
             if (log(unif(s)) < -0.5 * dchi / s2 + dlp && (!RLO || swap_in_band(indptr, indices, data, i, j, dl, r, RLO, RHI))) {
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
                 for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) r[indices[p]] -= data[p] * dl;
@@ -754,11 +806,11 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P]
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 3
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 3 + [P]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -864,6 +916,33 @@ class Target:
         tol[rows] = np.minimum(1e-9 * np.abs(self.d[rows]), 0.1 * step)     # rounding, well below the limit
         self.band = dict(F=None, rows=rows, tol=tol, floor=floor, what='positivity (each above zero)')
 
+    def set_groups(self, pos_rows, band_rows, band_F):
+        """Hard limits by row group (--slip-band, --paleo-band): positivity on pos_rows, as set_positive keeps it, and on
+        band_rows each prediction within its own factor band_F of its target, as set_band keeps it; other rows (the MFD
+        bins among them) unbounded."""
+        pos_rows, band_rows = np.asarray(pos_rows, np.int64), np.asarray(band_rows, np.int64)
+        self.rlo, self.rhi = np.full(self.N, -np.inf), np.full(self.N, np.inf)
+        tol, floor, F = np.zeros(self.N), None, np.asarray(band_F, np.float64)
+        if len(pos_rows):
+            if self.pkind != 3:
+                raise ValueError('positivity needs spike-and-slab (under the other priors no rate is exactly 0)')
+            Gr = sp.csr_matrix(self.G)[pos_rows]
+            if (Gr.data < 0).any():
+                raise ValueError('positivity needs nonnegative coefficients in the rows it applies to')
+            if (np.diff(Gr.indptr) == 0).any():
+                raise ValueError('positivity: a row with no rupture in it can never be predicted above zero')
+            floor = np.exp(self.zlo_vec if self.zlo_vec is not None else np.full(self.n, self.zlo))
+            step = np.minimum.reduceat(Gr.data * floor[Gr.indices], Gr.indptr[:-1])
+            self.rlo[pos_rows] = 0.5 * step - self.d[pos_rows]
+            tol[pos_rows] = np.minimum(1e-9 * np.abs(self.d[pos_rows]), 0.1 * step)
+        if len(band_rows):
+            if (self.d[band_rows] <= 0).any():
+                raise ValueError('the band needs positive targets')
+            self.rlo[band_rows], self.rhi[band_rows] = self.d[band_rows] / F - self.d[band_rows], F * self.d[band_rows] - self.d[band_rows]
+            tol[band_rows] = 1e-9 * np.abs(self.d[band_rows])
+        self.band = dict(F=None, rows=np.r_[pos_rows, band_rows], pos_rows=pos_rows, band_rows=band_rows, band_F=F, tol=tol,
+                         floor=floor, what='the slip-rate and paleo rows\' limits')
+
     def add_limits(self, rows, rlo, rhi, tol, what):
         """More rows kept within limits on their residuals, [rlo, rhi], alongside any band or positivity (constraint rows
         such as --mfd-monotonic's, after the rows in the likelihood); tol: the rounding allowed when counting rows
@@ -895,6 +974,39 @@ class Target:
 
 def _ptr(a):
     return a.ctypes.data_as(ctypes.c_void_p)
+
+
+class _PMC(ctypes.Structure):
+    """--paleo-misfit: the kernel's pmctx, the paleo rows' tables."""
+    _fields_ = [('I', ctypes.c_void_p), ('V0', ctypes.c_void_p), ('F', ctypes.c_void_p), ('D', ctypes.c_void_p),
+                ('K', ctypes.c_void_p), ('H', ctypes.c_double), ('NG', ctypes.c_int64)]
+
+
+def _pm_ptr(T):
+    """--paleo-misfit: the address of the kernel's tables structure, or None without it."""
+    pm = None if T.lw is None else T.lw.get('PM')
+    if pm is None:
+        return None
+    if '_c' not in pm:
+        pm['_c'] = _PMC(*(a.ctypes.data for a in (pm['I'], pm['V0'], pm['F'], pm['D'], pm['K'])), float(pm['H']), int(pm['NG']))
+    return ctypes.addressof(pm['_c'])
+
+
+def _pm_f_np(pm, t, v):
+    """NumPy twin of pm_f: the half misfits of tables t at v = ln y."""
+    t, v = np.asarray(t, np.int64), np.asarray(v, float)
+    h, ng, v0 = pm['H'], pm['NG'], pm['V0'][t]
+    x = (v - v0) / h
+    base = t * ng
+    k = np.clip(np.floor(np.where(np.isfinite(x), x, 0.0)).astype(np.int64), 0, ng - 2)
+    s = x - k
+    F, D = pm['F'], pm['D']
+    f0, f1, d0, d1 = F[base + k], F[base + k + 1], D[base + k], D[base + k + 1]
+    s2, s3 = s * s, s * s * s
+    val = (2 * s3 - 3 * s2 + 1) * f0 + (s3 - 2 * s2 + s) * h * d0 + (-2 * s3 + 3 * s2) * f1 + (s3 - s2) * h * d1
+    val = np.where(x > 0, val, F[base] + D[base] * (v - v0))
+    hi = x >= ng - 1
+    return np.where(hi, F[base + ng - 1] + D[base + ng - 1] * (v - (v0 + h * (ng - 1))), val)
 
 
 def _lw_ptrs(T):
@@ -942,7 +1054,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
-                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T))
+                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -964,7 +1076,7 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
                      _ptr(pi), _ptr(pj), _ptr(gij), _ptr(T.beta), T.sigma,
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
-                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T))
+                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -1163,7 +1275,9 @@ def _slab_draw_py(g, c):
 def _lw_change_np(T, r, rows, vals, d0, d1):
     """NumPy twin of lw_change: the soft band's change between the predictions y + G_i d0 and y + G_i d1."""
     w = T.lw['W'][rows]
-    sel = w > 0
+    pm = T.lw.get('PM')
+    tix = None if pm is None else pm['I'][rows]
+    sel = w > 0 if tix is None else (w > 0) | (tix >= 0)
     if not sel.any():
         return 0.0
     y = r[rows][sel] + T.lw['DY'][rows][sel]
@@ -1173,8 +1287,20 @@ def _lw_change_np(T, r, rows, vals, d0, d1):
         return np.inf
     if (y0 <= 0).any():
         return -np.inf
-    ld = T.lw['LD'][rows][sel]
-    return float(w[sel] @ ((np.log(y1) - ld) ** 2 - (np.log(y0) - ld) ** 2))
+    ws = w[sel]
+    out = 0.0
+    if tix is None:
+        ld = T.lw['LD'][rows][sel]
+        return float(ws @ ((np.log(y1) - ld) ** 2 - (np.log(y0) - ld) ** 2))
+    wk = ws > 0
+    if wk.any():
+        ld = T.lw['LD'][rows][sel][wk]
+        out += float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y0[wk]) - ld) ** 2))
+    tk = tix[sel]
+    pk = tk >= 0
+    if pk.any():                                     # --paleo-misfit: the paleo rows' half misfits
+        out += float(np.sum(_pm_f_np(pm, tk[pk], np.log(y1[pk])) - _pm_f_np(pm, tk[pk], np.log(y0[pk]))))
+    return out
 
 
 def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
@@ -1253,11 +1379,26 @@ def swaps_numpy(T, X, R, g, nacc):
                 np.add.at(dv, np.searchsorted(rows, ri), vi * dl)
                 np.add.at(dv, np.searchsorted(rows, rj), -vj * dl)
                 w = T.lw['W'][rows]
-                sel = w > 0
-                y = R[k, rows][sel] + T.lw['DY'][rows][sel]
-                y1 = y + dv[sel]
-                ld = T.lw['LD'][rows][sel]
-                dlp -= np.inf if (y1 <= 0).any() else float(w[sel] @ ((np.log(y1) - ld) ** 2 - (np.log(y) - ld) ** 2))
+                pm = T.lw.get('PM')
+                if pm is None:
+                    sel = w > 0
+                    y = R[k, rows][sel] + T.lw['DY'][rows][sel]
+                    y1 = y + dv[sel]
+                    ld = T.lw['LD'][rows][sel]
+                    dlp -= np.inf if (y1 <= 0).any() else float(w[sel] @ ((np.log(y1) - ld) ** 2 - (np.log(y) - ld) ** 2))
+                else:                                    # --paleo-misfit too
+                    tix = pm['I'][rows]
+                    sel = (w > 0) | (tix >= 0)
+                    y = R[k, rows][sel] + T.lw['DY'][rows][sel]
+                    y1 = y + dv[sel]
+                    if (y1 <= 0).any():
+                        dlp = -np.inf
+                    else:
+                        ws, tk = w[sel], tix[sel]
+                        wk, pk = ws > 0, tk >= 0
+                        ld = T.lw['LD'][rows][sel][wk]
+                        dlp -= float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y[wk]) - ld) ** 2))
+                        dlp -= float(np.sum(_pm_f_np(pm, tk[pk], np.log(y1[pk])) - _pm_f_np(pm, tk[pk], np.log(y[pk]))))
             if np.log(_u01(g)) < -0.5 * dchi / s2 + dlp and (T.rlo is None or _swap_in_band(T, R[k], ri, vi, rj, vj, dl)):
                 R[k, ri] += vi * dl
                 R[k, rj] -= vj * dl
@@ -1484,7 +1625,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     tr = dict(chi2=np.zeros((K, n_rec)), sum_m=np.zeros((K, n_rec)), tscale=np.zeros((K, n_rec)),
               mon=np.zeros((K, n_rec, len(monitor))), y=np.zeros((K, n_keep, T.n_data), np.float32), sweep=np.zeros(n_rec, int))
     nd = T.n_data                                        # chi2 and predictions over the data rows only
-    dd = T.d[:nd] @ T.d[:nd]
+    PMr = None if T.lw is None or T.lw.get('PM') is None else T.lw['PM']   # --paleo-misfit: its rows are scaled in G
+    Dd = T.d[:nd] if PMr is None else PMr['d_data']      # the data rows' targets, as the problem gives them
+    dd = Dd @ Dd
     nbal = T.n_fit if T.n_bal is None else T.n_bal       # the balance term's rows, nd:nbal; --slip-sum's, nbal:n_fit
     if T.balance is not None and nd < nbal:              # the balance term's rows: recorded on their own
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
@@ -1558,6 +1701,14 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         R = T.residual(X)                                    # exact recompute: no drift
         Rd = R if nd == T.N else R[:, :nd]                   # the data rows (after them, the balance term's)
         y = Rd + T.d[:nd]
+        if PMr is not None:                                  # --paleo-misfit: its misfit, and the paleo rows unscaled, so
+            pr_ = PMr['rows']                                # that chi2 and the predictions are as without it
+            tr['paleo_mode'] = np.array(PMr['mode'])
+            tr.setdefault('paleo_misfit', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(
+                _pm_f_np(PMr, np.tile(np.arange(len(pr_)), (K, 1)), np.log(np.maximum(y[:, pr_], 1e-300))), 1)
+            y = y.copy()
+            y[:, pr_] /= PMr['eps']
+            Rd = y - Dd
         tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
         if T.rlo is not None:                                # rows outside the band: always 0, a check
             tr.setdefault('band_outside', np.zeros((K, n_rec), np.int64))[:, rec] = T.band_outside(R)
@@ -1566,7 +1717,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('balance_s', np.zeros((K, n_rec, nbal - nd)))[:, rec] = R[:, nd:nbal] / np.sqrt(T.balance['A'])
         if T.slip_sum is not None:                           # the summed slip rates' term, on its own
             tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
-        if T.lw is not None:                                 # --log-band: the soft band's penalty, on its own
+        if T.lw is not None and T.lw.get('tau') is not None:   # --log-band: the soft band's penalty, on its own
             lr_ = T.lw['rows']
             with np.errstate(divide='ignore', invalid='ignore'):
                 lq = np.log(np.maximum(R[:, lr_] + T.lw['DY'][lr_], 0.0)) - T.lw['LD'][lr_]
@@ -1576,7 +1727,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('log_band_out', np.zeros((K, n_rec)))[:, rec] = np.sum(np.abs(lq) > T.lw['tau'] * LN10, 1)
         Xm = X if sc is None else X * sc
         tr['sum_m'][:, rec] = Xm.sum(1)
-        tr['tscale'][:, rec] = y @ T.d[:nd] / dd
+        tr['tscale'][:, rec] = y @ Dd / dd
         tr['mon'][:, rec] = Xm[:, monitor]
         tr['sweep'][rec] = (rec + 1) * thin
         if rec >= n_burn:
@@ -1691,6 +1842,11 @@ def report(tr, burn, thin, names=None):
         print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
               f'tau of their targets: {o.mean():.1f} per draw')
+    if 'paleo_misfit' in tr:                         # --paleo-misfit: in the likelihood in place of the paleo rows' Gaussian
+        v = tr['paleo_misfit'][:, nb:]
+        print(f'paleo misfit (--paleo-misfit {tr["paleo_mode"]}; -2 ln of each site\'s recurrence-interval PDF, from its minimum, on '
+              f'chi2\'s scale): {v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), in the '
+              f'likelihood in place of the paleo rows\' Gaussian (chi2 above still counts that Gaussian, for comparison)')
     if 'hyper_pi' in tr:                             # spike-and-slab: per-bin fraction switched on
         pi = tr['hyper_pi'][:, nb:, :]
         rh = split_rhat(pi)
@@ -2098,6 +2254,97 @@ def selftest_swaps(backends=('c', 'numpy')):
               f'z = ({zs[0]:+.2f}, {zs[1]:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
     print('SELFTEST (swap moves)', 'PASSED' if ok else 'FAILED')
     return ok
+
+
+def selftest_paleo(backends=('c', 'numpy')):
+    """The paleo misfit (--paleo-misfit years) on two spike-and-slab rates: a weak Gaussian row and a paleo row, scaled out
+    of the Gaussian and scored by a site's tabulated half misfit (a lopsided curve, paleo_misfit.tables), with swap moves
+    between the rates, against a grid integral of likelihood x prior x exp(-f): P(on) and E[log10 m | on] of each rate.
+    Then the per-group hard limits (set_groups) against set_positive and set_band, which they must reproduce."""
+    from scipy.special import betaln
+    from paleo_misfit import PALEO_EPS, tables
+    print('paleo misfit (--paleo-misfit years): spike-and-slab with swaps vs a grid integral')
+    ok = True
+    site = dict(name='test', section=0, best=0.03, sd=0.009, q=np.array([0.012, 0.019, 0.034, 0.05]))
+    tab = tables([site], 'years')
+    c0, cp, sig, lo10, su, a_, b_ = np.array([1.0, 0.7]), np.array([0.5, 1.0]), 0.1, np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    d0 = 0.04
+    eps, sd = PALEO_EPS, site['sd']
+    pm = dict(I=np.array([-1, 0], np.int32), V0=np.ascontiguousarray(tab['U0'] - np.log(sd / eps)), F=tab['F'], D=tab['DF'],
+              K=tab['KAPPA'], H=tab['H'], NG=tab['NG'], rows=np.array([1]), eps=eps, d_data=np.array([d0, site['best'] / sd]),
+              mode='years')
+    pmr = dict(pm, V0=np.ascontiguousarray(tab['U0']))          # the same table in u = ln(rate), for the grid integral
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def Lb(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        yg, yp = c0[0] * m1 + c0[1] * m2, cp[0] * m1 + cp[1] * m2      # the Gaussian row; the paleo row's rate
+        with np.errstate(divide='ignore'):
+            f = np.where(yp > 0, _pm_f_np(pmr, np.zeros(yp.shape, np.int64), np.log(np.maximum(yp, 1e-300))), np.inf)
+        return np.exp(-0.5 * (yg - d0) ** 2 / sig ** 2 - f)
+    L1, L2, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2), pg[2] * L12.sum()   # both off: impossible
+    W_ = w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2 + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    Gs = np.vstack([c0, cp * eps / sd])                         # the paleo row in G: coefficient / sd, scaled by eps
+    dv = np.array([d0, eps * site['best'] / sd])
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dv, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([Gs[:, 0] @ Gs[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.lw = dict(W=np.zeros(2), LD=np.zeros(2), DY=np.ascontiguousarray(dv), rows=np.array([], np.int64), tau=None,
+                    PM=dict(pm))
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.04, 0.0], (K, 1)), sw, sw // 10, 1, be, 1, 29, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= bool((Mo > 0).any(-1).all())                # never both off: the paleo row's prediction must stay above 0
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        ok &= bool(np.isfinite(tr['paleo_misfit']).all() and (tr['paleo_misfit'] >= -1e-9).all())
+    # the per-group limits: positivity alone and the band alone as set_positive and set_band give them, and both together
+    Gq = sp.csc_matrix(np.array([[1.0, 0.5, 0.0], [0.0, 1.0, 2.0], [0.3, 0.0, 1.0]]))
+    dq = np.array([0.5, 0.8, 0.4])
+    mk = lambda: Target(Gq, dq, 0.1, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+    A, B = mk(), mk()
+    for T_ in (A, B):
+        T_.pkind = 3
+    A.set_positive([0, 2]); B.set_groups([0, 2], [], [])
+    ok_g = np.array_equal(A.rlo, B.rlo) and np.array_equal(A.rhi, B.rhi) and np.array_equal(A.band['tol'], B.band['tol'])
+    A, B = mk(), mk()
+    A.set_band(4.0, [1]); B.set_groups([], [1], [4.0])
+    ok_g &= np.array_equal(A.rlo, B.rlo) and np.array_equal(A.rhi, B.rhi)
+    C = mk(); C.pkind = 3
+    C.set_groups([0], [1, 2], [4.0, 3.0])
+    ok_g &= bool(np.isfinite(C.rlo).all() and np.isinf(C.rhi[0]) and np.allclose(C.rhi[1:], np.array([4.0, 3.0]) * dq[1:] - dq[1:])
+                 and np.allclose(C.rlo[1:], dq[1:] / np.array([4.0, 3.0]) - dq[1:]))
+    print(f'   per-group limits: set_groups reproduces set_positive and set_band, and combines them: {"yes" if ok_g else "NO"}')
+    ok &= bool(ok_g)
+    print('SELFTEST (paleo misfit)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
 
 
 def selftest_logband(backends=('c', 'numpy')):
@@ -2556,7 +2803,7 @@ def positive_start(T, U):
     crosses the most such rows (ties: the lowest index), until none is left. At the slab floor these rates add next to
     nothing to the fit. Returns (the new U, how many were switched on)."""
     U = np.array(U, np.float64)
-    rows = T.band['rows']
+    rows = T.band.get('pos_rows', T.band['rows'])     # with per-group limits, the rows with positivity only
     Gr = sp.csr_matrix(T.G)[rows]
     Gc = Gr.tocsc()
     covered = np.asarray(Gr @ (U > 0).astype(np.float64)).ravel() > 0
@@ -2575,7 +2822,7 @@ def band_start_key(G, d, rows, F, m0, hi):
     """A fingerprint of everything band_start's result depends on: the problem's matrix and targets, the banded rows, the
     factor, the start it moves and the rates' upper bounds."""
     G = sp.csr_matrix(G)
-    h = hashlib.sha1(repr(float(F)).encode())
+    h = hashlib.sha1(repr(float(F)).encode() if np.ndim(F) == 0 else np.ascontiguousarray(F, np.float64).tobytes())
     for v in (G.indptr, G.indices, G.data, d, rows, m0, np.broadcast_to(hi, len(m0))):
         h.update(np.ascontiguousarray(v).tobytes())
     return h.hexdigest()
@@ -2655,6 +2902,24 @@ def main():
                          'inside by a penalized least-squares fit, made once per problem: it is kept beside --problem '
                          '(<problem>_band<F>_start.npz) and taken from there by later runs with the same problem, band and '
                          'start')
+    ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log'],
+                    help='the paleo rows\' misfit (the notebook\'s PALEO_MISFIT): \'gaussian\' (default), the inputs\' '
+                         'Gaussian in rate; \'years\': -2 ln of each site\'s recurrence-interval PDF in years, a curve '
+                         'through its quantiles with its mode at 1/bestEstimate (paleo_misfit.py; needs --rupture-set, '
+                         '--positive and spike-and-slab; the soft band then acts on the slip-rate rows only); \'log\': the '
+                         'same curve\'s density in log rate, its mode at bestEstimate')
+    ap.add_argument('--slip-band', default=None, metavar='positive|F',
+                    help='the slip-rate rows\' hard limit (the notebook\'s SLIP_BAND): \'positive\', each subsection\'s '
+                         'prediction above zero, or a factor F above 1, each within F of its target; per row group, in place '
+                         'of --positive and --band (which act on every positive-target row, the MFD bins too)')
+    ap.add_argument('--paleo-band', default=None, metavar='positive|F',
+                    help='the paleo rows\' hard limit (the notebook\'s PALEO_BAND), as --slip-band')
+    ap.add_argument('--slip-log-band', type=float, default=None, metavar='TAU',
+                    help='a soft band on the slip-rate rows (the notebook\'s SLIP_BAND_SOFT), as --log-band, with '
+                         '--slip-band positive')
+    ap.add_argument('--paleo-log-band', type=float, default=None, metavar='TAU',
+                    help='a soft band on the paleo rows (the notebook\'s PALEO_BAND_SOFT), as --log-band, with --paleo-band '
+                         'positive, and not with --paleo-misfit years or log')
     ap.add_argument('--log-band', type=float, default=None, metavar='TAU',
                     help='with --positive, spike-and-slab only: a soft version of the band (the notebook\'s BAND_SOFT), a '
                          'Gaussian penalty on each positive-target data row\'s log ratio of prediction to target, 1/2 '
@@ -2732,7 +2997,7 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, eleven verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, twelve verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
                          "term, swap moves and the band), six verdicts")
     a = ap.parse_args()
@@ -2756,6 +3021,7 @@ def main():
         ok &= selftest_balance()
         ok &= selftest_band()
         ok &= selftest_logband()
+        ok &= selftest_paleo()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -2975,6 +3241,36 @@ def main():
         print('prior:', desc)
     else:
         beta = prior_rates(a.prior, n)
+    pm_rows = pm_tab = None                        # --paleo-misfit: the paleo rows, scaled out of the Gaussian
+    if a.paleo_misfit != 'gaussian':
+        from paleo_misfit import PALEO_EPS, load_sites, report_lines, tables
+        if not (a.positive or a.paleo_band is not None) or not spike_mode:
+            raise SystemExit('--paleo-misfit needs a hard limit on the paleo rows (--paleo-band positive or a factor, or '
+                             '--positive) and spike-and-slab')
+        from cru_common import find_rupture_set
+        rd_p = find_rupture_set(a.rupture_set, search=False) if a.rupture_set else None
+        if rd_p is None:
+            raise SystemExit('--paleo-misfit needs --rupture-set (the OpenSHA rupture set: its paleo_constraint_data.json)')
+        sites = load_sites(rd_p)
+        nraw = int(P['raw_shape'][0])
+        where = {int(o): ii for ii, o in enumerate(np.asarray(P['keep_rows']))}
+        orig = np.arange(nraw - len(sites), nraw)      # the inputs' last rows, in the file's order
+        if not all(int(o) in where for o in orig):
+            raise SystemExit(f'--paleo-misfit: the last {len(sites)} rows of the inputs are not all in the cleaned problem')
+        pm_rows = np.array([where[int(o)] for o in orig])
+        sd_p = np.array([s_['sd'] for s_ in sites])
+        tgt = np.array([s_['best'] / s_['sd'] for s_ in sites])
+        if not np.allclose(np.asarray(P['d'])[pm_rows], tgt, rtol=1e-9, atol=0):
+            raise SystemExit('--paleo-misfit: the paleo rows\' targets are not bestEstimate / sd of the rupture set\'s '
+                             'paleo_constraint_data.json')
+        pm_tab = tables(sites, a.paleo_misfit)
+        print('\n'.join(report_lines(sites, pm_tab)))
+        if not all(f_[2] for f_ in pm_tab['fits']):
+            raise SystemExit('--paleo-misfit: some sites\' curves could not be fitted (above)')
+        rs_ = np.ones(G_fit.shape[0])
+        rs_[pm_rows] = PALEO_EPS
+        d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
+        G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
     fprelim = a.prelim or prelim_path(a.problem)
     pairs = None
     if a.swap_cos > 0:
@@ -2994,6 +3290,12 @@ def main():
             for c0 in range(0, len(pi), 100000):
                 c1 = min(c0 + 100000, len(pi))
                 ip[c0:c1] += np.asarray(Ac[:, pi[c0:c1]].multiply(Ac[:, pj[c0:c1]]).sum(0)).ravel()
+            pairs = (pi, pj, ip)
+        if pm_rows is not None:                    # --paleo-misfit: the paleo rows' share, scaled out with them
+            Gpc, ip = sp.csc_matrix(sp.csr_matrix(P['G'])[pm_rows]), np.array(pairs[2])
+            for c0 in range(0, len(pi), 100000):
+                c1 = min(c0 + 100000, len(pi))
+                ip[c0:c1] -= (1.0 - PALEO_EPS ** 2) * np.asarray(Gpc[:, pi[c0:c1]].multiply(Gpc[:, pj[c0:c1]]).sum(0)).ravel()
             pairs = (pi, pj, ip)
         if scale is not None:                      # inner products of the scaled columns
             pairs = (pi, pj, pairs[2] * scale[pi] * scale[pj])
@@ -3028,6 +3330,53 @@ def main():
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
     band_rows = None
+    grp = any(v is not None for v in (a.slip_band, a.paleo_band, a.slip_log_band, a.paleo_log_band))
+    if grp and (a.positive or a.band is not None or a.log_band is not None):
+        raise SystemExit('give --positive, --band and --log-band (every positive-target row) or the per-group --slip-band, '
+                         '--paleo-band, --slip-log-band and --paleo-log-band, not both')
+    pos_g = np.zeros(0, np.int64)                  # with per-group limits: the rows with positivity
+    if grp:
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--slip-band and --paleo-band are not implemented for transfer moves or the hierarchical prior')
+        sb_ = list(P['block_names'])
+        dpos = np.asarray(P['d'])[:P['G'].shape[0]] > 0
+        blk = np.asarray(P['block'])
+        g_slip = np.flatnonzero(dpos & (blk == sb_.index(a.slip_block))) if a.slip_block in sb_ else np.zeros(0, np.int64)
+        not_pal = [sb_.index(b_) for b_ in (a.slip_block, a.bins_block) if b_ in sb_]
+        g_pal = np.flatnonzero(dpos & ~np.isin(blk, not_pal))   # every positive-target row in neither group: the paleo rows
+        def band_arg(v, name):
+            if v is None or v == 'positive':
+                return v
+            try:
+                f_ = float(v)
+            except ValueError:
+                raise SystemExit(f'--{name} {v}: give positive or a factor above 1')
+            if not f_ > 1:
+                raise SystemExit(f'--{name} {v}: give positive or a factor above 1 (10: an order of magnitude either way)')
+            return f_
+        sl_b, pa_b = band_arg(a.slip_band, 'slip-band'), band_arg(a.paleo_band, 'paleo-band')
+        for tau_, b_, name in ((a.slip_log_band, sl_b, 'slip'), (a.paleo_log_band, pa_b, 'paleo')):
+            if tau_ is not None and (b_ != 'positive' or not tau_ > 0):
+                raise SystemExit(f'--{name}-log-band {tau_:g}: give a width above 0, with --{name}-band positive')
+        if a.paleo_log_band is not None and a.paleo_misfit != 'gaussian':
+            raise SystemExit('--paleo-log-band with --paleo-misfit: the paleo misfit already scores each paleo prediction')
+        pos_g = np.r_[g_slip if sl_b == 'positive' else np.zeros(0, np.int64), g_pal if pa_b == 'positive' else np.zeros(0, np.int64)]
+        b_rows, b_F = [], []
+        for rows_, b_ in ((g_slip, sl_b), (g_pal, pa_b)):
+            if isinstance(b_, float):
+                b_rows.append(rows_); b_F.append(np.full(len(rows_), b_))
+        b_rows = np.concatenate(b_rows) if b_rows else np.zeros(0, np.int64)
+        b_F = np.concatenate(b_F) if b_F else np.zeros(0)
+        if len(pos_g) or len(b_rows):
+            try:
+                T.set_groups(pos_g, b_rows, b_F)
+            except ValueError as e:
+                raise SystemExit(f'--slip-band / --paleo-band: {e}')
+        if len(b_rows):
+            band_rows, band_F = b_rows, b_F
+        desc_ = lambda b_: 'no limit' if b_ is None else 'each above zero' if b_ == 'positive' else f'each within a factor {b_:g} of its target'
+        print(f'slip-rate rows ({len(g_slip)}): {desc_(sl_b)}; paleo rows ({len(g_pal)}): {desc_(pa_b)}; the MFD bins: no limit'
+              + ('; a start outside the limits is moved inside first' if len(pos_g) or len(b_rows) else ''))
     if a.positive and a.band is not None:
         raise SystemExit('--positive and --band: give one or the other')
     if a.positive:                                 # positivity: every data row with a positive target above zero
@@ -3046,6 +3395,7 @@ def main():
         if dirs is not None or lognormal is not None:
             raise SystemExit('--band is not implemented for transfer moves or the hierarchical prior')
         band_rows = np.flatnonzero(P['d'] > 0)
+        band_F = a.band
         T.set_band(a.band, band_rows)
         print(f'band: the predictions of {len(band_rows)} of the {T.n_data} data rows (those with a positive target) kept '
               f'within a factor {a.band:g} of their targets; any start outside it is moved inside first')
@@ -3063,14 +3413,16 @@ def main():
     if band_rows is not None:                      # a start outside the band: moved inside it first
         Gd = sp.csr_matrix(P['G'])
         y0 = (Gd @ X0.T).T
-        n_out = np.sum((y0[:, band_rows] < P['d'][band_rows] / a.band) | (y0[:, band_rows] > P['d'][band_rows] * a.band), 1)
+        n_out = np.sum((y0[:, band_rows] < P['d'][band_rows] / band_F) | (y0[:, band_rows] > P['d'][band_rows] * band_F), 1)
         if n_out.any():
             hi_m = T.hi * (scale if scale is not None else 1.0)
             x0 = X0[int(np.argmax(n_out))]
             # the fit is deterministic, so it is made once per problem and kept beside it: later runs (the other
             # replicates) with the same problem, band, start and bounds take it from there
-            cache = os.path.splitext(a.problem)[0] + f'_band{a.band:g}_start.npz'
-            key = band_start_key(Gd, P['d'], band_rows, a.band, x0, hi_m)
+            lab_ = (f'{a.band:g}' if not grp else ''.join(f'{nm}{b_:g}' for nm, b_ in (('slip', sl_b), ('paleo', pa_b))
+                                                            if isinstance(b_, float)))
+            cache = os.path.splitext(a.problem)[0] + f'_band{lab_}_start.npz'
+            key = band_start_key(Gd, P['d'], band_rows, band_F, x0, hi_m)
             ms = None
             if os.path.exists(cache):
                 with np.load(cache) as c:
@@ -3081,11 +3433,11 @@ def main():
                       f'found from it is taken from {cache}')
             else:
                 print(f'band: the start leaves {n_out.max()} rows outside it; a penalized least-squares fit from it:')
-                ms = band_start(Gd, P['d'], band_rows, a.band, x0, hi_m)
+                ms = band_start(Gd, P['d'], band_rows, band_F, x0, hi_m)
                 if ms is None:
                     raise SystemExit('band: no start inside it was found; the band may admit no model of these inputs')
                 tmp = cache[:-4] + f'.{os.getpid()}.tmp.npz'
-                np.savez(tmp, m=ms, key=key, band=a.band)
+                np.savez(tmp, m=ms, key=key, band=band_F)
                 os.replace(tmp, cache)               # whole or not at all, should another run read it meanwhile
                 print(f'band: kept for later runs on this problem in {cache}')
             X0 = np.tile(ms, (a.chains, 1))
@@ -3093,7 +3445,7 @@ def main():
             left = T.band_outside(T.residual(Xs[:1]))[0]
             if left:                               # e.g. rates below the slab floor, switched off by the prior
                 raise SystemExit(f'band: the start found leaves {left} rows outside it once the prior\'s support is applied')
-    if a.positive:                                 # a start predicting 0 for some rows: ruptures switched on in them
+    if a.positive or len(pos_g):                   # a start predicting 0 for some rows: ruptures switched on in them
         Us = T.init(X0 if scale is None else X0 / scale)
         n_out = T.band_outside(T.residual(Us))
         if n_out.any():
@@ -3104,6 +3456,34 @@ def main():
             chi1 = float(np.sum(T.residual(Us[:1])[0, :T.n_data] ** 2))
             print(f'positivity: the start predicts 0 for {n_out.max()} rows; {added} ruptures crossing them switched on at '
                   f'twice their slab floor (chi2 {chi0:.4f} -> {chi1:.4f})')
+    if grp and (a.slip_log_band is not None or a.paleo_log_band is not None):   # the soft band, by row group
+        if T.pkind != 3 or dirs is not None:
+            raise SystemExit('--slip-log-band and --paleo-log-band need spike-and-slab, without transfer moves')
+        wt = np.ones(T.N)
+        sb = list(P['block_names'])
+        if a.slip_block in sb:                     # a section's k subsections share its term: each 1/k of it
+            Sr = np.flatnonzero(P['block'] == sb.index(a.slip_block))
+            sec = np.asarray(P['section'])[Sr]
+            if (sec >= 0).all():
+                ks = np.bincount(np.unique(sec, return_inverse=True)[1])
+                wt[Sr] = 1.0 / ks[np.unique(sec, return_inverse=True)[1]]
+        W, LD, rows_l, tau_r = np.zeros(T.N), np.zeros(T.N), [], []
+        for rows_, tau_ in ((g_slip, a.slip_log_band), (g_pal, a.paleo_log_band)):
+            if tau_ is not None:
+                W[rows_] = wt[rows_] / (2.0 * (tau_ * LN10) ** 2)
+                rows_l.append(rows_); tau_r.append(np.full(len(rows_), float(tau_)))
+        rows_l, tau_r = np.concatenate(rows_l), np.concatenate(tau_r)
+        LD[rows_l] = np.log(T.d[rows_l])
+        T.lw = dict(W=np.ascontiguousarray(W), LD=np.ascontiguousarray(LD), DY=np.ascontiguousarray(T.d, np.float64),
+                    rows=rows_l, tau=tau_r)
+        y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, rows_l]
+        pen0 = 2.0 * float(np.sum(W[rows_l] * np.log(y0 / T.d[rows_l]) ** 2)) if (y0 > 0).all() else np.inf
+        print('soft band: a penalty 1/2 (log10(prediction / target) / tau)^2, in the misfit beside the data, kept by a '
+              'Metropolis step, on ' + ' and '.join(f'the {nm} rows ({len(r_)}; tau {t_:g})' for nm, r_, t_ in
+                                                     (('slip-rate', g_slip, a.slip_log_band), ('paleo', g_pal, a.paleo_log_band))
+                                                     if t_ is not None)
+              + f' (each slip-rate subsection 1/k of its section\'s); the start\'s {pen0:.1f} (on chi2\'s scale), '
+              f'{int(np.sum(np.abs(np.log10(np.maximum(y0, 1e-300) / T.d[rows_l])) > tau_r))} rows beyond their tau')
     if a.log_band is not None:                     # the soft band: weights on the positive-target data rows
         if not a.positive or T.pkind != 3 or dirs is not None:
             raise SystemExit('--log-band needs --positive and spike-and-slab, without transfer moves')
@@ -3118,6 +3498,8 @@ def main():
             if (sec >= 0).all():
                 ks = np.bincount(np.unique(sec, return_inverse=True)[1])
                 wt[Sr] = 1.0 / ks[np.unique(sec, return_inverse=True)[1]]
+        if pm_rows is not None and a.slip_block in sb:   # with --paleo-misfit, the slip-rate rows only
+            rows_l = np.intersect1d(rows_l, np.flatnonzero(P['block'] == sb.index(a.slip_block)))
         W = np.zeros(T.N)
         W[rows_l] = wt[rows_l] / (2.0 * (a.log_band * LN10) ** 2)
         LD = np.zeros(T.N)
@@ -3127,9 +3509,25 @@ def main():
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, rows_l]
         pen0 = 2.0 * float(np.sum(W[rows_l] * np.log(y0 / T.d[rows_l]) ** 2)) if (y0 > 0).all() else np.inf
         print(f'soft band: a penalty 1/2 (log10(prediction / target) / {a.log_band:g})^2 on {len(rows_l)} rows (each slip-rate '
-              f'subsection 1/k of its section\'s), in the misfit beside the data, kept by a Metropolis step; the start\'s '
+              f'subsection 1/k of its section\'s' + ('; the slip-rate rows only, with --paleo-misfit' if pm_rows is not None else '')
+              + '), in the misfit beside the data, kept by a Metropolis step; the start\'s '
               f'{pen0:.1f} (on chi2\'s scale), {int(np.sum(np.abs(np.log10(np.maximum(y0, 1e-300) / T.d[rows_l])) > a.log_band))} rows beyond '
               f'{a.log_band:g} decades of their targets')
+    if pm_rows is not None:                        # --paleo-misfit: the paleo rows' tables, through the soft band's machinery
+        if T.lw is None:                           # (its weights 0 without --log-band)
+            T.lw = dict(W=np.zeros(T.N), LD=np.zeros(T.N), DY=np.ascontiguousarray(T.d, np.float64),
+                        rows=np.array([], np.int64), tau=None)
+        I_p = np.full(T.N, -1, np.int32)
+        I_p[pm_rows] = np.arange(len(pm_rows), dtype=np.int32)
+        T.lw['PM'] = dict(I=I_p, V0=np.ascontiguousarray(pm_tab['U0'] - np.log(sd_p / PALEO_EPS)),   # in v = ln(row's y)
+                          F=np.ascontiguousarray(pm_tab['F']), D=np.ascontiguousarray(pm_tab['DF']),
+                          K=np.ascontiguousarray(pm_tab['KAPPA']), H=pm_tab['H'], NG=pm_tab['NG'], rows=pm_rows,
+                          eps=PALEO_EPS, d_data=d_data, mode=a.paleo_misfit)
+        y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, pm_rows]
+        f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], np.arange(len(pm_rows)), np.log(np.maximum(y0, 1e-300)))))
+        print(f'paleo misfit: {len(pm_rows)} paleo rows out of the Gaussian (scaled by {PALEO_EPS:g}), each scored by -2 ln of '
+              + ('its recurrence-interval PDF in years' if a.paleo_misfit == 'years' else 'its curve\'s density in log rate')
+              + f' from its minimum, kept by a Metropolis step; the start\'s {f0:.1f} (on chi2\'s scale)')
     if mono is not None and mono['pairs']:         # the MFD's monotonicity: constraint rows kept at or above 0
         if dirs is not None or lognormal is not None:
             raise SystemExit('--mfd-monotonic is not implemented for transfer moves or the hierarchical prior')

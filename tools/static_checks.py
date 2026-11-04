@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -138,12 +138,15 @@ check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['F
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
       'notebook DOWN_THE_MIDDLE = False (no balance term), recorded; True and \'zero-model\' passed to gibbs.py '
       '--down-the-middle (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
-check(re.findall(r'^BAND = (\S+)', cells[0][1], re.M) == ["'positive'"] and 'band' in _cfg_keys
-      and any("args += ['--band', BAND]" in c for _, c in cells) and "'--band'" in src['gibbs.py']
+check(re.findall(r'^SLIP_BAND = (\S+)', cells[0][1], re.M) == ["'positive'"]
+      and re.findall(r'^PALEO_BAND = (\S+)', cells[0][1], re.M) == ["'positive'"]
+      and 'slip_band' in _cfg_keys and 'paleo_band' in _cfg_keys and not re.findall(r'^BAND = ', cells[0][1], re.M)
+      and any("args += ['--slip-band', SLIP_BAND]" in c and "args += ['--paleo-band', PALEO_BAND]" in c for _, c in cells)
+      and "'--slip-band'" in src['gibbs.py'] and "'--paleo-band'" in src['gibbs.py'] and '    def set_groups(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
-      "notebook BAND = 'positive' (every prediction above zero; a number: the band, each within that factor of its target), "
-      'recorded and passed to gibbs.py --band or --positive, '
-      'with its exact test in both self-test sets')
+      "notebook SLIP_BAND = PALEO_BAND = 'positive' (each group's predictions above zero; a number: within that factor of "
+      'its target; the MFD bins get none), recorded and passed to gibbs.py --slip-band and --paleo-band (Target.set_groups), '
+      'with the band\'s exact test in both self-test sets and set_groups checked against set_positive and set_band')
 check(not re.findall(r'^MFD_MONOTONIC = ', cells[0][1], re.M) and 'mfd_monotonic' not in _cfg_keys
       and not any('--mfd-monotonic' in c or 'MFD_RISE_SD' in c for _, c in cells)
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
@@ -182,16 +185,25 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
-check(re.findall(r'^BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None'] and 'band_soft' in _cfg_keys
-      and any("args += ['--log-band', BAND_SOFT]" in c for _, c in cells) and "'--log-band'" in src['gibbs.py']
+check(re.findall(r'^SLIP_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
+      and re.findall(r'^PALEO_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
+      and 'slip_band_soft' in _cfg_keys and 'paleo_band_soft' in _cfg_keys
+      and any("args += ['--slip-log-band', SLIP_BAND_SOFT]" in c and "args += ['--paleo-log-band', PALEO_BAND_SOFT]" in c
+              for _, c in cells)
+      and "'--slip-log-band'" in src['gibbs.py'] and "'--paleo-log-band'" in src['gibbs.py'] and "'--log-band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
       and 'static inline void col_dots_lw(' in src['gibbs.py'],
-      'notebook BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py --log-band (with positivity; '
-      'kept by a Metropolis step in the kernel, its exact test in the full self-test set)')
-check(any("args += ['--positive']" in c and "BAND == 'positive'" in c for _, c in cells) and "'--positive'" in src['gibbs.py']
-      and 'def set_positive(' in src['gibbs.py'] and 'T.set_positive(' in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      "notebook BAND = 'positive' passes gibbs.py --positive (every prediction above zero), with its exact test in the "
-      'band\'s self-test')
+      'notebook SLIP_BAND_SOFT = PALEO_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
+      '--slip-log-band and --paleo-log-band (with that group\'s positivity; kept by a Metropolis step in the kernel, its '
+      'exact test in the full self-test set)')
+check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] and 'paleo_misfit' in _cfg_keys
+      and any("args += ['--paleo-misfit', PALEO_MISFIT]" in c for _, c in cells)
+      and "'--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log']" in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_paleo()') == 1 and 'static double pm_f(' in src['gibbs.py']
+      and '\ndef fit_site(' in src['paleo_misfit.py'] and '\ndef tables(' in src['paleo_misfit.py'],
+      "notebook PALEO_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'years': each site's recurrence-interval PDF, "
+      'paleo_misfit.py\'s curves), recorded and passed to gibbs.py --paleo-misfit, with its exact test in the full '
+      'self-test set')
 check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
@@ -304,7 +316,8 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'BAND', 'BAND_SOFT',
+MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND',
+                  'PALEO_BAND_SOFT', 'PALEO_MISFIT',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
@@ -325,7 +338,8 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('BAND', 'BAND_SOFT', 'SLIP_SUM', 'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
+_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND', 'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'SLIP_SUM',
+                            'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
       + (f': not {_unpinned}' if _unpinned else ''))

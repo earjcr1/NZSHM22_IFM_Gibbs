@@ -51,7 +51,7 @@ targets and the central 96% of the best fit's predictions, from prelim_results.n
 problem share them; values beyond sit on the edges as triangles. In place of the result set's label, each shows the
 run's settings, SLIP_SECTIONS to FLOOR (cru_common.run_settings, from workflow_config.json next to --problem; --config),
 and the rates-by-magnitude figure gives the chi2 over the bin rows.
-rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
+paleo_misfit.py (the paleo rows' curves for --paleo-misfit, from the rupture set's paleo_constraint_data.json: a report of their fit with python paleo_misfit.py RUPTURE_SET). rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
 moves, single box only) are set aside in cru_retired_scripts.zip; restore them only if that work resumes.
 Development tools, also in tools/ and not run by the notebook: run_nb.py (runs the notebook headless, cell by cell,
 with configuration values overridden from the command line: "PRESET='quick'", CELLS=5, ...), run_quick_checks.sh
@@ -80,7 +80,22 @@ costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the n
 all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
 extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
---band F (the notebook's BAND = 10; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and
+Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT, PALEO_BAND, PALEO_BAND_SOFT):
+--slip-band and --paleo-band (positive or a factor F) and --slip-log-band and --paleo-log-band (TAU, with that group's
+positive) act on the subsections' slip-rate rows and the paleo rows separately (Target.set_groups; the MFD bins get no
+band, which would count them twice); they replace, in the notebook, BAND and BAND_SOFT, which acted on every
+positive-target row through the older flags below, still there for older runs and tests and not combinable with the new
+ones. Defaults: SLIP_BAND = PALEO_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'gaussian' by
+default; with --rupture-set and a hard paleo band): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
+constraint rows are) and each scored instead by -2 ln of its site's recurrence-interval PDF in years, a sinh-arcsinh
+curve in log rate through the four quantiles of paleo_constraint_data.json with its mode at 1/bestEstimate exactly
+(paleo_misfit.py: fit_site, tables; cubic Hermite tables with slopes and a curvature bound kappa per site), kept by the
+soft band's machinery (pmctx in the kernel: pm_f in lw_change and lw_swap, pm_coef's bound coefficients in col_dots_lw's
+sums; the NumPy twin _pm_f_np); recorded as tr['paleo_misfit'] beside chi2, which still counts the paleo rows' Gaussian,
+for comparison (their predictions unscaled before recording); the swap pairs' inner products lose the paleo rows'
+share; selftest_paleo (both backends, against a grid integral; and set_groups against set_positive and set_band) in the
+full set; without it every run is bit-identical (REPORT.md, "The paleo rows' misfit").
+--band F (the notebook's BAND = 10 until November 4th, 2026; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and
 FLOOR = -10 came with it, until BAND = 'positive' and PRESET = 'conservative' became the defaults on 2026-11-02): every data row with a positive target (each subsection's slip-rate row, each MFD bin, each paleo row)
 keeps its prediction within d/F to F d, a hard constraint for any prior (Target.set_band; the kernel's band_bounds
 restricts each update, under spike-and-slab a forbidden off or on state is never taken, swaps that would leave the band
@@ -222,10 +237,10 @@ aside with it.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
-  one: the chi2 cap, --target cutoff, was removed in October 2026), with every prediction above zero by default (BAND = 'positive', --positive)
+  one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate and paleo prediction above zero by default (SLIP_BAND = PALEO_BAND = 'positive', --slip-band and --paleo-band positive)
   and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
-  tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True and BAND = None, under which TESTING.md's quick-preset
+  tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True, no band on either group and PALEO_MISFIT = 'gaussian', under which TESTING.md's quick-preset
   reference values were measured); the notebook runs it alone,
   always with swap moves (--swap-cos 0.99), from the best fit and without stored draws. Sharing the fraction on by magnitude
   bin and tectonic domain or slip-rate section, pooled or not, was tried in October 2026 and changed no fit (REPORT.md).

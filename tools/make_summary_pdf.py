@@ -115,6 +115,23 @@ def main():
                                             f'between {plate[0]:g} and {plate[1]:g}')
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
     tau = cfg.get('band_soft') or None                 # the soft band's width in decades, or None
+    grp = 'slip_band' in cfg                           # since November 2026: a band per row group (slip rates, paleo)
+    g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': cfg.get('paleo_band')} if grp else {}
+    g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
+    pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
+    if grp:
+        isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+        positive = any(v == 'positive' for v in g_band.values())
+        band = next((float(v) for v in g_band.values() if isf(v)), None)
+        tau = next((float(v) for v in g_soft.values() if v), None)
+        hard = bool(band or positive or mono or plate)
+
+    def rows_txt(groups):                              # 'each subsection's slip rate and each paleo rate'
+        word = {'slip-rate': 'each subsection\u2019s slip rate', 'paleo': 'each paleo rate'}
+        return ' and '.join(word[k] for k in ('slip-rate', 'paleo') if k in groups)
+    pos_g = [k for k, v in g_band.items() if v == 'positive']
+    band_g = [k for k, v in g_band.items() if v not in (None, 'positive')]
+    soft_g = [k for k, v in g_soft.items() if v]
     dec = lambda t: f'{t:g} decade' + ('' if t == 1 else 's')
     l0 = cfg.get('slip_sum_l0', 8.5)
     dtm = cfg.get('down_the_middle')                   # the balance term: False, True or 'zero-model'
@@ -194,6 +211,11 @@ def main():
                           r'([\d.]+) S\):.*?kept draws ([\d.]+)-([\d.]+); (\w[^,]*), (\w[^,]*?) [\d.]+', pr_txt, re.S)
     plate_in = re.search(r'kept draws: (\d+); limits .*?: all strips inside in ([\d.]+)% of them', pr_txt)
     sweep_s = [float(x[-1]) for x in (re.findall(r'([\d.]+)s/sweep\)', t) for t in logs) if x]
+    pm_re = r'^paleo misfit \(--paleo-misfit \w+;.*?\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+)\)'
+    pmr = [tuple(float(x) for x in m.groups()) for m in (re.search(pm_re, t, re.M) for t in logs) if m] if pmis != 'gaussian' else []
+    if pmis != 'gaussian' and not pmr:
+        MISSING.append('paleo misfit term')
+    pm_poor = grab(log0, r'(\d+) site\(s\) above [\d.]+ decades', 'paleo curves', int) if pmis != 'gaussian' else None
     wlogs = sorted(glob.glob(os.path.join(PR, 'workflow_log_*.txt')))
     stamps = re.findall(r'^----- (\d{4}-\d\d-\d\d \d\d:\d\d)', read(wlogs[-1]) if wlogs else '', re.M)
     t_start, t_end = (cfg.get('started') or (stamps[0] if stamps else None)), (stamps[-1] if stamps else None)
@@ -301,8 +323,12 @@ def main():
     short = (f'cru_workflow run summary: {data_name}, {preset}' + (f', band {band:g}' if band else ', positivity' if positive
                                                                    else '') + (f', soft band {tau:g}' if tau else ''))
     # the constraints and soft terms in words, for the subtitle
-    parts = ([f'the band (factor {band:g})'] if band else ['positivity'] if positive else []) \
-        + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else []) + (['a monotonic MFD'] if mono else []) \
+    parts = ((([f'positivity on the {" and ".join(pos_g)} rows'] if pos_g else [])
+              + [f'a band on the {k} rows (factor {float(g_band[k]):g})' for k in band_g]
+              + [f'a soft band on the {k} rows ({dec(float(g_soft[k]))} at 1 sd)' for k in soft_g]
+              + (['the paleo rows scored by their recurrence-interval PDFs'] if pmis != 'gaussian' else [])) if grp else
+             ([f'the band (factor {band:g})'] if band else ['positivity'] if positive else [])
+             + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else [])) + (['a monotonic MFD'] if mono else []) \
         + (['the summed slip rates'] if ssum else []) + ([f'the plate rate ({plate_txt})'] if plate else [])
     model_txt = ', '.join(parts[:-1]) + (' and ' if len(parts) > 1 else '') + parts[-1] if parts else ''
 
@@ -401,13 +427,26 @@ def main():
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
            ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
             'as the inputs give them)'],
-           ['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
-            'every prediction kept above zero (a hard constraint)' if positive else
-            f'every prediction kept within a factor {band:g} of its target (a hard constraint)' if band else
-            'neither positivity nor the band'],
-           ['BAND_SOFT', 'None' if not tau else f'{tau:g}',
-            f'each prediction within {dec(tau)} of its target at 1 sd (a soft band: a penalty on the log ratio of '
-            'prediction to target, beside the misfit)' if tau else 'no soft band'],
+          ] + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
+                 (f'each {k} prediction kept above zero (a hard constraint)' if g_band[k] == 'positive' else
+                  f'each {k} prediction kept within a factor {float(g_band[k]):g} of its target (a hard constraint)'
+                  if g_band[k] else 'no limit')] for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))]
+                + [[f'{nm}_BAND_SOFT', 'None' if not g_soft[k] else f'{float(g_soft[k]):g}',
+                    f'each {k} prediction within {dec(float(g_soft[k]))} of its target at 1 sd (a soft band: a penalty on '
+                    'the log ratio of prediction to target, beside the misfit)' if g_soft[k] else 'no soft band']
+                   for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))]
+                + [['PALEO_MISFIT', repr(pmis), 'the paleo rows scored by each site\u2019s recurrence-interval PDF in years '
+                    '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate), in place of '
+                    'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
+                    if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate']]
+                if grp else
+                [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
+                  'every prediction kept above zero (a hard constraint)' if positive else
+                  f'every prediction kept within a factor {band:g} of its target (a hard constraint)' if band else
+                  'neither positivity nor the band'],
+                 ['BAND_SOFT', 'None' if not tau else f'{tau:g}',
+                  f'each prediction within {dec(tau)} of its target at 1 sd (a soft band: a penalty on the log ratio of '
+                  'prediction to target, beside the misfit)' if tau else 'no soft band']]) + [
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
                  'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
                                           'difference' if rise_cap else '') + ' (a hard constraint; a notebook setting '
@@ -485,24 +524,38 @@ def main():
          'on each fraction), so the data decide how many ruptures are active, and the prior puts no pressure on the bin '
          'totals. <b>Likelihood.</b> Gaussian, exp(−χ²/2) with the stated uncertainties'
          + ('.' if not dtm else ', plus a balance term that penalizes a data type predicted all low or all high.')
-         + (f' <b>Band.</b> In addition, every prediction with a positive target (each subsection\u2019s slip rate, each MFD '
-            f'bin and each paleo rate) must lie within a factor {band:g} of its target, from <i>d</i>/{band:g} to {band:g} '
+         + (f' <b>Band.</b> In addition, '
+            + (rows_txt(band_g) + ' must lie' if grp else 'every prediction with a positive target (each subsection\u2019s '
+               'slip rate, each MFD bin and each paleo rate) must lie')
+            + f' within a factor {band:g} of its target, from <i>d</i>/{band:g} to {band:g} '
             '<i>d</i>. This is a hard constraint, a prior that is zero outside it. Its main effect is on faults that share '
             'few ruptures with others: without it the posterior often leaves such faults with no events at all, since '
             'their weak slip-rate targets tolerate a prediction of zero; with it every subsection must slip at no less '
             f'than 1/{band:g} of its target rate. The factor is a modelling choice the data do not make.' if band else '')
-         + (' <b>Positivity.</b> In addition, every prediction with a positive target (each subsection\u2019s slip rate, '
-            'each MFD bin and each paleo rate) must be above zero, so at least one rupture is on in each, with no other '
-            'limit: a hard constraint.' if positive else '')
+         + (' <b>Positivity.</b> In addition, '
+            + (rows_txt(pos_g) + ' must be above zero (the MFD bins have no such limit)' if grp else
+               'every prediction with a positive target (each subsection\u2019s slip rate, each MFD bin and each paleo rate) '
+               'must be above zero')
+            + ', so at least one rupture is on in each, with no other limit: a hard constraint.' if positive else '')
          + (f' <b>A soft band.</b> A penalty beside the misfit on each prediction\u2019s ratio to its target, '
             f'\u00bd (log<sub>10</sub>(prediction / target) / {tau:g})\u00b2, so a prediction {dec(tau)} from its target costs as '
-            'much as a one-uncertainty miss in \u03c7\u00b2, on every row with a positive target (each slip-rate subsection\u2019s '
-            'term divided by the k subsections of its section, so a section counts once). It ignores each row\u2019s '
+            'much as a one-uncertainty miss in \u03c7\u00b2, on '
+            + (' and '.join(f'the {k} rows' + (f' ({dec(float(g_soft[k]))} at 1 sd)' if len(soft_g) > 1 else '') for k in soft_g)
+               if grp else 'every row with a positive target')
+            + ' (each slip-rate subsection\u2019s term divided by the k subsections of its section, so a section counts once). It ignores each row\u2019s '
             'uncertainty, so it acts where a target is weak and the data alone would accept a prediction near zero; where '
             'a target is strong the Gaussian likelihood already holds the prediction far closer than a decade. A '
             'prediction of zero would cost infinitely much, which is why it comes with positivity. It is recorded apart '
             'from \u03c7\u00b2, on \u03c7\u00b2\u2019s scale (twice its share of the negative log posterior), so the fit check stays over the '
             'data alone.' if tau else '')
+         + (' <b>The paleo misfit.</b> The paleo rows leave the Gaussian likelihood: each is scored instead by its site\u2019s '
+            'recurrence-interval PDF from the paleoseismic analysis, \u22122 ln of its density in years, measured from its '
+            'minimum, a curve through the site\u2019s 2.275, 15.865, 84.135 and 97.725% points with its mode at '
+            '1/bestEstimate exactly (the rupture set\u2019s paleo_constraint_data.json)'
+            + (f'; {pm_poor} site(s) fit their quantiles to worse than 0.05 decades' if pm_poor else '')
+            + '. The ranges are lopsided, and the Gaussian caps a site\u2019s misfit, so this penalizes paleo rates predicted '
+            'well below their targets far more. It is kept exactly by the same Metropolis steps as the soft band, and '
+            'recorded apart; \u03c7\u00b2 still counts the paleo rows\u2019 Gaussian misfit, for comparison.' if pmis == 'years' else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
@@ -526,7 +579,8 @@ def main():
          + ('Under the band each update is restricted to the rates that keep every row the rupture touches inside it. '
             if band else '')
          + ('Each update is restricted to the rates that keep the hard constraints ('
-            + ', '.join((['no positive-target row predicted at zero'] if positive else [])
+            + ', '.join(([f'no {" or ".join(pos_g)} row predicted at zero' if grp else 'no positive-target row predicted at zero']
+                         if positive else [])
                         + (['the MFD’s monotonicity'] if mono else []) + (['the plate-rate limit'] if plate else []))
             + '). ' if not band and hard else '')
          + ('The soft band is not quadratic in the rates, so the sampler keeps it exactly by Metropolis steps: a switch '
@@ -607,8 +661,11 @@ def main():
           + [[r[0].strip(), f'{int(r[1]):,}', f'{float(r[2]):g}', f'{r[3]} ± {r[4]}', r[7], r[8].replace('-', '\u2212'),
               r[9], r[10]] for r in brow],
           [2.9 * cm, 1.3 * cm, 2.6 * cm, 2.9 * cm, 2.6 * cm, 1.2 * cm, 2.0 * cm, FW - 15.5 * cm])
-    if lb or ssr:
+    if lb or ssr or pmr:
         para('Each run also records the terms it adds beside χ², each on χ²’s scale and not counted in it. '
+             + (f'<b>The paleo misfit</b>: {rng([x[0] for x in pmr], "{:.1f}")} on average per replicate (5–95% of draws '
+                f'{fmt(min(x[1] for x in pmr), "{:.1f}")}–{fmt(max(x[2] for x in pmr), "{:.1f}")}), in the likelihood in '
+                'place of the paleo rows\u2019 Gaussian, which χ² still counts. ' if pmr else '')
              + (f'<b>The soft band</b>: {rng([x[0] for x in lb], "{:.1f}")} on average per replicate (5–95% of draws '
                 f'{fmt(min(x[1] for x in lb), "{:.1f}")}–{fmt(max(x[2] for x in lb), "{:.1f}")}'
                 + (f'; the start’s {lb_start:.1f}' if lb_start is not None else '') + '), with '
