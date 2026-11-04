@@ -851,10 +851,10 @@ CATEGORICAL = ('#006ba4', '#ff8000', '#5f9ed1', '#ffbc79', '#898989', '#cfcfcf',
                '#ababab')
 
 
-# ColorBrewer's RdYlBu, 10 classes (dark red to dark blue), for the slip-rate and paleo fit figures
-RDYLBU10 = ('#a50026', '#d73027', '#f46d43', '#fdae61', '#fee090', '#e0f3f8', '#abd9e9', '#74add1', '#4575b4', '#313695')
+# ColorBrewer's RdYlBu, 6 classes (red to blue), for the slip-rate and paleo fit figures
+RDYLBU6 = ('#d73027', '#fc8d59', '#fee090', '#e0f3f8', '#91bfdb', '#4575b4')
 # ... in an order that alternates its red and blue ends, so that neighbours along the targets always contrast
-RDYLBU10_CYCLE = tuple(RDYLBU10[i] for i in (0, 6, 2, 8, 4, 9, 1, 7, 3, 5))
+RDYLBU6_CYCLE = tuple(RDYLBU6[i] for i in (0, 3, 1, 5, 2, 4))
 
 
 def neighbour_colours(x, palette=None):

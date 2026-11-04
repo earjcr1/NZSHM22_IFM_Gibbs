@@ -41,8 +41,8 @@ axes; without a best fit, they follow what is plotted. Marks: a dot per section 
 posterior 16-84% bar of each section mean, when the runs are found (a bar reaching an axis continues beyond it, below on
 the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as triangles; the
 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets (default 3). Each
-section's dot and bar share a colour, cycling along the targets through the ten colours
-(ColorBrewer's RdYlBu, 10 classes, its red and blue ends alternating: cru_common.RDYLBU10_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
+section's dot and bar share a colour, cycling along the targets through the six colours
+(ColorBrewer's RdYlBu, 6 classes, its red and blue ends alternating: cru_common.RDYLBU6_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
 never share one; the colours only tell neighbours apart,
 and a section keeps its colour in every model's figure. Sections that share a target (the inputs' slip rates are often
 round numbers: at 211k, 403 of 507 sections share theirs) stay stacked at it, one bar over another. Writes FIGURE
@@ -71,7 +71,7 @@ import textwrap
 import numpy as np
 
 from cru_common import split_weights
-from cru_common import (RDYLBU10, RDYLBU10_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
                         run_settings, settings_lines, slip_sections)
 
@@ -169,7 +169,7 @@ def main():
     rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
-    col = neighbour_colours(ts, RDYLBU10_CYCLE)                          # each section's colour, unlike its neighbours'
+    col = neighbour_colours(ts, RDYLBU6_CYCLE)                          # each section's colour, unlike its neighbours'
     mem = [np.flatnonzero(sec == s) for s in range(S)]
     n_distinct = len(np.unique(np.round(ts, 9)))
     how = ('one measurement per section (each section\'s rows divided by sqrt(k) in the likelihood)' if weighted else
@@ -398,7 +398,7 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = RDYLBU10[1], RDYLBU10[8], RDYLBU10[3]            # the legend shows a few of the colours
+    few = RDYLBU6[0], RDYLBU6[5], RDYLBU6[1]            # the legend shows a few of the colours
     handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=MUTED, mew=0.4) for c in few), 'section mean')]
     if bars:
         handles.append((tuple(Line2D([], [], color=c, lw=1.0, path_effects=outline) for c in few),
