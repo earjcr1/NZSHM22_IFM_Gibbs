@@ -851,14 +851,20 @@ CATEGORICAL = ('#006ba4', '#ff8000', '#5f9ed1', '#ffbc79', '#898989', '#cfcfcf',
                '#ababab')
 
 
-def neighbour_colours(x):
-    """One colour per mark, cycling through CATEGORICAL in its validated order along x (equal x in their given order),
-    so that marks next to each other never share a colour and every pair of neighbours is one the palette's validation
-    covers. The colours only tell neighbours apart; they follow the inputs (x), so a mark keeps its colour in every
-    model's figure."""
+# ColorBrewer's RdYlBu, 10 classes (dark red to dark blue), for the slip-rate and paleo fit figures
+RDYLBU10 = ('#a50026', '#d73027', '#f46d43', '#fdae61', '#fee090', '#e0f3f8', '#abd9e9', '#74add1', '#4575b4', '#313695')
+# ... in an order that alternates its red and blue ends, so that neighbours along the targets always contrast
+RDYLBU10_CYCLE = tuple(RDYLBU10[i] for i in (0, 6, 2, 8, 4, 9, 1, 7, 3, 5))
+
+
+def neighbour_colours(x, palette=None):
+    """One colour per mark, cycling through a palette (CATEGORICAL, in its validated order, by default) along x (equal x
+    in their given order), so that marks next to each other never share a colour. The colours only tell neighbours
+    apart; they follow the inputs (x), so a mark keeps its colour in every model's figure."""
+    pal = CATEGORICAL if palette is None else palette
     rank = np.empty(len(x), int)
     rank[np.argsort(np.asarray(x, np.float64), kind='stable')] = np.arange(len(x))
-    return np.array(CATEGORICAL)[rank % len(CATEGORICAL)]
+    return np.array(pal)[rank % len(pal)]
 
 
 # --------------------------------------------------------------------------- row groups: magnitude bins and slip rates

@@ -41,8 +41,8 @@ Marks: a dot per paleo row at its target and mean prediction; the posterior 16-8
 runs are found (a bar reaching an axis continues beyond it, below possibly to 0); predictions beyond the axes,
 including 0, on their edges as triangles; the 1:1 line; the
 bands; and the original row numbers of the --label rows furthest from their targets in units of uncertainty (default
-4). Each row's dot and bar share a colour, cycling along the targets through the ten of Tableau's Color Blind 10
-(cru_common.CATEGORICAL and neighbour_colours; outlined in grey, as several are pale), so that neighbouring rows never
+4). Each row's dot and bar share a colour, cycling along the targets through the ten colours
+(ColorBrewer's RdYlBu, 10 classes, its red and blue ends alternating: cru_common.RDYLBU10_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring rows never
 share one; the colours only tell neighbours apart, and a row keeps its colour in every model's figure. Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
@@ -66,7 +66,7 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (CATEGORICAL, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+from cru_common import (RDYLBU10, RDYLBU10_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
                         run_settings, settings_lines)
 
@@ -257,7 +257,7 @@ def main():
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
-    col = neighbour_colours(t)                       # each row's colour, unlike its neighbours'
+    col = neighbour_colours(t, RDYLBU10_CYCLE)                       # each row's colour, unlike its neighbours'
     nn = best_fit_rates(a.problem)                   # the best fit's predictions fix the axes, the same for every model
     fixed = nn is not None and len(nn) == Gp.shape[1]
     if fixed:
@@ -346,7 +346,7 @@ def main():
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=2)
             if ref is not None:                      # the reference's predictions, in front of the posterior's
                 scatter_edges(ax, t, ref['y'], lo_e, hi_e, dict(s=26, marker='s', facecolors='none', edgecolors=REF,
-                              linewidths=0.8, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.8, zorder=3.2))
+                              linewidths=0.45, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.45, zorder=3.2))
             if D['xs'] is not None:                  # each kept draw's predictions, as x's, within the axes
                 draw_xs(ax, np.broadcast_to(t, D['xs'].shape), np.clip(D['xs'], *lim), np.broadcast_to(col, D['xs'].shape),
                         alpha=0.08)
@@ -400,7 +400,7 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = CATEGORICAL[0], CATEGORICAL[1], CATEGORICAL[8]    # the legend shows a few of the colours
+    few = RDYLBU10[1], RDYLBU10[8], RDYLBU10[3]            # the legend shows a few of the colours
     handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.3, mfc=c, mec=MUTED,
                              mew=0.45) for c in few), 'prediction' if mm == 'model' else 'mean prediction')]
     if bars:
@@ -411,7 +411,7 @@ def main():
         handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
                         f'each of the {n_k:,} kept draws\' prediction'))
     if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.8),
+        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.45),
                         f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles.append((Line2D([], [], color=INK, lw=1.0), 'prediction = target'))
     if phys:
