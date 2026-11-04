@@ -433,7 +433,7 @@ Under spike-and-slab and θ, as in the best fit, totals rest mostly on individua
 - the band, under spike-and-slab, a log-box prior with swap moves and the linear prior;
 - the retired hierarchical prior.
 
-All pass on both the C and NumPy backends, and multi-threaded Gibbs is bit-identical to single-threaded Gibbs. The notebook runs `--selftest current`: only what its default uses, the per-rupture lower and upper edges, spike-and-slab, the balance term, swap moves under a log-box prior, and the band; the full suite (about 4 minutes) is for after any change to the sampler.
+All pass on both the C and NumPy backends, and multi-threaded Gibbs is bit-identical to single-threaded Gibbs. Two exact speed-ups (November 5th, 2026), bit-identical in seven configurations: with the paleo misfit in years or the bins in log10 and no slip-rate soft band, the soft band's bound sums run over the column's weighted rows only, the others' coefficients being 0; and with the CFM's slip rates, each row's current split-misfit term is cached, so a column pass computes only the new ones. gibbs.py also runs OpenBLAS single-threaded, whose idle threads otherwise spin. In the default setup (the CFM's slip rates, the paleo misfit in years, positivity; 8 chains on 4 threads at 211,000 ruptures) a sweep takes 0.039–0.040 s against 0.045–0.047 s before, 14% less. The notebook runs `--selftest current`: only what its default uses, the per-rupture lower and upper edges, spike-and-slab, the balance term, swap moves under a log-box prior, and the band; the full suite (about 4 minutes) is for after any change to the sampler.
 
 ## Earlier priors
 

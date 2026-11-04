@@ -140,7 +140,8 @@ sigma_ref unchanged in code. gibbs.py reads the weights from the problem (T.spli
 the misfit sum w(e) e^2, w = split_lo2 below the target and split_hi2 above, concave in m, so the on-chain slice uses
 the exact likelihood (lbctx's sp fields, sp_lik; lb_floor's endpoint bound still holds), off chains draw their slab
 value first and get their exact change in one pass over the column (col_split, with the soft band's bound sums), the
-on/off decisions use sp_change, the swaps sp_swap; recorded chi2 is the split misfit; NumPy twins; selftest_split (both
+on/off decisions use sp_change, the swaps sp_swap; each chain's rows' current terms sp_w2(r_j) are cached (WC, refilled at
+the start of each gibbs_run call and updated as rows change), so a column pass computes only the new ones, bit-identical; recorded chi2 is the split misfit; NumPy twins; selftest_split (both
 backends, with and without the soft band, against a grid integral) in the full set; block_fit.py and plot_slip_rates.py
 weigh residuals by side; without it every run is bit-identical (REPORT.md, "Slip rates from the CFM").
 --band F (the notebook's BAND = 10 until November 4th, 2026; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and
@@ -155,7 +156,10 @@ and randomized_nnls.py ignore it (REPORT.md, "The band"). --log-band TAU (BAND_S
 --positive): a soft band, 1/2 (log10(y / d) / TAU)^2 on each positive-target row (slip subsections 1/k), kept exactly by
 Metropolis steps in the kernel (lw_change in the on/off log odds and on slab moves and swaps; for off ruptures, bounds
 linear and quadratic in the proposed rate from per-row coefficients kept per chain, summed in col_dots_lw's pass with the
-dot products, settle nearly all decisions, most without logs, the same draws), T.lw = dict(W, LD, DY, rows, tau); selftest_logband in
+dot products, settle nearly all decisions, most without logs, the same draws), T.lw = dict(W, LD, DY, rows, tau); when the
+weighted rows (LW > 0 or a paleo table) hold under half the column entries (paleo years or MFD log10 without a slip soft
+band), the bound sums run over those rows' entries only (col_lwsums, from _lw_sub_ptrs's per-column positions, LWP/LWQ),
+and so do the coefficient refreshes: the same sums in the same order, bit-identical; selftest_logband in
 the full set; NULL arrays without it, so runs are bit-identical. --positive (BAND = 'positive'), an alternative,
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a

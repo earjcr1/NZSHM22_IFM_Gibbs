@@ -52,6 +52,8 @@ import sys
 import threading
 import time
 
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')   # numpy's BLAS idle threads spin-wait otherwise (no BLAS-heavy work
+                                                     # here; the kernel has its own threads)
 import numpy as np
 import scipy.sparse as sp
 
@@ -439,27 +441,27 @@ static double sp_change(const double *data, const int32_t *indices, int64_t p0, 
    group size, with the sums in registers (chains not off are given m = 0, so they add nothing to DQ). */
 static void col_split1(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3) {
+                       double *s1, double *s2, double *s3, double *const *W0) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     if (A) {
         const double *A0 = A[0];
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p], gg = g * g; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
             { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
         }
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
         }
     DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
 }
 static void col_split2(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3) {
+                       double *s1, double *s2, double *s3, double *const *W0) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
     if (A) {
@@ -468,24 +470,24 @@ static void col_split2(const double *data, const int32_t *indices, int64_t p0, i
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p], gg = g * g; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
             { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
             { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
         }
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
         }
     DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
     DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
 }
 static void col_split3(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3) {
+                       double *s1, double *s2, double *s3, double *const *W0) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
     const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
@@ -496,20 +498,20 @@ static void col_split3(const double *data, const int32_t *indices, int64_t p0, i
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p], gg = g * g; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
             { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
             { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
-            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
             { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
         }
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
         }
     DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
     DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
@@ -517,7 +519,7 @@ static void col_split3(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split4(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3) {
+                       double *s1, double *s2, double *s3, double *const *W0) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
     const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
@@ -530,23 +532,23 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p], gg = g * g; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
             { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
             { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
-            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
             { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
-            { const double e0 = r3[j], e1 = e0 + g * m3; d3 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r3[j] + g * m3; d3 += sp_w2(e1, l2, h2) - W0[3][j]; }
             { const double *e = A3 + 4 * j; a3 += g * e[0]; b3 += gg * e[1]; c3 += gg * e[2]; }
         }
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
             const double l2 = SL2[j], h2 = SH2[j];
-            { const double e0 = r0[j], e1 = e0 + g * m0; d0 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r1[j], e1 = e0 + g * m1; d1 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r2[j], e1 = e0 + g * m2; d2 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
-            { const double e0 = r3[j], e1 = e0 + g * m3; d3 += sp_w2(e1, l2, h2) - sp_w2(e0, l2, h2); }
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
+            { const double e1 = r3[j] + g * m3; d3 += sp_w2(e1, l2, h2) - W0[3][j]; }
         }
     DQ[0] = d0; s1[0] = a0; s2[0] = b0; s3[0] = c0;
     DQ[1] = d1; s1[1] = a1; s2[1] = b1; s3[1] = c1;
@@ -555,12 +557,82 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                      double *s1, double *s2, double *s3) {
+                      double *s1, double *s2, double *s3, double *const *W0) {
     for (int64_t q = 0; q < 4; q++) DQ[q] = s1[q] = s2[q] = s3[q] = 0.0;
-    if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
-    else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
-    else if (kg == 2) col_split2(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
-    else              col_split1(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3);
+    if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
+    else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
+    else if (kg == 2) col_split2(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
+    else              col_split1(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
+}
+
+/* --log-band and --paleo-misfit: col_dots_lw's bound sums s1, s2, s3 over only the column's entries in weighted rows
+   (pos[q0:q1], the positions of those entries in the column, in its order): the other rows' coefficients are 0, so the
+   sums are the same numbers, at a fraction of the reads when few rows are weighted (the paleo rows alone, say) */
+static void col_lwsums1(const double *data, const int32_t *indices, const int64_t *pos, int64_t q0, int64_t q1,
+                         double *const *A, double *s1, double *s2, double *s3) {
+    const double *A0 = A[0]; double a0 = 0.0, h0 = 0.0, l0 = 0.0;
+    for (int64_t t = q0; t < q1; t++) {
+        const int64_t p = pos[t];
+        const double g = data[p], gg = g * g; const int32_t j = indices[p];
+        { const double *e = A0 + 4 * j; a0 += g * e[0]; h0 += gg * e[1]; l0 += gg * e[2]; }
+    }
+    s1[0] = a0; s2[0] = h0; s3[0] = l0;
+}
+static void col_lwsums2(const double *data, const int32_t *indices, const int64_t *pos, int64_t q0, int64_t q1,
+                         double *const *A, double *s1, double *s2, double *s3) {
+    const double *A0 = A[0]; double a0 = 0.0, h0 = 0.0, l0 = 0.0;
+    const double *A1 = A[1]; double a1 = 0.0, h1 = 0.0, l1 = 0.0;
+    for (int64_t t = q0; t < q1; t++) {
+        const int64_t p = pos[t];
+        const double g = data[p], gg = g * g; const int32_t j = indices[p];
+        { const double *e = A0 + 4 * j; a0 += g * e[0]; h0 += gg * e[1]; l0 += gg * e[2]; }
+        { const double *e = A1 + 4 * j; a1 += g * e[0]; h1 += gg * e[1]; l1 += gg * e[2]; }
+    }
+    s1[0] = a0; s2[0] = h0; s3[0] = l0;
+    s1[1] = a1; s2[1] = h1; s3[1] = l1;
+}
+static void col_lwsums3(const double *data, const int32_t *indices, const int64_t *pos, int64_t q0, int64_t q1,
+                         double *const *A, double *s1, double *s2, double *s3) {
+    const double *A0 = A[0]; double a0 = 0.0, h0 = 0.0, l0 = 0.0;
+    const double *A1 = A[1]; double a1 = 0.0, h1 = 0.0, l1 = 0.0;
+    const double *A2 = A[2]; double a2 = 0.0, h2 = 0.0, l2 = 0.0;
+    for (int64_t t = q0; t < q1; t++) {
+        const int64_t p = pos[t];
+        const double g = data[p], gg = g * g; const int32_t j = indices[p];
+        { const double *e = A0 + 4 * j; a0 += g * e[0]; h0 += gg * e[1]; l0 += gg * e[2]; }
+        { const double *e = A1 + 4 * j; a1 += g * e[0]; h1 += gg * e[1]; l1 += gg * e[2]; }
+        { const double *e = A2 + 4 * j; a2 += g * e[0]; h2 += gg * e[1]; l2 += gg * e[2]; }
+    }
+    s1[0] = a0; s2[0] = h0; s3[0] = l0;
+    s1[1] = a1; s2[1] = h1; s3[1] = l1;
+    s1[2] = a2; s2[2] = h2; s3[2] = l2;
+}
+static void col_lwsums4(const double *data, const int32_t *indices, const int64_t *pos, int64_t q0, int64_t q1,
+                         double *const *A, double *s1, double *s2, double *s3) {
+    const double *A0 = A[0]; double a0 = 0.0, h0 = 0.0, l0 = 0.0;
+    const double *A1 = A[1]; double a1 = 0.0, h1 = 0.0, l1 = 0.0;
+    const double *A2 = A[2]; double a2 = 0.0, h2 = 0.0, l2 = 0.0;
+    const double *A3 = A[3]; double a3 = 0.0, h3 = 0.0, l3 = 0.0;
+    for (int64_t t = q0; t < q1; t++) {
+        const int64_t p = pos[t];
+        const double g = data[p], gg = g * g; const int32_t j = indices[p];
+        { const double *e = A0 + 4 * j; a0 += g * e[0]; h0 += gg * e[1]; l0 += gg * e[2]; }
+        { const double *e = A1 + 4 * j; a1 += g * e[0]; h1 += gg * e[1]; l1 += gg * e[2]; }
+        { const double *e = A2 + 4 * j; a2 += g * e[0]; h2 += gg * e[1]; l2 += gg * e[2]; }
+        { const double *e = A3 + 4 * j; a3 += g * e[0]; h3 += gg * e[1]; l3 += gg * e[2]; }
+    }
+    s1[0] = a0; s2[0] = h0; s3[0] = l0;
+    s1[1] = a1; s2[1] = h1; s3[1] = l1;
+    s1[2] = a2; s2[2] = h2; s3[2] = l2;
+    s1[3] = a3; s2[3] = h3; s3[3] = l3;
+}
+static void col_lwsums(int64_t kg, const double *data, const int32_t *indices, const int64_t *pos, int64_t q0, int64_t q1,
+                      double *const *A, double *s1, double *s2, double *s3) {
+    for (int64_t q = 0; q < 4; q++) s1[q] = s2[q] = s3[q] = 0.0;
+    if (kg >= 4)      col_lwsums4(data, indices, pos, q0, q1, A, s1, s2, s3);
+    else if (kg == 3) col_lwsums3(data, indices, pos, q0, q1, A, s1, s2, s3);
+    else if (kg == 2) col_lwsums2(data, indices, pos, q0, q1, A, s1, s2, s3);
+    else              col_lwsums1(data, indices, pos, q0, q1, A, s1, s2, s3);
 }
 
 static inline void band_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
@@ -589,9 +661,17 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
                double gam, const double *MIX, const double *RLO, const double *RHI,
-               const double *LW, const double *LD, const double *DY, const pmctx *PM, const double *SL2, const double *SH2)
+               const double *LW, const double *LD, const double *DY, const pmctx *PM, const double *SL2, const double *SH2,
+               const int64_t *LWP, const int64_t *LWQ)
 {
     const double s2 = sigma * sigma;
+    double *WC = NULL;                             /* --cfm slip rates: each chain's rows' current split-misfit terms,
+                                                      sp_w2 of their residuals, so a column pass computes only the new ones */
+    if (SL2) {
+        WC = (double *)malloc(sizeof(double) * (size_t)K * (size_t)N);
+        for (int64_t k = 0; k < K; k++)
+            for (int64_t j = 0; j < N; j++) WC[k * N + j] = sp_w2(R[k * N + j], SL2[j], SH2[j]);
+    }
     double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
                                                       and each chain's odds pi / (1 - pi) of a rupture on, per bin */
     if (LW) {
@@ -630,19 +710,28 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     mpre[q] = slab_draw_m(rng + 4 * k, &c, SC + 4 * i);
                     pre[q] = 1;
                 }
-                double *rg[4], *ag[4];
+                double *rg[4], *ag[4], *wg[4];
                 for (int64_t q = 0; q < 4; q++) {
                     rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
                     ag[q] = AC ? AC + 4 * (k0 + (q < kg ? q : 0)) * N : NULL;
+                    wg[q] = WC + (k0 + (q < kg ? q : 0)) * N;
                 }
-                col_split(kg, data, indices, p0, p1, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3);
+                if (AC && LWP) {              /* the bound sums over the weighted rows only (col_lwsums) */
+                    col_split(kg, data, indices, p0, p1, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg);
+                    col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
+                } else
+                    col_split(kg, data, indices, p0, p1, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg);
             } else if (!empty) {
                 double *rg[4];
                 for (int64_t q = 0; q < 4; q++) rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
                 if (AC) {                     /* --log-band: the dot products and the bound sums in one pass */
                     double *ag[4];
                     for (int64_t q = 0; q < 4; q++) ag[q] = AC + 4 * (k0 + (q < kg ? q : 0)) * N;
-                    col_dots_lw(kg, data, indices, p0, p1, rg, ag, dt, S1, S2, S3);
+                    if (LWP) {                /* or, with few weighted rows, the sums over those alone */
+                        col_dots(kg, data, indices, p0, p1, rg, dt);
+                        col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
+                    } else
+                        col_dots_lw(kg, data, indices, p0, p1, rg, ag, dt, S1, S2, S3);
                 } else
                     col_dots(kg, data, indices, p0, p1, rg, dt);
             }
@@ -778,8 +867,15 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 const double dl = xn - xi;
                 if (dl != 0.0 && !empty) {
                     for (int64_t p = p0; p < p1; p++) r[indices[p]] += data[p] * dl;
-                    if (AC)                   /* --log-band: the changed rows' bound coefficients */
+                    if (WC)                   /* --cfm slip rates: the changed rows' cached terms */
                         for (int64_t p = p0; p < p1; p++) {
+                            const int32_t j = indices[p];
+                            WC[k * N + j] = sp_w2(r[j], SL2[j], SH2[j]);
+                        }
+                    if (AC)                   /* --log-band: the changed rows' bound coefficients (with LWP, the
+                                                 weighted rows', the only ones with any) */
+                        for (int64_t t = LWP ? LWP[i] : p0; t < (LWP ? LWP[i + 1] : p1); t++) {
+                            const int64_t p = LWP ? LWQ[t] : t;
                             const int32_t j = indices[p];
                             if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], r[j] + DY[j], LD[j]);
                             if (PM && PM->I[j] >= 0) {
@@ -795,6 +891,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
       }
     }
     if (AC) { free(AC); free(ODD); }
+    free(WC);
     if (pkind == 3 && CNT)                         /* each chain's ruptures switched on, per bin, for the fractions on */
         for (int64_t k = 0; k < K; k++) {
             int64_t *cn = CNT + k * SB;
@@ -1021,7 +1118,7 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P] + [P, P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P] + [P, P] + [P, P]
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
@@ -1245,6 +1342,26 @@ def _lw_ptrs(T):
     return _ptr(T.lw['W']), _ptr(T.lw['LD']), _ptr(T.lw['DY'])
 
 
+def _lw_sub_ptrs(T):
+    """The weighted rows' entries, column by column (positions into the column arrays and each column's start), for the
+    kernel's bound sums (col_lwsums), when those rows hold under half of the entries (the paleo rows, the bins in log10);
+    NULLs otherwise, or without the soft band's machinery. Built once per T.lw."""
+    if T.lw is None:
+        return None, None
+    key = (id(T.lw['W']), id(T.lw.get('PM')))
+    if getattr(T, '_lw_sub_key', None) != key:
+        w = np.asarray(T.lw['W']) > 0
+        if T.lw.get('PM') is not None:
+            w = w | (np.asarray(T.lw['PM']['I']) >= 0)
+        hit = w[T.indices]
+        sub = None
+        if hit.mean() < 0.5:
+            pos = np.ascontiguousarray(np.flatnonzero(hit), np.int64)
+            sub = (np.ascontiguousarray(np.searchsorted(pos, T.indptr), np.int64), pos)
+        T._lw_sub, T._lw_sub_key = sub, key
+    return (None, None) if T._lw_sub is None else (_ptr(T._lw_sub[0]), _ptr(T._lw_sub[1]))
+
+
 def kernel_consts(lib, T):
     """The C kernel's per-rupture constants (log lo, log hi, the slab's, the halfway prior's), once per run, by the
     kernel's own code."""
@@ -1283,7 +1400,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
-                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))
+                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T))
     if len(groups) == 1:
         work(groups[0])
     else:
