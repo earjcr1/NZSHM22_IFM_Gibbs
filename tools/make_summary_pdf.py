@@ -121,6 +121,7 @@ def main():
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
+    sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
     if grp:
         isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
         positive = any(v == 'positive' for v in g_band.values())
@@ -449,7 +450,9 @@ def main():
                     f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
-                    'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')]]
+                    'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
+                   ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
+                    + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the uncertainties as given)' if sdx == 1 else '')]]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
                   'every prediction kept above zero (a hard constraint)' if positive else
@@ -478,7 +481,7 @@ def main():
                                      if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
             f'every {th})'],
            ['REPRESENTATIVES', str(reps), 'weighted representative models selected for hazard']],
-          [3.3 * cm, 3.2 * cm, FW - 6.5 * cm])
+          [3.7 * cm, 2.8 * cm, FW - 6.5 * cm])
 
     head('2. Cleaning and diagnostics')
     para(f'Cleaning ({tt("preliminaries.py")}) turns the raw system into the problem the sampler sees. The '

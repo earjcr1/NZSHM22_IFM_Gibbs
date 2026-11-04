@@ -14,7 +14,7 @@ normal in the slip rate itself (mm/yr, linear, as measured in the field):
     (--slip-rate-factor; by default the inputs' own, 0.8, f = target x sigma / SlipRate, checked on every row);
   - below the mode its sd is sigma_lo = FACTOR f (SR_pref - SR_min) / NSIG, above it sigma_hi = FACTOR f (SR_max - SR_pref) / NSIG:
     SR_min and SR_max read as NSIG sigma either side (default 1, as the inputs read them) and the result multiplied by
-    FACTOR (default 2, the inputs' doubling), so by default each side's sd is 2 f times its width. The factor f, the
+    FACTOR (--slip-sd-multiplier, default 2, the inputs' doubling), so by default each side's sd is 2 f times its width. The factor f, the
     assumed fraction of a fault's slip rate the ruptures take up, scales the whole distribution, sds included, as a
     fixed factor on an uncertain rate must (the inputs scale only their targets, so their sigma is 1/f too wide);
   - a side of zero width takes the other side's; a fault with SR_min = SR_pref = SR_max, its sd = the mode itself
@@ -94,19 +94,43 @@ def inputs_slip(A, d, rupture_dir):
     if np.ptp(np.round(f[has], 9)) > 1e-6 * abs(f_ref):
         raise ValueError(f'the inputs\' factor on the slip rates (target x sigma / SlipRate) varies from row to row '
                          f'({np.nanmin(f):.6g} to {np.nanmax(f):.6g})')
-    return dict(sub=sub, ns=ns, Ar=Ar, sig_old=sig_old, f=f_ref)
+    # the inputs' multiplier on SlipRateStdDev (2: sigma = 2 SD), checked on every row with an SD; a row with SD 0 has
+    # sigma = f x SlipRate instead (the rate itself, as targeted)
+    sd0 = sub['sd'] == 0
+    hm = np.isfinite(sig_old) & ~sd0
+    mm = sig_old[hm] * 1e3 / sub['sd'][hm]
+    m_ref = float(round(float(np.median(mm)), 9))                        # 2, to rounding
+    if np.ptp(mm) > 1e-6 * m_ref:
+        raise ValueError(f'the inputs\' multiplier on SlipRateStdDev (sigma / SD) varies from row to row ({mm.min():.6g} to '
+                         f'{mm.max():.6g})')
+    return dict(sub=sub, ns=ns, Ar=Ar, sig_old=sig_old, f=f_ref, m=m_ref, sd0=sd0)
 
 
-def rescale_inputs(A, d, rupture_dir, srf):
-    """--slip-rate-factor without --cfm-sliprates: the inputs' slip-rate Gaussians scaled as a whole from their own
-    factor f (0.8) to srf, target and sigma alike (sigma -> sigma srf / f), so in units of sigma the targets stay and
-    each row's coefficients are multiplied by f / srf. Returns (A, report lines)."""
+def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
+    """--slip-rate-factor or --slip-sd-multiplier without --cfm-sliprates: the inputs' slip-rate Gaussians changed from
+    their own factor f (0.8) to srf, scaling each as a whole, target and sigma alike, and from their own multiplier on
+    SlipRateStdDev (2: sigma = 2 SD) to mult (sigma -> sigma srf / f x mult / 2; rows with an SD of 0, whose sigma is the
+    rate itself, take the factor only). In units of sigma: coefficients / (srf / f x mult / 2), targets x 2 / mult.
+    Returns (A, d, report lines)."""
     I = inputs_slip(A, d, rupture_dir)
+    ns = I['ns']
+    srf_ = I['f'] if srf is None else float(srf)
+    mult_ = I['m'] if mult is None else float(mult)
+    ms = np.where(I['sd0'], 1.0, mult_ / I['m'])                     # each row's change of sd from the multiplier
+    sig_scale = srf_ / I['f'] * ms                                      # each row's sd in mm/yr, new / old
     scale = np.ones(A.shape[0])
-    scale[:I['ns']] = I['f'] / srf
-    return sp.csc_matrix(sp.diags(scale) @ I['Ar']), [
-        f'== slip-rate factor {srf:g} (the inputs\' {I["f"]:g}): each slip-rate Gaussian scaled as a whole, its target and its '
-        f'sd in mm/yr by {srf / I["f"]:g}, so its row\'s coefficients by {I["f"] / srf:g} in units of the sd']
+    scale[:ns] = 1.0 / sig_scale
+    d2 = np.array(d, np.float64)
+    d2[:ns] = d[:ns] * (srf_ / I['f']) / sig_scale
+    L = []
+    if srf_ != I['f']:
+        L.append(f'== slip-rate factor {srf_:g} (the inputs\' {I["f"]:g}): each slip-rate Gaussian scaled as a whole, its '
+                 f'target and its sd in mm/yr by {srf_ / I["f"]:g}')
+    if mult_ != I['m']:
+        L.append(f'== slip-rate sd multiplier {mult_:g} (the inputs\' {I["m"]:g}): each slip-rate sd {mult_:g} x SlipRateStdDev '
+                 f'(times the slip-rate factor over {I["f"]:g}), by {mult_ / I["m"]:g}; the {int(I["sd0"].sum())} subsections '
+                 'with an SD of 0 keep the rate itself')
+    return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
 def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None):
@@ -114,7 +138,7 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     by srf (default: the inputs' own factor, 0.8). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
     if not (nsig > 0 and factor > 0):
-        raise ValueError('--cfm-sigmas and --cfm-factor must be positive')
+        raise ValueError('--cfm-sigmas and --slip-sd-multiplier must be positive')
     if srf is not None and not srf > 0:
         raise ValueError('--slip-rate-factor must be positive')
     I = inputs_slip(A, d, rupture_dir)
@@ -183,13 +207,13 @@ def main():
     ap.add_argument('--A', default='cru_A.txt')
     ap.add_argument('--d', default='cru_D.txt')
     ap.add_argument('--cfm-sigmas', type=float, default=NSIG_DEFAULT)
-    ap.add_argument('--cfm-factor', type=float, default=FACTOR_DEFAULT)
+    ap.add_argument('--slip-sd-multiplier', type=float, default=FACTOR_DEFAULT)
     ap.add_argument('--slip-rate-factor', type=float, default=None, help="default: the inputs' own (0.8)")
     a = ap.parse_args()
     from cru_common import find_rupture_set, load_colt_sparse, load_vector
     rd = find_rupture_set(a.ruptures)
     A, d = load_colt_sparse(a.A), load_vector(a.d)
-    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.cfm_factor, a.slip_rate_factor)
+    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor)
     print('\n'.join(L))
 
 

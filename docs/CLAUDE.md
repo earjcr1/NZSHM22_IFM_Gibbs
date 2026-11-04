@@ -108,7 +108,11 @@ the inputs' rounding of SD to 0.01 mm/yr and the 12 zero-width sides). Tried the
 reading with colleagues. --slip-rate-factor F (SLIP_RATE_FACTOR, 0.8 by default, passed only when not 0.8; with
 --rupture-set): f replaced by F, scaling every slip-rate distribution as a whole, the CFM's (rebuild's srf) or, without
 --cfm-sliprates, the inputs' Gaussians from their own f (cfm_sliprates.rescale_inputs: coefficients x f/F, targets
-unchanged in sd units); recorded as the problem's slip_rate_factor. A zero-width side takes the other's and
+unchanged in sd units); recorded as the problem's slip_rate_factor. --slip-sd-multiplier K (SLIP_SD_MULTIPLIER, 2 by
+default, passed only when not 2; replaced --cfm-factor): each slip-rate sd K times its uncertainty, the CFM's sides
+(rebuild's factor) or, without --cfm-sliprates, the inputs' sigma = 2 SD rescaled by K / 2 (their multiplier checked: 2
+on every row with an SD; the 8 subsections with an SD of 0 keep sigma = the rate); for switching the doubling off (K = 1)
+when slip-rate uncertainties estimated from the data come in. A zero-width side takes the other's and
 min = pref = max gives sd = the mode (as the inputs: sigma = 0.8 x SlipRate there);
 the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
 split_hi2 = (sigma_ref/sigma_hi)^2 saved per cleaned row (load_problem; None without it; cru_common.split_weights).
