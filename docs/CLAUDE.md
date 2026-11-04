@@ -95,6 +95,17 @@ sums; the NumPy twin _pm_f_np); recorded as tr['paleo_misfit'] beside chi2, whic
 for comparison (their predictions unscaled before recording); the swap pairs' inner products lose the paleo rows'
 share; selftest_paleo (both backends, against a grid integral; and set_groups against set_positive and set_band) in the
 full set; without it every run is bit-identical (REPORT.md, "The paleo rows' misfit").
+--mfd-misfit log10 (MFD_MISFIT, 'gaussian' by default; spike-and-slab, no transfers, not with the old --log-band): the
+MFD bins' rows scaled out of the Gaussian (PALEO_EPS, as the paleo rows) and each bin's total scored by
+((log10(total) - log10(R_j)) / s_j)^2, s_j = log10(1 + sigma_j / R_j) = log10(1 + 1/d_j) (the soft top's width; d_j the
+cleaned row's target, so MFD_UNCERTAINTY's level is in it), centred on R_j, through the soft band's weights
+(T.lw['W'][bins] = 1/(2 (s_j ln 10)^2), LD = ln of the scaled target; no kernel change) with T.lw['MF'] = dict(rows, s,
+eps, d_data); positivity on the bins as a third group of set_groups (grp switched on for it if no other per-group flag
+is given); the swap pairs lose the bins' share; recorded as tr['mfd_misfit'] beside chi2 (which still counts the bins'
+Gaussian, the recorded predictions unscaled), with tr['mfd_log_rows'] and tr['mfd_log_s'], from which block_fit.py
+scores the MFD block in log10 (its spread the rest of the mean); selftest_mfdlog (both backends, against a grid
+integral, with positivity and swaps) in the full set; without it every run is bit-identical (REPORT.md, "The MFD bins'
+misfit in log10").
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, False by default; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /

@@ -204,6 +204,13 @@ check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] 
       "notebook PALEO_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'years': each site's recurrence-interval PDF, "
       'paleo_misfit.py\'s curves), recorded and passed to gibbs.py --paleo-misfit, with its exact test in the full '
       'self-test set')
+check(re.findall(r'^MFD_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] and 'mfd_misfit' in _cfg_keys
+      and any("args += ['--mfd-misfit', MFD_MISFIT]" in c for _, c in cells)
+      and "'--mfd-misfit', default='gaussian', choices=['gaussian', 'log10']" in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_mfdlog()') == 1 and "'mfd_log_s' in z.files" in src['block_fit.py'],
+      "notebook MFD_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'log10': each bin's total scored in log10, its "
+      'positivity kept), recorded and passed to gibbs.py --mfd-misfit, with its exact test in the full self-test set and '
+      'block_fit.py scoring the bins as the run did')
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['False'] and 'cfm_sliprates' in _cfg_keys
       and any("args += ['--cfm-sliprates', os.path.expanduser(CFM_FILE)]" in c and "if not SLIP_AS_GIVEN:" in c
           and "'--slip-sd-multiplier', str(SLIP_SD_MULTIPLIER)" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
@@ -331,7 +338,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND',
-                  'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'CFM_SLIPRATES', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
+                  'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
@@ -352,7 +359,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND', 'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'CFM_SLIPRATES', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND', 'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

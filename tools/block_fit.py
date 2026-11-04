@@ -42,6 +42,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     meas = sorted(block_measurements(P), key=lambda m: (first.index(m['name']) if m['name'] in first else len(first), m['index']))
     d, sig2, N = P['d'], P['sigma'] ** 2, len(P['d'])
     per_run, S1, S2, nd, shapes = [], np.zeros(N), np.zeros(N), 0, []
+    LOG = {}                                                          # --mfd-misfit log10: each row's log width s, by row
     for r in runs:
         z = np.load(run_file(r))
         if 'y' not in z.files:
@@ -52,7 +53,15 @@ def block_stats(P, runs, first=('S', 'MFD')):
         if y.shape[1] < 4:
             raise SystemExit(f'{r} recorded {y.shape[1]} draws after burn-in; the report needs more')
         c = {}
+        if 'mfd_log_s' in z.files:                                    # the run scored the bins in log10 (gibbs.py --mfd-misfit)
+            LOG.update(zip(z['mfd_log_rows'].tolist(), z['mfd_log_s'].tolist()))
         for m in meas:
+            if LOG and all(int(i) in LOG for i in m['rows']):         # (log10(total / R_j) / s_j)^2, as the run's likelihood
+                sl = np.array([LOG[int(i)] for i in m['rows']])
+                with np.errstate(divide='ignore'):
+                    c[m['name']] = np.sum((np.log10(np.maximum(y[:, :, m['rows']].astype(np.float64), 0.0) / d[m['rows']]) / sl) ** 2,
+                                          axis=2)
+                continue
             res = y[:, :, m['rows']].astype(np.float64) - d[m['rows']]
             c[m['name']] = np.sum(split_weights(P, m['rows'], res) * res ** 2, axis=2) / sig2   # chains x draws (--cfm-sliprates:
                                                                                                  # each side's weight)
@@ -76,7 +85,12 @@ def block_stats(P, runs, first=('S', 'MFD')):
         out = dict(mean=float(allx.mean()), sd=float(allx.std()), mcse=float(allx.std() / np.sqrt(sum(n_eff))),
                    rhat=rh, by_run=[float(x.mean()) for x in x_runs],
                    mcse_by_run=[float(x.std() / np.sqrt(e)) for x, e in zip(x_runs, n_eff)])
-        if rows is not None:
+        if rows is not None and LOG and all(int(i) in LOG for i in rows):   # the bins in log10: the mean model's own,
+            sl = np.array([LOG[int(i)] for i in rows])                        # the spread the rest of the mean
+            with np.errstate(divide='ignore'):
+                mm = float(np.sum((np.log10(np.maximum(ybar[rows], 0.0) / d[rows]) / sl) ** 2))
+            out.update(mean_model=mm, spread=float(allx.mean()) - mm)
+        elif rows is not None:
             e = ybar[rows] - d[rows]
             mm = float(np.sum(split_weights(P, rows, e) * e ** 2) / sig2)
             # the spread: the draws' variance about the mean model; with split normals (--cfm-sliprates) the rest of the
@@ -92,6 +106,9 @@ def block_stats(P, runs, first=('S', 'MFD')):
         stats[m['name']] = s
     allrows = np.concatenate([m['rows'] for m in meas])
     tot = summary([sum(c.values()) for c in per_run], allrows)
+    if LOG:                                                           # the bins in log10: the blocks' mean models added up
+        tot['mean_model'] = float(sum(st_['mean_model'] for st_ in stats.values()))
+        tot['spread'] = tot['mean'] - tot['mean_model']
     tot.update(rows=len(allrows), measurements=sum(m['expect'] for m in meas),
                meas_sd=float(np.sqrt(sum(m['sd'] ** 2 for m in meas))))
     return stats, tot, shapes

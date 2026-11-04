@@ -119,6 +119,7 @@ def main():
     g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': cfg.get('paleo_band')} if grp else {}
     g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
+    mmis = cfg.get('mfd_misfit') or 'gaussian'         # the MFD bins' misfit
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
@@ -221,6 +222,10 @@ def main():
     pmr = [tuple(float(x) for x in m.groups()) for m in (re.search(pm_re, t, re.M) for t in logs) if m] if pmis != 'gaussian' else []
     if pmis != 'gaussian' and not pmr:
         MISSING.append('paleo misfit term')
+    mm_re = r'^MFD misfit \(--mfd-misfit log10;.*?\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+)\)'
+    mmr = [tuple(float(x) for x in m.groups()) for m in (re.search(mm_re, t, re.M) for t in logs) if m] if mmis != 'gaussian' else []
+    if mmis != 'gaussian' and not mmr:
+        MISSING.append('MFD misfit term')
     pm_poor = grab(log0, r'(\d+) site\(s\) above [\d.]+ decades', 'paleo curves', int) if pmis != 'gaussian' else None
     wlogs = sorted(glob.glob(os.path.join(PR, 'workflow_log_*.txt')))
     stamps = re.findall(r'^----- (\d{4}-\d\d-\d\d \d\d:\d\d)', read(wlogs[-1]) if wlogs else '', re.M)
@@ -446,6 +451,9 @@ def main():
                     '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate), in place of '
                     'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
                     if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate'],
+                   ['MFD_MISFIT', repr(mmis), 'each MFD bin\u2019s total scored in log10, ((log10 total \u2212 log10 R<sub>j</sub>) / '
+                    's<sub>j</sub>)\u00b2 with s<sub>j</sub> = log10(1 + \u03c3<sub>j</sub>/R<sub>j</sub>), each bin kept above zero, in '
+                    'place of the Gaussian' if mmis == 'log10' else 'the bins\u2019 Gaussian in rate, as the inputs give it'],
                    ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
                     f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
@@ -563,6 +571,11 @@ def main():
             'prediction of zero would cost infinitely much, which is why it comes with positivity. It is recorded apart '
             'from \u03c7\u00b2, on \u03c7\u00b2\u2019s scale (twice its share of the negative log posterior), so the fit check stays over the '
             'data alone.' if tau else '')
+         + (' <b>The MFD bins in log10.</b> The bins leave the Gaussian likelihood: each bin\u2019s total is scored instead by '
+            '((log10 total \u2212 log10 R<sub>j</sub>) / s<sub>j</sub>)\u00b2, s<sub>j</sub> = log10(1 + \u03c3<sub>j</sub>/R<sub>j</sub>), '
+            'centred on its target, so a bin 20% high costs a little less than one 20% low; each bin is kept above zero, and '
+            'the term is kept exactly by the soft band\u2019s Metropolis steps and recorded apart; \u03c7\u00b2 still counts the '
+            'bins\u2019 Gaussian, for comparison.' if mmis == 'log10' else '')
          + (' <b>The paleo misfit.</b> The paleo rows leave the Gaussian likelihood: each is scored instead by its site\u2019s '
             'recurrence-interval PDF from the paleoseismic analysis, \u22122 ln of its density in years, measured from its '
             'minimum, a curve through the site\u2019s 2.275, 15.865, 84.135 and 97.725% points with its mode at '
@@ -687,8 +700,11 @@ def main():
           + [[r[0].strip(), f'{int(r[1]):,}', f'{float(r[2]):g}', f'{r[3]} ± {r[4]}', r[7], r[8].replace('-', '\u2212'),
               r[9], r[10]] for r in brow],
           [2.9 * cm, 1.3 * cm, 2.6 * cm, 2.9 * cm, 2.6 * cm, 1.2 * cm, 2.0 * cm, FW - 15.5 * cm])
-    if lb or ssr or pmr:
+    if lb or ssr or pmr or mmr:
         para('Each run also records the terms it adds beside χ², each on χ²’s scale and not counted in it. '
+             + (f'<b>The MFD misfit in log10</b>: {rng([x[0] for x in mmr], "{:.1f}")} on average per replicate (5–95% of draws '
+                f'{fmt(min(x[1] for x in mmr), "{:.1f}")}–{fmt(max(x[2] for x in mmr), "{:.1f}")}), in the likelihood in '
+                'place of the bins\u2019 Gaussian, which χ² still counts. ' if mmr else '')
              + (f'<b>The paleo misfit</b>: {rng([x[0] for x in pmr], "{:.1f}")} on average per replicate (5–95% of draws '
                 f'{fmt(min(x[1] for x in pmr), "{:.1f}")}–{fmt(max(x[2] for x in pmr), "{:.1f}")}), in the likelihood in '
                 'place of the paleo rows\u2019 Gaussian, which χ² still counts. ' if pmr else '')
