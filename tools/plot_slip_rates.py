@@ -362,7 +362,7 @@ def main():
                 ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             if ref is not None:                      # the reference's section means, in front of the posterior's
                 scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', facecolors='none', edgecolors=REF,
-                              linewidths=0.4, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.4,
+                              linewidths=0.5, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.5,
                               zorder=3.4))
             if D['xs'] is not None:                  # each kept draw's section means, as x's, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
@@ -411,7 +411,7 @@ def main():
                 (tuple(Line2D([], [], color=c, lw=0.9, alpha=0.5) for c in few), 'the target ± one sd (at the section mean)') if phys else
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.4),
+        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.5),
                         f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
     if clipped:
         handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))

@@ -346,7 +346,7 @@ def main():
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=2)
             if ref is not None:                      # the reference's predictions, in front of the posterior's
                 scatter_edges(ax, t, ref['y'], lo_e, hi_e, dict(s=26, marker='s', facecolors='none', edgecolors=REF,
-                              linewidths=0.45, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.45, zorder=3.2))
+                              linewidths=0.5, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.5, zorder=3.2))
             if D['xs'] is not None:                  # each kept draw's predictions, as x's, within the axes
                 draw_xs(ax, np.broadcast_to(t, D['xs'].shape), np.clip(D['xs'], *lim), np.broadcast_to(col, D['xs'].shape),
                         alpha=0.05)
@@ -411,7 +411,7 @@ def main():
         handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
                         f'each of the {n_k:,} kept draws\' prediction'))
     if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.45),
+        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.5),
                         f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
     handles.append((Line2D([], [], color=INK, lw=1.0), 'prediction = target'))
     if phys:
