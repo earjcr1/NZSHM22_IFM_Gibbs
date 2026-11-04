@@ -128,6 +128,7 @@ def main():
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
     mmis = cfg.get('mfd_misfit') or 'gaussian'         # the MFD bins' misfit
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
+    cpref = cfg.get('cfm_pref') or 'mode'              # SR_pref as each split normal's mode or its median
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
     if grp:
@@ -464,6 +465,8 @@ def main():
                    ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
                     f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
+                   ['CFM_PREF', repr(cpref), 'SR_pref as each split normal\u2019s ' + ('median (each shifted, its sds kept)'
+                    if cpref == 'median' else 'mode, the most likely slip rate')],
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
                    ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
@@ -599,7 +602,9 @@ def main():
          + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
             f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): its '
-            f'mode at {srf:g} \u00d7 SR_pref, its sd below the mode '
+            + (f'distribution shifted, sds kept, so that its median is {srf:g} \u00d7 SR_pref (SR_pref read as the median, CFM_PREF; a fault '
+               'whose mode would then fall at or below 0 keeps SR_pref as the mode), its sd below the mode ' if cpref == 'median' else
+               f'mode at {srf:g} \u00d7 SR_pref, its sd below the mode ')
             + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_pref \u2212 SR_min) and above it '
             + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_max \u2212 SR_pref) '
             f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')

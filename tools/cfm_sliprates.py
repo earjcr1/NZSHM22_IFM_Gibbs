@@ -10,7 +10,8 @@ slips over sigma (m/yr) and its target 0.8 SlipRate / sigma, with sigma = 2 SD a
 
 With --cfm-sliprates each slip-rate row of the inputs is rebuilt from its parent fault's CFM line (by name), as a split
 normal in the slip rate itself (mm/yr, linear, as measured in the field):
-  - its mode is f SR_pref, f the slip-rate factor, the assumed fraction of a fault's slip rate the ruptures take up
+  - its mode is f SR_pref (or, with --cfm-pref median, its median is, the mode moved accordingly; a fault whose mode
+    would then fall at or below 0 keeps SR_pref as the mode), f the slip-rate factor, the assumed fraction of a fault's slip rate the ruptures take up
     (--slip-rate-factor; by default the inputs' own, 0.8, f = target x sigma / SlipRate, checked on every row);
   - below the mode its sd is sigma_lo = FACTOR f (SR_pref - SR_min) / NSIG, above it sigma_hi = FACTOR f (SR_max - SR_pref) / NSIG:
     SR_min and SR_max read as NSIG sigma either side (default 2, the reading agreed with colleagues on 2026-11-05; the
@@ -134,7 +135,7 @@ def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
     return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
-def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None):
+def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode'):
     """The inputs' slip-rate rows (raw rows 0 .. subsections - 1) rebuilt from the CFM, each split normal scaled as a whole
     by srf (default: the inputs' own factor, 0.8). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
@@ -163,6 +164,19 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
         bad = sorted({sub['parent'][j] for j in np.flatnonzero((s_lo <= 0) | (s_hi <= 0))})
         raise ValueError(f'{cfm_csv}: a slip rate of 0 with no range gives no uncertainty: ' + ', '.join(bad))
     s_ref = 0.5 * (s_lo + s_hi)
+    fallback = np.zeros(ns, bool)
+    if pref_as == 'median':           # --cfm-pref median: SR_pref the median, each side's sd as above, the mode moved
+        from scipy.stats import norm
+        a = s_lo / (s_lo + s_hi)      # the split normal's mass below its mode
+        with np.errstate(invalid='ignore', divide='ignore'):
+            up = s_hi * norm.ppf(0.5 + (0.5 - a) / (2.0 * (1.0 - a)))      # median - mode, the long side above
+            dn = s_lo * norm.ppf(1.0 - 1.0 / (4.0 * a))                     # mode - median, the long side below
+        shift = np.where(a < 0.5, up, np.where(a > 0.5, -dn, 0.0))         # median - mode
+        mode_m = mode - shift
+        fallback = mode_m <= 0        # a mode at or below 0: these faults keep SR_pref as the mode
+        mode = np.where(fallback, mode, mode_m)
+    elif pref_as != 'mode':
+        raise ValueError(f'--cfm-pref {pref_as}: use mode or median')
     # the rows rescaled: coefficients average slip / sigma_ref, target mode / sigma_ref
     scale = np.ones(A.shape[0])
     scale[:ns] = np.where(np.isfinite(sig_old), sig_old / s_ref, 1.0)
@@ -172,7 +186,8 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     L2, H2 = np.ones(A.shape[0]), np.ones(A.shape[0])
     L2[:ns], H2[:ns] = (s_ref / s_lo) ** 2, (s_ref / s_hi) ** 2
     tab = dict(parent=sub['parent'], pref=pref, smin=smin, smax=smax, mode=mode, s_lo=s_lo, s_hi=s_hi, s_ref=s_ref,
-               sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float))
+               sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float), pref_as=pref_as,
+               fallback=fallback)
     return A2, d2, L2, H2, tab, report_lines(tab, nsig, factor, cfm_csv)
 
 
@@ -198,6 +213,17 @@ def report_lines(tab, nsig, factor, cfm_csv):
          f'   {z1} faults with one side of zero width (it takes the other side\'s), {z2} with none (sd = the mode)',
          f'   the new sigma_ref against the inputs\' sigma: median {np.median(ratio):.3f} (5-95% {np.percentile(ratio, 5):.3f}-'
          f'{np.percentile(ratio, 95):.3f})']
+    if tab['pref_as'] == 'median':
+        tgt = tab['f'][first] * tab['pref'][first] * 1e-3
+        mv = (tab['mode'][first] - tgt) / tab['s_ref'][first]
+        fb = sorted({par[j] for j in np.flatnonzero(tab['fallback'])})
+        L.append(f'   SR_pref as the median (--cfm-pref median): each split normal\'s mode moved so that its median is '
+                 f'{tab["f"][0]:g} x SR_pref, by a median {np.median(np.abs(mv)):.3f} of its sigma_ref (5-95% '
+                 f'{np.percentile(np.abs(mv), 5):.3f}-{np.percentile(np.abs(mv), 95):.3f}; {int(np.sum(np.abs(mv) > 0.25))} faults '
+                 f'beyond a quarter); {len(fb)} faults, whose mode would fall at or below 0, keep SR_pref as the mode'
+                 + (': ' + ', '.join(fb) if fb else ''))
+    else:
+        L.append('   SR_pref as the mode (--cfm-pref mode)')
     return L
 
 
@@ -209,12 +235,13 @@ def main():
     ap.add_argument('--d', default='cru_D.txt')
     ap.add_argument('--cfm-sigmas', type=float, default=NSIG_DEFAULT)
     ap.add_argument('--slip-sd-multiplier', type=float, default=FACTOR_DEFAULT)
+    ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'])
     ap.add_argument('--slip-rate-factor', type=float, default=None, help="default: the inputs' own (0.8)")
     a = ap.parse_args()
     from cru_common import find_rupture_set, load_colt_sparse, load_vector
     rd = find_rupture_set(a.ruptures)
     A, d = load_colt_sparse(a.A), load_vector(a.d)
-    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor)
+    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor, a.cfm_pref)
     print('\n'.join(L))
 
 

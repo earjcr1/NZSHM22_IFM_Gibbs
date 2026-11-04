@@ -117,7 +117,11 @@ SR_min/SR_max at 2 sd and doubled, so each side's sd is f x its width and sigma_
 run: slip chi2 698 against 507); the same sds as the 1-sd reading with SLIP_SD_MULTIPLIER = 1 (the user's run
 _1793831887, _sdx1). Before that, 1 and 2 (the inputs' reading; sigma_ref 0.80 of theirs, 5-95% 0.75-0.90); f on the
 mode only was tried and dropped. The user is checking the
-reading with colleagues. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
+reading with colleagues. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
+each split normal shifted, sds kept, so that its median is f x SR_pref (rebuild's pref_as; the shift from the side masses
+a = s_lo/(s_lo+s_hi): median - mode = s_hi Phi^-1(0.5 + (0.5-a)/(2(1-a))) for a < 0.5, -s_lo Phi^-1(1 - 1/(4a)) for
+a > 0.5); faults whose mode would fall at or below 0 keep the mode (18 at 211k), listed in the cleaning report; recorded
+as the fourth entry of the problem's cfm_sliprates. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
 2 by default; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
 multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
 K x F x its uncertainty: the CFM's sides (rebuild's srf and factor) or, without --cfm-sliprates, the inputs' Gaussians

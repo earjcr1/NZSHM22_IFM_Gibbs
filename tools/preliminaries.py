@@ -392,6 +392,9 @@ def main():
                          'factor x its width to SR_min or SR_max (read at --cfm-sigmas); without it, sd = this x the factor x '
                          'SlipRateStdDev (2.5 with 0.8: the inputs as given, sd = 2 SD); needs --rupture-set. Without this '
                          'and --slip-rate-factor the inputs are left as given')
+    ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'],
+                    help='--cfm-sliprates: SR_pref as each split normal\'s mode (default) or its median (the mode then moved, '
+                         'each side\'s sd kept; a fault whose mode would fall at or below 0 keeps SR_pref as the mode)')
     ap.add_argument('--slip-rate-factor', type=float, default=None,
                     help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
                          'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22; the '
@@ -432,7 +435,7 @@ def main():
             if args.cfm_sliprates:
                 A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
                                                                2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier,
-                                                               args.slip_rate_factor)
+                                                               args.slip_rate_factor, args.cfm_pref)
             else:
                 A, d_raw, lines_c = rescale_inputs(A, d_raw, rd_c, args.slip_rate_factor, args.slip_sd_multiplier)
         except ValueError as e:
@@ -618,7 +621,8 @@ def main():
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',
-                                                                    f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}']),
+                                                                    f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
+                                                                    args.cfm_pref]),
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
