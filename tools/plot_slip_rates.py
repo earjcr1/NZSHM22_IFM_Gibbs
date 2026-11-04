@@ -2,7 +2,7 @@
 """Slip rates: each fault section's slip-rate target against the mean model's prediction, on linear and on log scales.
 
     python plot_slip_rates.py VECTORS[:LABEL] [VECTORS[:LABEL] ...] [--problem cru_clean.npz] [--out FIGURE]
-                              [--slip-block S] [--label 3] [--reference RATES[:LABEL]]
+                              [--slip-block S] [--label 3] [--reference RATES[:LABEL]] [--ruptures RUPTURE_SET]
 
 VECTORS is a result set's rate vectors as the notebook writes them (<prior folder>/rate_vectors, with or without
 .npz). The mean model is their `mean` column, each rupture's posterior mean rate; since predictions are linear in the
@@ -19,7 +19,13 @@ problem records each slip-rate row's section (preliminaries.py --slip-sections; 
 of copies are detected here, for display only). Each section's mean prediction (the mean over its subsections) is
 plotted against its target; the table view also lists every subsection.
 
-Units: the input rows are already divided by their uncertainties, which the inputs do not give, so targets and
+Units: with --ruptures (the model's OpenSHA rupture set; the notebook passes it), slip rates in mm/yr: each row's
+sd in m/yr is its coefficients over the rupture set's average slips (plate_rate.check_problem), so a row's target and
+predictions times it are slip rates (the target the slip-rate factor times the measured rate, as the likelihood
+compares them). Each section's target then carries a horizontal bar of one sd either side, as the likelihood has it
+(the inputs' Gaussian's, or with slip rates from the CFM each side's own), in place of the shaded band; chi2 and the
+counts within one or two sds are in sds, as before. Without --ruptures, the units below.
+The input rows are already divided by their uncertainties, which the inputs do not give, so targets and
 predictions are in units of each section's measurement uncertainty (any 1/sqrt(k) weighting applied when cleaning is
 undone for display). The 1:1 line is unaffected, and a section mean within the shaded band, between target - 1 and
 target + 1, is within one measurement uncertainty of its target. With one measurement per section (the default), a
@@ -118,6 +124,8 @@ def main():
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
+    ap.add_argument('--ruptures', default=None, help='the OpenSHA rupture set (or a solution folder holding one), for slip '
+                    'rates in mm/yr (default: in units of each section\'s uncertainty)')
     a = ap.parse_args()
     sets = [parse_set(s) for s in a.sets]
     out = a.out or os.path.join(os.path.dirname(sets[0][0]) or '.', 'fig_slip_rates.png')
@@ -128,8 +136,22 @@ def main():
     rows = np.flatnonzero(P['block'] == P['block_names'].index(a.slip_block))
     orig = np.asarray(P['keep_rows'])[rows]
     scale = P['row_scale'][rows]                         # 1/sqrt(k) where cleaning counted a section's measurement once
+    u = np.ones(len(rows))                               # each row's display unit: its sd in mm/yr (--ruptures), or 1
+    phys = bool(a.ruptures)
+    if phys:
+        from cru_common import find_rupture_set
+        from plate_rate import _sections, check_problem, rupture_matrix
+        rd = find_rupture_set(a.ruptures)
+        if rd is None:
+            raise SystemExit(f'--ruptures {a.ruptures}: no OpenSHA rupture set there')
+        try:
+            coef = check_problem(P, rupture_matrix(rd, len(_sections(rd))), a.slip_block)   # row scale / sigma (m/yr)
+        except ValueError as e:
+            raise SystemExit(f'--ruptures: {e}')
+        u = scale / coef * 1e3
+    sc = scale / u                                       # a row's value / sc: in mm/yr, or in units of its sd
     dw = P['d'][rows]                                    # targets as the likelihood sees them
-    t = dw / scale                                       # ... in units of each section's measurement uncertainty
+    t = dw / sc                                          # ... in mm/yr, or in units of each section's uncertainty
     Gs = P['G'].tocsr()[rows]
     keep_c = np.asarray(P['keep_cols'])
     sec = P['section'][rows]
@@ -140,6 +162,7 @@ def main():
     ks = np.bincount(sec, minlength=S)
     weighted = mode != 'none'                            # one measurement per section (rows divided by sqrt(k))
     ts = np.bincount(sec, weights=t, minlength=S) / ks   # each section's target (its copies share it)
+    us = np.bincount(sec, weights=u, minlength=S) / ks   # each section's sd in the display units (its copies share it)
     rep_row = rows[np.unique(sec, return_index=True)[1]] if (ks > 0).all() else None   # a row of each section (its copies
     sw = (lambda e: np.sqrt(split_weights(P, rep_row, e)) * e) if rep_row is not None else (lambda e: e)   # share its sds)
     chi_w = lambda yw_: float(np.sum(split_weights(P, rows, yw_ - dw) * (yw_ - dw) ** 2))   # chi2 as the likelihood counts it
@@ -151,9 +174,11 @@ def main():
     n_distinct = len(np.unique(np.round(ts, 9)))
     how = ('one measurement per section (each section\'s rows divided by sqrt(k) in the likelihood)' if weighted else
            'each subsection counted as its own measurement (the inputs as given)')
+    unit_txt = ('slip rates in mm/yr (each row\'s sd from its coefficients and the rupture set\'s average slips)' if phys
+                else 'targets and predictions in units of each section\'s measurement uncertainty')
     head = [f'slip-rate rows: {len(rows)} (original rows {orig.min()}-{orig.max()}) in {S} sections ({int((ks > 1).sum())} with 2-'
             f'{ks.max()} subsections; slip-rate sections {mode!r}: {how}); {n_distinct} distinct targets from {t.min():.3g} to '
-            f'{t.max():.3g}; targets and predictions in units of each section\'s measurement uncertainty']
+            f'{t.max():.3g}; {unit_txt}']
     data = []
     for path, label in sets:
         z = np.load(path)
@@ -162,36 +187,36 @@ def main():
         if len(m_all) != n_raw or keep_c.max() >= len(m_all):
             raise SystemExit(f'{path} has {len(m_all)} ruptures; the problem {a.problem} has {n_raw} (another problem?)')
         yw = Gs @ m_all[keep_c]                           # predictions as the likelihood sees them
-        y = yw / scale                                    # ... in measurement units
+        y = yw / sc                                       # ... in mm/yr, or in measurement units
         ys = np.bincount(sec, weights=y, minlength=S) / ks
         rs, r = ys - ts, y - t
         with np.errstate(divide='ignore', invalid='ignore'):
             ratio_s = np.where(ts > 0, ys / ts, np.nan)
             ratio = np.where(t > 0, y / t, np.nan)
         model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
-        Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, P['G'].shape[0], scale, avg)
+        Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, P['G'].shape[0], sc, avg)
         q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None   # each section mean's posterior points
         K, kidx = (None, None) if model else kept_draws(z)
-        Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, P['G'].shape[0], scale,
+        Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, P['G'].shape[0], sc,
                                                       avg, check=(Gs, K, keep_c))   # the kept draws' section means
         del K
         data.append(dict(path=path, label=label, y=y, ys=ys, r=r, rs=rs, ratio=ratio, ratio_s=ratio_s, q=q, used=used,
                          ndraws=0 if Y is None else len(Y), xs=Xk,
-                         chi2=chi_w(yw), in1=float(np.mean(np.abs(sw(rs)) <= 1)), in2=float(np.mean(np.abs(sw(rs)) <= 2)),
-                         in1r=float(np.mean(np.abs(rw(r)) <= 1)), in2r=float(np.mean(np.abs(rw(r)) <= 2)),
-                         groups=list(np.argsort(-np.abs(rs), kind='stable')[:max(0, a.label)]), model=model))
+                         chi2=chi_w(yw), in1=float(np.mean(np.abs(sw(rs / us)) <= 1)), in2=float(np.mean(np.abs(sw(rs / us)) <= 2)),
+                         in1r=float(np.mean(np.abs(rw(r / u)) <= 1)), in2r=float(np.mean(np.abs(rw(r / u)) <= 2)),
+                         groups=list(np.argsort(-np.abs(sw(rs / us)), kind='stable')[:max(0, a.label)]), model=model))
         del Y
     mm = 'model' if all(D['model'] for D in data) else 'mean model'   # single models (a best fit): no mean
     ref = None
     if a.reference:                                      # another model's predictions, marked on every panel
         ref = reference_rates(a.reference, P)
         yw = Gs @ ref['m']
-        y = yw / scale
+        y = yw / sc
         ys = np.bincount(sec, weights=y, minlength=S) / ks
         with np.errstate(divide='ignore', invalid='ignore'):
             ratio_s = np.where(ts > 0, ys / ts, np.nan)
-        ref.update(y=y, ys=ys, chi2=chi_w(yw), in1=float(np.mean(np.abs(sw(ys - ts)) <= 1)),
-                   in2=float(np.mean(np.abs(sw(ys - ts)) <= 2)), q=np.nanpercentile(ratio_s, [5, 50, 95]))
+        ref.update(y=y, ys=ys, chi2=chi_w(yw), in1=float(np.mean(np.abs(sw((ys - ts) / us)) <= 1)),
+                   in2=float(np.mean(np.abs(sw((ys - ts) / us)) <= 2)), q=np.nanpercentile(ratio_s, [5, 50, 95]))
         head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the slip-rate rows, as the likelihood '
                     f'weights them, {ref["chi2"]:.1f}; {100 * ref["in1"]:.0f}% of sections within one measurement '
                     f'uncertainty of their targets, {100 * ref["in2"]:.0f}% within two; section mean / target: median '
@@ -227,13 +252,13 @@ def main():
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
                   f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); {spread}; furthest from their targets: '
-                  + '; '.join(f'{rows_name(s)} ({D["rs"][s]:+.2f})' for s in D['groups']),
+                  + '; '.join(f'{rows_name(s)} ({sw(D["rs"] / us)[s]:+.2f} sd)' for s in D['groups']),
                   f'{"section":>7s} {"rows":>14s} {"k":>3s} {"target":>9s} {"mean prediction":>16s} {"16%":>9s} {"50%":>9s} '
-                  f'{"84%":>9s} {"difference":>11s} {"ratio":>7s}{rc}']
+                  f'{"84%":>9s} {"difference":>11s} {"in sds":>7s} {"ratio":>7s}{rc}']
         for s in range(S):
             qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, s]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
             lines.append(f'{s:7d} {rows_span(s):>14s} {ks[s]:3d} {ts[s]:9.4g} {D["ys"][s]:16.4g} {qs} '
-                         f'{D["rs"][s]:+11.3f} {D["ratio_s"][s]:7.3f}' + (f' {ref["ys"][s]:10.4g}' if ref else ''))
+                         f'{D["rs"][s]:+11.4g} {sw(D["rs"] / us)[s]:+7.2f} {D["ratio_s"][s]:7.3f}' + (f' {ref["ys"][s]:10.4g}' if ref else ''))
         lines.append(f'{"row":>7s} {"section":>14s} {"":>3s} {"target":>9s} {"mean prediction":>16s} {"difference":>11s} {"ratio":>7s}{rc}')
         for k in np.argsort(orig, kind='stable'):
             lines.append(f'{orig[k]:7d} {sec[k]:14d} {"":>3s} {t[k]:9.4g} {D["y"][k]:16.4g} {D["r"][k]:+11.3f} {D["ratio"][k]:7.3f}'
@@ -250,17 +275,20 @@ def main():
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
+    rep_i = np.unique(sec, return_index=True)[1]   # each section's sds either side, in the display units
+    s_lo = us / np.sqrt(np.asarray(P['split_lo2'])[rows][rep_i]) if P.get('split_lo2') is not None else us
+    s_hi = us / np.sqrt(np.asarray(P['split_hi2'])[rows][rep_i]) if P.get('split_hi2') is not None else us
     nn = best_fit_rates(a.problem)                 # the best fit's predictions fix the axes, the same for every model
     fixed = nn is not None and len(nn) == Gs.shape[1]
     if fixed:
-        ys_nn = np.bincount(sec, weights=(Gs @ nn) / scale, minlength=S) / ks
+        ys_nn = np.bincount(sec, weights=(Gs @ nn) / sc, minlength=S) / ks
         lo_b, hi_b = axis_span(ts, ys_nn, log=True)
-        hi_lin = 1.05 * axis_span(ts, ys_nn, log=False)[1] + 1.0
+        hi_lin = 1.05 * axis_span(ts, ys_nn, log=False)[1] + (0.0 if phys else 1.0)
     else:                                          # cleaned without the best fit: the axes follow what is plotted
         ally = np.concatenate([D['ys'] for D in data] + ([ref['ys']] if ref else []))
         pos = ally[ally >= 1e-3 * t.min()]
         lo_b, hi_b = min(t.min(), pos.min() if pos.size else t.min()), max(t.max(), ally.max())
-        hi_lin = 1.05 * max(t.max(), ally.max()) + 1.0
+        hi_lin = 1.05 * max(t.max(), ally.max()) + (0.0 if phys else 1.0)
     lo_log, hi_log = lo_b / 1.4, hi_b * 1.4
     edge, top, top_lin = lo_log * 1.12, hi_log / 1.12, hi_lin * 0.985   # where values beyond the axes sit
     allv = [D['ys'] for D in data] + ([ref['ys']] if ref else [])
@@ -273,7 +301,9 @@ def main():
     nrow = len(data)
     kx = any(D['xs'] is not None for D in data)          # the kept draws, as x's
     bars = any(D['q'] is not None and D['xs'] is None for D in data)
-    note = (f'In units of each section\'s measurement uncertainty. {S} sections over {len(rows)} subsections, each section\'s '
+    note = (('Slip rates in mm/yr, the targets the slip-rate factor times the measured rates, each with a bar of one sd '
+             'either side as the likelihood has it. ' if phys else 'In units of each section\'s measurement uncertainty. ')
+            + f'{S} sections over {len(rows)} subsections, each section\'s '
             'prediction the mean over its subsections; '
             + ('each section is one measurement.' if weighted else
                'each subsection is counted as its own measurement (the inputs as given).')
@@ -322,9 +352,14 @@ def main():
             ax.set_ylim(*lim)
             ax.set_box_aspect(1)
             ax.grid(True, which='major', color=GRID, lw=0.5, zorder=0)
-            ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=3)
             lo_e, hi_e = (edge, top) if log else (-np.inf, top_lin)      # values beyond sit on the edges
+            if phys:                                 # each target's sd either side (each side's own for the CFM), at the
+                yb = np.clip(D['ys'], max(lo_e, lim[0]), min(hi_e, lim[1]))   # section mean's height
+                ax.hlines(yb, np.clip(ts - s_lo, lim[0], lim[1]), np.clip(ts + s_hi, lim[0], lim[1]), colors=col, lw=0.7,
+                          alpha=0.16 if log else 0.32, zorder=2.1)   # faint: context for the points
+            else:
+                ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             if ref is not None:                      # the reference's section means, in front of the posterior's
                 scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', facecolors='none', edgecolors=REF,
                               linewidths=0.7, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.7,
@@ -348,9 +383,10 @@ def main():
                 ax.annotate(rows_name(s), (xk, yk), xytext=(0.80, 0.36 - 0.065 * n_), textcoords='axes fraction',
                             fontsize=7.5, color=INK2, va='center', path_effects=halo, zorder=5,
                             arrowprops=dict(arrowstyle='-', color=MUTED, lw=0.5, shrinkA=2, shrinkB=3))
-            ax.set_xlabel('target slip rate (in units of its measurement uncertainty)', color=INK2, fontsize=9)
+            ax.set_xlabel('target slip rate (mm/yr)' if phys else 'target slip rate (in units of its measurement uncertainty)',
+                          color=INK2, fontsize=9)
             if j == 0:
-                ax.set_ylabel(f'{mm} prediction (same units)', color=INK2, fontsize=9)
+                ax.set_ylabel(f'{mm} prediction (mm/yr)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
         sub = (f'{mm}: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
                f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
@@ -372,6 +408,7 @@ def main():
         handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
                         f'each of the {n_k:,} kept draws\' section mean'))
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
+                (tuple(Line2D([], [], color=c, lw=0.9, alpha=0.5) for c in few), 'the target ± one sd (at the section mean)') if phys else
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.7),

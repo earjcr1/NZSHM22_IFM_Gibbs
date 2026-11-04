@@ -88,6 +88,13 @@ def main():
 
     RUN = os.path.abspath(os.path.expanduser(a.run_dir))
     PR = os.path.join(RUN, a.prior)
+
+    def drawn_in(fig_txt, words):                        # a fit figure drawn in physical units (with the rupture set)?
+        try:
+            with open(os.path.join(RUN, fig_txt)) as f_:
+                return words in f_.read(4000)
+        except OSError:
+            return False
     out = a.out or os.path.join(RUN, 'workflow_summary.pdf')
     run_name = os.path.basename(RUN.rstrip('/'))
 
@@ -532,12 +539,17 @@ def main():
            'zero in the band at the bottom), each bin\u2019s target (black line) and total (orange)'
            + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '. Lower panel: each bin\u2019s total '
            'over its target, with the band within one uncertainty.', FW * 0.6)
+    ns_phys = drawn_in('nnls/fig_slip_rates_nnls.txt', 'slip rates in mm/yr')
+    np_phys = drawn_in('nnls/fig_paleo_rates_nnls.txt', 'rates per year')
     figure('nnls/fig_slip_rates_nnls.png', 'Best fit: each fault section\u2019s slip-rate target against the predicted '
-           'section mean, in units of the section\u2019s measurement uncertainty, on linear and log scales'
-           + ('; open squares are the reference\u2019s predictions' if ref else '') + '. The grey band is within one '
-           'uncertainty of the target.', FW * 0.8)
-    figure('nnls/fig_paleo_rates_nnls.png', 'Best fit: each paleo row\u2019s target against its prediction, in units of its '
-           'uncertainty, log-log; the shaded bands are within one and two uncertainties.', FW * 0.6, max_h=15 * cm)
+           'section mean, ' + ('in mm/yr' if ns_phys else 'in units of the section\u2019s measurement uncertainty')
+           + ', on linear and log scales' + ('; open squares are the reference\u2019s predictions' if ref else '') + '. '
+           + ('Each target\u2019s bar spans one sd either side.' if ns_phys else 'The grey band is within one uncertainty of '
+              'the target.'), FW * 0.8)
+    figure('nnls/fig_paleo_rates_nnls.png', 'Best fit: each paleo row\u2019s target against its prediction, '
+           + ('in events per year, on linear and log scales; each target\u2019s bars span its site\u2019s own 15.9\u201384.1% '
+              'and 2.3\u201397.7% ranges.' if np_phys else 'in units of its uncertainty, log-log; the shaded bands are '
+              'within one and two uncertainties.'), FW * 0.8 if np_phys else FW * 0.6, max_h=15 * cm)
 
     head('4. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''))
     para(f'<b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
@@ -772,12 +784,16 @@ def main():
            'bin, each bin\u2019s target (black line) and total of the means (orange dot)'
            + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '.' + (xs + ' bin totals.' if xs else '')
            + ' Lower panel: each bin\u2019s total over its target.', FW * 0.6)
+    ps_phys = drawn_in(f'{a.prior}/fig_slip_rates.txt', 'slip rates in mm/yr')
+    pp_phys = drawn_in(f'{a.prior}/fig_paleo_rates.txt', 'rates per year')
     figure(f'{a.prior}/fig_slip_rates.png', 'Posterior: each fault section\u2019s slip-rate target against its '
-           'posterior-mean section mean (dots), in units of its measurement uncertainty.' + (xs + ' section means.' if xs else '')
-           + (' Open squares: the reference.' if ref else ''), FW * 0.88)
+           'posterior-mean section mean (dots), ' + ('in mm/yr, each target\u2019s bar one sd either side.' if ps_phys else
+                                                    'in units of its measurement uncertainty.')
+           + (xs + ' section means.' if xs else '') + (' Open squares: the reference.' if ref else ''), FW * 0.88)
     figure(f'{a.prior}/fig_paleo_rates.png', 'Posterior: each paleo row\u2019s target against its posterior-mean prediction '
-           '(dots).' + (xs + ' predictions.' if xs else '') + (' Open squares: the reference.' if ref else ''),
-           FW * 0.6, max_h=15 * cm)
+           '(dots)' + (', in events per year, each target\u2019s bars its site\u2019s own 15.9\u201384.1% and 2.3\u201397.7% '
+                       'ranges.' if pp_phys else '.') + (xs + ' predictions.' if xs else '') + (' Open squares: the reference.' if ref else ''),
+           FW * 0.88 if pp_phys else FW * 0.6, max_h=15 * cm)
 
     fig_ss = [f'{a.prior}/{f}' for f in ('fig_slip_sections.png', 'fig_slip_sections_ruptures_1.png',
                                           'fig_slip_sections_ruptures_2.png', 'fig_slip_sections_ruptures_by_magnitude_1.png',

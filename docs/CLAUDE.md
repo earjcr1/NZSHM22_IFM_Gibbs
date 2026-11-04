@@ -234,10 +234,15 @@ aside with it.
   this level (the bins' misfit is mostly the model's freedom), so it is a modelling decision, and another setting
   needs its own RUN_DIR (REPORT.md, "MFD uncertainty"). It replaced block reweighting from a pilot run (BLOCK_WEIGHTS,
   removed in October 2026).
-- Slip-rate units: the input rows are divided by their uncertainties, which the inputs do not give, so plot_slip_rates.py
-  shows targets and predictions in units of each section's measurement uncertainty (undoing the sqrt(k)), section means
-  against their targets (the 1:1 line and the one-uncertainty band are exact; mm/yr
-  would need the uncertainties). plot_paleo_rates.py shows the paleo rows (every row in neither the slip-rate nor the
+- Fit-figure units (since 2026-11-05): with --ruptures (the notebook passes rupture_dir()), plot_slip_rates.py shows
+  slip rates in mm/yr (each row's sd from its coefficients against average_slips.csv, plate_rate.check_problem; the
+  target the slip-rate factor x the measured rate), each section's target with a faint bar of one sd either side (each
+  side's own for the CFM), and plot_paleo_rates.py rates per year (each row's sd its site's from
+  paleo_constraint_data.json), each target with bars of the site's own 15.9-84.1% and 2.3-97.7% ranges, in a row of a
+  linear and a log-log panel per result set (the slip-rate figure always had both); chi2 and the within-one/two counts
+  stay in sds; both scripts read the display unit u per row and divide by scale / u. Without --ruptures, the old units:
+  the input rows are divided by their uncertainties, so targets and predictions in units of each section's measurement
+  uncertainty (undoing the sqrt(k)), with the one-uncertainty band. plot_paleo_rates.py shows the paleo rows (every row in neither the slip-rate nor the
   bin group whose target is positive, unless --paleo-block names them) the same way, log-log: there the units only move a point along the 1:1
   line, so its distance from the line is the ratio of prediction to target.
 - Code, data and outputs may be in separate folders. Scripts take input paths as arguments, find prelim_results.npz

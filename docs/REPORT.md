@@ -786,10 +786,10 @@ python $CODE/tools/summarize_runs.py spikeslab_rep0:spikeslab sqrt_rep0:sqrt --r
 # rates by magnitude, from the notebook's rate vectors (one panel per result set; magnitudes from the bins, lowest 6.80-6.90)
 python $CODE/tools/plot_rate_magnitude.py spikeslab/rate_vectors theta/rate_vectors --out fig_rate_magnitude.png
 
-# slip-rate targets against the mean model's predictions, linear and log (section means, in units of each section's measurement uncertainty)
+# slip-rate targets against the mean model's predictions, linear and log (section means; in mm/yr with --ruptures, else in units of each section's measurement uncertainty)
 python $CODE/tools/plot_slip_rates.py spikeslab/rate_vectors theta/rate_vectors --out fig_slip_rates.png
 
-# paleo-rate targets against the model's predictions, log-log, with each kept draw's prediction as an x (without kept
+# paleo-rate targets against the model's predictions, linear and log-log (rates per year with --ruptures RUPTURE_SET), with each kept draw's prediction as an x (without kept
 # draws, each prediction's posterior 16-84% range)
 python $CODE/tools/plot_paleo_rates.py spikeslab/rate_vectors theta/rate_vectors --out fig_paleo_rates.png
 
