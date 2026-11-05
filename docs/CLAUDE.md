@@ -45,7 +45,8 @@ slip-rate, MFD and paleo predictions in figures, in the --out folder; the best f
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference
 RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated; the notebook
 passes the model's own OpenSHA solution (ref_args(): solution/rates.csv beside the rupture set, looked for when each
-figure is drawn, so one finished during the run counts; the best fit's figures come last) when DATA_DIR holds it.
+figure is drawn, so one finished during the run counts; the best fit's figures come right after cleaning since
+2026-11-05, the user's choice, to catch a data type far off before the runs) when DATA_DIR holds it.
 Their axes are fixed per problem by the targets and the best fit (cru_common.axis_span and best_fit_rates: all of the
 targets and the central 96% of the best fit's predictions, from prelim_results.npz), so every model's figures for one
 problem share them; values beyond sit on the edges as triangles. In place of the result set's label, each shows the

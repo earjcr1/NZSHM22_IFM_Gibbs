@@ -328,11 +328,13 @@ check(len(st_cells) == 1 and all("sh('gibbs.py', '--selftest', 'current')" in c 
       and re.search(r"'--selftest', nargs='\?', const='all', choices=\['all', 'current'\]", src['gibbs.py']) is not None,
       f"notebook's self-tests run gibbs.py --selftest current (cells {st_cells}); gibbs.py --selftest takes 'all' or 'current'")
 cc = [i for i, c in cells if "'nnls/nnls_vectors.npz:best fit (NNLS)'" in c]
-post = [i for i, c in cells if "sh('plot_paleo_rates.py', vec" in c]
+clean_c = [i for i, c in cells if "args = ['preliminaries.py'" in c]
+runs_c = [i for i, c in cells if 'MAIN = [gibbs_run(' in c]
 check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('plot_slip_rates.py', 'plot_rate_magnitude.py',
-      'plot_paleo_rates.py')) and bool(post) and cc[0] > post[0] and "'nnls_vectors.npz'" in src['preliminaries.py'],
-      f'the best fit (nnls_vectors.npz, which preliminaries.py writes) is drawn after the posterior (cells {cc}), so a reference '
-      'solution finished during the run is marked')
+      'plot_paleo_rates.py')) and bool(clean_c) and bool(runs_c) and clean_c[0] < cc[0] < runs_c[0]
+      and "'nnls_vectors.npz'" in src['preliminaries.py'],
+      f'the best fit (nnls_vectors.npz, which preliminaries.py writes) is drawn right after cleaning, before the runs (cells {cc}), '
+      'to show whether a data type is far off in the fit')
 check("'nnls_vectors.csv'" in src['preliminaries.py'], 'preliminaries.py also writes the best fit as a table, nnls_vectors.csv')
 cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c]   # the solutions cell, the last
 check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find_rupture_set(DATA_DIR)' in cfg
