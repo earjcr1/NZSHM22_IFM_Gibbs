@@ -80,13 +80,15 @@ costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the n
 all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
 extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
-Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT, PALEO_BAND, PALEO_BAND_SOFT):
+Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT, and until November 5th PALEO_BAND,
+PALEO_BAND_SOFT, since then gibbs.py options only: --paleo-misfit years keeps the paleo rows above zero itself):
 --slip-band and --paleo-band (positive or a factor F) and --slip-log-band and --paleo-log-band (TAU, with that group's
 positive) act on the subsections' slip-rate rows and the paleo rows separately (Target.set_groups; the MFD bins get no
 band, which would count them twice); they replace, in the notebook, BAND and BAND_SOFT, which acted on every
 positive-target row through the older flags below, still there for older runs and tests and not combinable with the new
-ones. Defaults: SLIP_BAND = PALEO_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'years' by default since 2026-11-05,
-'gaussian' before; with --rupture-set and a hard paleo band): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
+ones. Defaults: SLIP_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'years' by default since 2026-11-05,
+'gaussian' before; with --rupture-set; the paleo rows kept above zero by it, pa_b = 'positive' in the per-group limits,
+unless --paleo-band gives a factor; with 'gaussian' they get no limit unless --paleo-band is given): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
 constraint rows are) and each scored instead by -2 ln of its site's recurrence-interval PDF in years, a sinh-arcsinh
 curve in log rate through the four quantiles of paleo_constraint_data.json with its mode at 1/bestEstimate exactly
 (paleo_misfit.py: fit_site, tables; cubic Hermite tables with slopes and a curvature bound kappa per site), kept by the
@@ -295,7 +297,7 @@ aside with it.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
-  one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate and paleo prediction above zero by default (SLIP_BAND = PALEO_BAND = 'positive', --slip-band and --paleo-band positive)
+  one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate and paleo prediction above zero by default (SLIP_BAND = 'positive', --slip-band positive; the paleo rows by PALEO_MISFIT = 'years')
   and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
   tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True, no band on either group, PALEO_MISFIT = 'gaussian' and CFM_SLIPRATES = False, under which TESTING.md's quick-preset

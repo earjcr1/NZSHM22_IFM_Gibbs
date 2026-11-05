@@ -123,7 +123,10 @@ def main():
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
     tau = cfg.get('band_soft') or None                 # the soft band's width in decades, or None
     grp = 'slip_band' in cfg                           # since November 2026: a band per row group (slip rates, paleo)
-    g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': cfg.get('paleo_band')} if grp else {}
+    pband_set = 'paleo_band' in cfg                    # PALEO_BAND a setting (until 2026-11-05); since, paleo positivity
+    pband = (cfg.get('paleo_band') if pband_set        # comes with PALEO_MISFIT = 'years'
+             else 'positive' if (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian' else None)
+    g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': pband} if grp else {}
     g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
     mmis = cfg.get('mfd_misfit') or 'gaussian'         # the MFD bins' misfit
@@ -450,13 +453,15 @@ def main():
           ] + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
                  (f'each {k} prediction kept above zero (a hard constraint)' if g_band[k] == 'positive' else
                   f'each {k} prediction kept within a factor {float(g_band[k]):g} of its target (a hard constraint)'
-                  if g_band[k] else 'no limit')] for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))]
+                  if g_band[k] else 'no limit')] for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))
+                 if nm == 'SLIP' or pband_set]
                 + [[f'{nm}_BAND_SOFT', 'None' if not g_soft[k] else f'{float(g_soft[k]):g}',
                     f'each {k} prediction within {dec(float(g_soft[k]))} of its target at 1 sd (a soft band: a penalty on '
                     'the log ratio of prediction to target, beside the misfit)' if g_soft[k] else 'no soft band']
-                   for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))]
+                   for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo')) if nm == 'SLIP' or pband_set]
                 + [['PALEO_MISFIT', repr(pmis), 'the paleo rows scored by each site\u2019s recurrence-interval PDF in years '
-                    '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate), in place of '
+                    '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate'
+                    + ('' if pband_set else '; each paleo prediction kept above zero') + '), in place of '
                     'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
                     if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate'],
                    ['MFD_MISFIT', repr(mmis), 'each MFD bin\u2019s total scored in log10, ((log10 total \u2212 log10 R<sub>j</sub>) / '

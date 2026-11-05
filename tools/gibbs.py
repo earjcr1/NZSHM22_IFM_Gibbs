@@ -3440,15 +3440,16 @@ def main():
     ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log'],
                     help='the paleo rows\' misfit (the notebook\'s PALEO_MISFIT): \'gaussian\' (default), the inputs\' '
                          'Gaussian in rate; \'years\': -2 ln of each site\'s recurrence-interval PDF in years, a curve '
-                         'through its quantiles with its mode at 1/bestEstimate (paleo_misfit.py; needs --rupture-set, '
-                         '--positive and spike-and-slab; the soft band then acts on the slip-rate rows only); \'log\': the '
+                         'through its quantiles with its mode at 1/bestEstimate (paleo_misfit.py; needs --rupture-set and '
+                         'spike-and-slab, and keeps each paleo prediction above zero; the soft band then acts on the slip-rate rows only); \'log\': the '
                          'same curve\'s density in log rate, its mode at bestEstimate')
     ap.add_argument('--slip-band', default=None, metavar='positive|F',
                     help='the slip-rate rows\' hard limit (the notebook\'s SLIP_BAND): \'positive\', each subsection\'s '
                          'prediction above zero, or a factor F above 1, each within F of its target; per row group, in place '
                          'of --positive and --band (which act on every positive-target row, the MFD bins too)')
     ap.add_argument('--paleo-band', default=None, metavar='positive|F',
-                    help='the paleo rows\' hard limit (the notebook\'s PALEO_BAND), as --slip-band')
+                    help='the paleo rows\' hard limit, as --slip-band (the notebook\'s PALEO_BAND until 2026-11-05); with '
+                         '--paleo-misfit, positive unless a factor is given')
     ap.add_argument('--slip-log-band', type=float, default=None, metavar='TAU',
                     help='a soft band on the slip-rate rows (the notebook\'s SLIP_BAND_SOFT), as --log-band, with '
                          '--slip-band positive')
@@ -3786,9 +3787,11 @@ def main():
     pm_rows = pm_tab = None                        # --paleo-misfit: the paleo rows, scaled out of the Gaussian
     if a.paleo_misfit != 'gaussian':
         from paleo_misfit import PALEO_EPS, load_sites, report_lines, tables
-        if not (a.positive or a.paleo_band is not None) or not spike_mode:
-            raise SystemExit('--paleo-misfit needs a hard limit on the paleo rows (--paleo-band positive or a factor, or '
-                             '--positive) and spike-and-slab')
+        if not spike_mode:
+            raise SystemExit('--paleo-misfit needs spike-and-slab')
+        if a.band is not None and not a.positive:
+            raise SystemExit('--paleo-misfit with --band: give the per-group --slip-band (the paleo rows then kept above '
+                             'zero, or within --paleo-band)')
         from cru_common import find_rupture_set
         rd_p = find_rupture_set(a.rupture_set, search=False) if a.rupture_set else None
         if rd_p is None:
@@ -3917,8 +3920,8 @@ def main():
         raise SystemExit('give --positive, --band and --log-band (every positive-target row) or the per-group --slip-band, '
                          '--paleo-band, --slip-log-band and --paleo-log-band, not both')
     pos_g = np.zeros(0, np.int64)                  # with per-group limits: the rows with positivity
-    if mf_rows is not None and not a.positive and a.band is None:
-        grp = True                                 # --mfd-misfit log10: the bins' positivity through the per-group limits
+    if (mf_rows is not None or a.paleo_misfit != 'gaussian') and not a.positive and a.band is None:
+        grp = True                                 # --mfd-misfit log10, --paleo-misfit: positivity through the per-group limits
     if grp:
         if dirs is not None or lognormal is not None:
             raise SystemExit('--slip-band and --paleo-band are not implemented for transfer moves or the hierarchical prior')
@@ -3939,6 +3942,9 @@ def main():
                 raise SystemExit(f'--{name} {v}: give positive or a factor above 1 (10: an order of magnitude either way)')
             return f_
         sl_b, pa_b = band_arg(a.slip_band, 'slip-band'), band_arg(a.paleo_band, 'paleo-band')
+        if pa_b is None and a.paleo_misfit != 'gaussian':
+            pa_b = 'positive'                      # --paleo-misfit: each paleo prediction above zero (its misfit is
+                                                   # infinite at 0), unless --paleo-band gives a factor
         for tau_, b_, name in ((a.slip_log_band, sl_b, 'slip'), (a.paleo_log_band, pa_b, 'paleo')):
             if tau_ is not None and (b_ != 'positive' or not tau_ > 0):
                 raise SystemExit(f'--{name}-log-band {tau_:g}: give a width above 0, with --{name}-band positive')

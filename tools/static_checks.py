@@ -139,13 +139,14 @@ check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['F
       'notebook DOWN_THE_MIDDLE = False (no balance term), recorded; True and \'zero-model\' passed to gibbs.py '
       '--down-the-middle (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
 check(re.findall(r'^SLIP_BAND = (\S+)', cells[0][1], re.M) == ["'positive'"]
-      and re.findall(r'^PALEO_BAND = (\S+)', cells[0][1], re.M) == ["'positive'"]
-      and 'slip_band' in _cfg_keys and 'paleo_band' in _cfg_keys and not re.findall(r'^BAND = ', cells[0][1], re.M)
-      and any("args += ['--slip-band', SLIP_BAND]" in c and "args += ['--paleo-band', PALEO_BAND]" in c for _, c in cells)
+      and not re.findall(r'^PALEO_BAND', cells[0][1], re.M) and "pa_b = 'positive'" in src['gibbs.py']
+      and 'slip_band' in _cfg_keys and not re.findall(r'^BAND = ', cells[0][1], re.M)
+      and any("args += ['--slip-band', SLIP_BAND]" in c for _, c in cells)
       and "'--slip-band'" in src['gibbs.py'] and "'--paleo-band'" in src['gibbs.py'] and '    def set_groups(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
-      "notebook SLIP_BAND = PALEO_BAND = 'positive' (each group's predictions above zero; a number: within that factor of "
-      'its target; the MFD bins get none), recorded and passed to gibbs.py --slip-band and --paleo-band (Target.set_groups), '
+      "notebook SLIP_BAND = 'positive' (the slip-rate predictions above zero; a number: within that factor of "
+      'its target; the paleo rows kept above zero by PALEO_MISFIT = \'years\' itself; the MFD bins get none), recorded and passed '
+      'to gibbs.py --slip-band (Target.set_groups; --paleo-band a command-line option), '
       'with the band\'s exact test in both self-test sets and set_groups checked against set_positive and set_band')
 check(not re.findall(r'^MFD_MONOTONIC = ', cells[0][1], re.M) and 'mfd_monotonic' not in _cfg_keys
       and not any('--mfd-monotonic' in c or 'MFD_RISE_SD' in c for _, c in cells)
@@ -186,15 +187,13 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['False'] and 'slip
       'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
 check(re.findall(r'^SLIP_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
-      and re.findall(r'^PALEO_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
-      and 'slip_band_soft' in _cfg_keys and 'paleo_band_soft' in _cfg_keys
-      and any("args += ['--slip-log-band', SLIP_BAND_SOFT]" in c and "args += ['--paleo-log-band', PALEO_BAND_SOFT]" in c
-              for _, c in cells)
+      and 'slip_band_soft' in _cfg_keys
+      and any("args += ['--slip-log-band', SLIP_BAND_SOFT]" in c for _, c in cells)
       and "'--slip-log-band'" in src['gibbs.py'] and "'--paleo-log-band'" in src['gibbs.py'] and "'--log-band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
       and 'static inline void col_dots_lw(' in src['gibbs.py'],
-      'notebook SLIP_BAND_SOFT = PALEO_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
-      '--slip-log-band and --paleo-log-band (with that group\'s positivity; kept by a Metropolis step in the kernel, its '
+      'notebook SLIP_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
+      '--slip-log-band (--paleo-log-band a command-line option; with that group\'s positivity; kept by a Metropolis step in the kernel, its '
       'exact test in the full self-test set)')
 check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'years'"] and 'paleo_misfit' in _cfg_keys
       and any("args += ['--paleo-misfit', PALEO_MISFIT]" in c for _, c in cells)
@@ -339,8 +338,8 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND',
-                  'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
+MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND', 'SLIP_BAND_SOFT',
+                  'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
@@ -361,7 +360,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_BAND', 'PALEO_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
