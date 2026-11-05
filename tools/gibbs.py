@@ -3399,7 +3399,9 @@ def main():
     ap.add_argument('--sweeps', type=int, default=4000)
     ap.add_argument('--burn', type=int, default=1000)
     ap.add_argument('--thin', type=int, default=4)
-    ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
+    ap.add_argument('--init', default='nnls', help="'nnls' (the best fit, from prelim_results.npz), 'fitted' (the best fit "
+                    "as fitted, nnls/fitted_vectors.npz next to --problem, from best_fit_as_fitted.py; checked against this "
+                    "problem's NNLS fit), 'zero', a .npy of shape (n,) or (chains, n), or a previous run's .npz (uses its final states)")
     ap.add_argument('--prior', default='spikeslab',
                     help="default spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform from the "
                          "slab floor 1e-10 up to a soft top at the bin's target rate R_j, sd = the bin's own uncertainty; the "
@@ -4014,6 +4016,22 @@ def main():
                 raise SystemExit(f'--init nnls: {fprelim} holds no best fit (cleaned by an older version?); clean again, or use '
                                  '--init zero')
             X0 = np.tile(pr0['m_nnls'], (a.chains, 1))
+    elif a.init == 'fitted':                       # the best fit as fitted (best_fit_as_fitted.py), made from this NNLS fit
+        from best_fit_as_fitted import nnls_key
+        f_fit = os.path.join(os.path.dirname(os.path.abspath(a.problem)), 'nnls', 'fitted_vectors.npz')
+        if not os.path.exists(f_fit):
+            raise SystemExit(f'--init fitted: no {f_fit}; make it with best_fit_as_fitted.py, or use --init nnls')
+        with np.load(fprelim) as pr0, np.load(f_fit) as zf:
+            if 'nnls_key' not in zf.files or str(zf['nnls_key']) != nnls_key(pr0['m_nnls']):
+                raise SystemExit(f'--init fitted: {f_fit} was made from another NNLS fit (cleaned again since?); run '
+                                 'best_fit_as_fitted.py again, or use --init nnls')
+            if (str(zf['paleo_misfit']), str(zf['mfd_misfit'])) != (a.paleo_misfit, a.mfd_misfit):
+                raise SystemExit(f'--init fitted: {f_fit} was fitted with --paleo-misfit {zf["paleo_misfit"]} and --mfd-misfit '
+                                 f'{zf["mfd_misfit"]}, this run uses {a.paleo_misfit} and {a.mfd_misfit}; run '
+                                 'best_fit_as_fitted.py again, or use --init nnls')
+            X0 = np.tile(np.asarray(zf['mean'], np.float64)[np.asarray(P['keep_cols'])], (a.chains, 1))
+            print(f'start: the best fit as fitted ({f_fit}): chi2 as fitted {float(zf["misfit"]):.1f}, against '
+                  f'{float(zf["misfit_nnls"]):.1f} at the NNLS fit it started from; rates below the slab floor switched off')
     elif a.init == 'zero':
         X0 = np.zeros((a.chains, n))
     else:

@@ -121,7 +121,10 @@ plot_rate_magnitude.py (log10 when the config says so; cru_common.run_config) us
 request, 2026-11-05): the best fit under chi2 as fitted, L-BFGS-B from the NNLS fit with rates >= 1e-20, column-norm
 scaling, stop when the misfit falls < 0.01 over 500 iterations (scipy >= 1.11 callback StopIteration); writes
 nnls/fitted_vectors.npz (model 'best fit as fitted') and _report.txt; the notebook's best-fit figure cell runs it when
-CFM_SLIPRATES or a non-Gaussian misfit is on and draws both fits side by side (141 s at 211k).
+CFM_SLIPRATES or a non-Gaussian misfit is on and draws both fits side by side (141 s at 211k). The notebook's runs start
+from it when nnls/fitted_vectors.npz exists (gibbs.py --init fitted; refuses a fit whose nnls_key, sha1 of the NNLS rates
+on the kept columns, or paleo_misfit / mfd_misfit differ from the run's); no visible burn-in gain at 211k (chi2 as
+fitted reaches the posterior's ~1,100-1,250 within 8 sweeps from either start).
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /

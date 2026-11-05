@@ -108,9 +108,12 @@ check(argdefault(trees['gibbs.py'], '--prior') == 'spikeslab', f"gibbs.py --prio
 _cut = [k for k in ('PRIOR_KIND', 'THETA', 'BOX_TOP', 'USE_SWAPS', 'OUTPUT_DRAWS', 'SA_STARTS', 'BEST_FIT')
         if any(re.search(rf'\b{k}\b', c) for _, c in cells)]
 _gr = ''.join(c for _, c in cells if 'def gibbs_run(' in c)
-check(not _cut and all(s in _gr for s in ("'--init', 'nnls'", "'--no-samples'", "'--swap-cos', 0.99")),
+check(not _cut and all(s in _gr for s in ("'--init', start", "start = 'fitted' if os.path.exists('nnls/fitted_vectors.npz') else 'nnls'",
+                                          "'--no-samples'", "'--swap-cos', 0.99"))
+      and "elif a.init == 'fitted':" in src['gibbs.py'] and 'nnls_key' in src['best_fit_as_fitted.py'],
       'notebook: no PRIOR_KIND, THETA, BOX_TOP, USE_SWAPS, OUTPUT_DRAWS, SA_STARTS or BEST_FIT; its runs start from the best '
-      'fit, store no draws and use swap moves' + (f'; found {_cut}' if _cut else ''))
+      'fit (as fitted, gibbs.py --init fitted, when the notebook made it; else NNLS), store no draws and use swap moves'
+      + (f'; found {_cut}' if _cut else ''))
 check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not None else \(1 if spike_mode else None\)", src['gibbs.py'])),
       'gibbs.py: --hyper-every defaults to 1 for spike-and-slab')
 check(argdefault(trees['gibbs.py'], '--slab') == 'log' and "choices=['log', 'sqrt']" in src['gibbs.py']

@@ -18,6 +18,7 @@ penalised; model 'best fit as fitted'), as nnls_vectors.npz is written, so the f
 OUT.csv, and a report: the misfit by row block at the start and at the end, nonzero rates, the total rate.
 """
 import argparse
+import hashlib
 import os
 import time
 
@@ -50,6 +51,12 @@ def paleo_rows(P, rupture_set, mode):
     if not all(f[2] for f in fits):
         raise SystemExit('--paleo-misfit: some sites\' curves could not be fitted')
     return rows, [f[0] for f in fits], np.array([s['best'] for s in sites]), np.array([s['sd'] for s in sites])
+
+
+def nnls_key(m):
+    """A fingerprint of the NNLS fit this fit started from (its rates on the cleaned problem's columns), so that
+    gibbs.py --init fitted can tell a fit made from another cleaning."""
+    return hashlib.sha1(np.ascontiguousarray(m, np.float64).tobytes()).hexdigest()
 
 
 def make_objective(P, G, pal, mlog, mode):
@@ -182,7 +189,9 @@ def main():
     full = np.zeros(len(z0['mean']))
     full[keep_c] = m
     np.savez(out + '.npz', mean=full, penalised=z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int),
-             model=np.array('best fit as fitted'), misfit=np.array(r.fun), misfit_nnls=np.array(f0))
+             model=np.array('best fit as fitted'), misfit=np.array(r.fun), misfit_nnls=np.array(f0),
+             nnls_key=np.array(nnls_key(np.asarray(z0['mean'], float)[keep_c])),
+             paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit))
     with open(out + '.csv', 'w') as fh:
         fh.write('rupture,penalised,best_fit_as_fitted\n')
         pen = z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int)
