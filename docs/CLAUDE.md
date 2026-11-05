@@ -130,7 +130,11 @@ from 3, Ariel Bank 2, George to Jacksons / Caswell - South George, Kowai - View 
 cfm_sliprates.rate_links (comment names after copy words, the fault-system and family-name fallbacks; identical
 triples within LINK_KM = 5 km or on one family name), union-find clusters; weight 1/sqrt(1 + m rho), m = template mates
 plus cluster mates, not a merged partition (a merge chained 0.2/0.1/0.3 x15 with 2/1/3 x9 through Clear Hills);
-templates alone bit-identical to a38fc91; links listed in cfm_rate_links.csv; recorded as cfm_rate_links. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
+links listed in cfm_rate_links.csv; recorded as cfm_rate_links. Since 2026-11-05 (the user's choice, option A over
+section-level correlation with cross-fault sections) slip sections never span two parent faults (cru_common.slip_sections
+parents=, from --rupture-set or find_rupture_set beside --A; recorded as sections_by_fault): 211k 507 -> 551 sections,
+2e4 68 -> 75; template weights applied per section by cfm_sliprates.section_factors (equal to the faults' weights when
+sections are single faults; template_scale saves the weights as applied). --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
 finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
 the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
 median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,

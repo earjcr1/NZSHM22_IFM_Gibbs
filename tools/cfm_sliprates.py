@@ -78,7 +78,8 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
     1 / sqrt(sum_j C_ij) = 1 / sqrt(1 + m rho), m the faults it is correlated with: for a template alone (m = n - 1), at
     rho = 1, a group of n counts as one measurement, as a section's subsections do; a fault in both a template and a
     cluster is correlated with both, without the two groups being merged. Returns (the factor per raw slip-rate row,
-    subsections in FaultID order; report lines; the links, one (rule, fault, source, evidence) per line, or [])."""
+    subsections in FaultID order; report lines; the links, one (rule, fault, source, evidence) per line, or []; each raw
+    slip-rate row's parent fault and each fault's set of correlated faults, for section_factors)."""
     if not (0.0 < rho <= 1.0):
         raise ValueError(f'--cfm-template-rho {rho:g}: give a correlation above 0 and at most 1')
     sub = load_subsections(rupture_dir)
@@ -138,7 +139,42 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
                  f'{kinds["adjacent"]} identical triples within {LINK_KM:g} km, {kinds["same name"]} on faults of one name); '
                  f'{len(more)} faults correlated with more faults than their template\'s ({n1} of QualCode 1), each weighted '
                  f'1 / sqrt(1 + m x {rho:g}) for the m faults it shares a template or a cluster with')
-    return per_row, L, L_links
+    return per_row, L, L_links, (list(sub['parent']), mates)
+
+
+def section_factors(sec, parents, mates, rho):
+    """The correlation counted between slip-rate sections, not faults (preliminaries.py, with sections): a section
+    already counts its subsections' copies once (1/sqrt(k)), whichever faults they lie on, so faults that share a section
+    are not counted as correlated again. Sections s and t are correlated when a fault of t is one of a fault of s's
+    correlated faults (or the same fault); each section's rows are weighted 1 / sqrt(1 + m rho), m the sections it is
+    correlated with. Equal to the faults' weights wherever every section is one fault. sec: each slip row's section;
+    parents: each slip row's parent fault (None for a row beyond the rupture set's subsections). Returns (the weight per
+    row, the number of sections holding two or more correlated faults)."""
+    sec = np.asarray(sec)
+    S = int(sec.max()) + 1 if len(sec) else 0
+    faults = [set() for _ in range(S)]
+    for s_, p in zip(sec, parents):
+        if p is not None:
+            faults[s_].add(p)
+    where = {}
+    for s_, fs in enumerate(faults):
+        for p in fs:
+            where.setdefault(p, set()).add(s_)
+    w = np.ones(S)
+    inside = 0
+    for s_, fs in enumerate(faults):
+        near = set()
+        for p in fs:
+            near |= where.get(p, set())
+            for q in mates.get(p, ()):
+                near |= where.get(q, set())
+        near.discard(s_)
+        if near:
+            w[s_] = 1.0 / np.sqrt(1.0 + len(near) * rho)
+        if any(mates.get(p, set()) & fs for p in fs):
+            inside += 1
+    return w[sec], inside
+
 
 
 def _norm(s):

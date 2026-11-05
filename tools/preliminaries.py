@@ -431,6 +431,7 @@ def main():
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
     L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
     T_raw = None                                         # --cfm-template-rho: each raw slip row's template weight
+    corr_t = None                                        # ... each raw slip row's fault and each fault's correlated faults
     if args.cfm_sliprates or args.slip_rate_factor is not None or args.slip_sd_multiplier is not None:
         from cfm_sliprates import rebuild, rescale_inputs
         from cru_common import find_rupture_set
@@ -451,7 +452,7 @@ def main():
                                                                args.slip_rate_factor, args.cfm_pref, args.cfm_rounding)
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
-                    t_sub, lines_t, links_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
+                    t_sub, lines_t, links_t, corr_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
                                                                links=args.cfm_rate_links)
                     if args.cfm_rate_links:
                         f_links = os.path.join(os.path.dirname(stem), 'cfm_rate_links.csv') if not pre else pre + 'cfm_rate_links.csv'
@@ -549,17 +550,55 @@ def main():
     n_soft = 0 if info['soft_forced'] else int(np.isin(keep_r, info['soft_r']).sum())   # kept soft penalties: no data
     const = info['chi2_const'] if args.keep_empty_rows else 0.0
     spec = args.slip_sections
+    t_keep = None if T_raw is None else T_raw[keep_r]
+    par_s = None
     if args.slip_block in bnames:
         srows = np.flatnonzero(block == bnames.index(args.slip_block))
+        par_note = None                                  # each slip row's parent fault (par_s): sections stop at faults' ends
+        if spec in ('auto', 'none'):
+            from cru_common import find_rupture_set
+            try:
+                rd_s = find_rupture_set(args.rupture_set) if args.rupture_set else find_rupture_set(os.path.dirname(os.path.abspath(args.A)))
+            except ValueError as e:
+                rd_s, par_note = None, str(e)
+            if rd_s is not None:
+                from cfm_sliprates import load_subsections
+                sub_par = np.array(load_subsections(rd_s)['parent'], dtype=object)
+                raw_s = np.asarray(keep_r)[srows]
+                if raw_s.max() < len(sub_par) and len(srows) >= 0.9 * len(sub_par):
+                    par_s = sub_par[raw_s]
+                else:
+                    par_note = (f'the slip-rate rows (original rows up to {raw_s.max()}) do not match the rupture set\'s '
+                                f'{len(sub_par)} subsections in {rd_s}')
+            elif par_note is None:
+                par_note = 'no rupture set given or found beside --A'
         try:
-            sec, kr, notes = slip_sections(G, d, srows, keep_r, spec)
+            sec, kr, notes = slip_sections(G, d, srows, keep_r, spec, parents=par_s)
         except (OSError, ValueError) as e:
             raise SystemExit(f'--slip-sections: {e}')
+        if par_s is not None:
+            sec0 = slip_sections(G, d, srows, keep_r, spec)[0]
+            n_split = int(sum(1 for k_ in np.unique(sec0) if len(set(par_s[sec0 == k_])) > 1))
+            notes = [f'sections stop at each parent fault\'s end (the rupture set\'s fault names): {n_split} runs of copies '
+                     f'that spanned two or more faults are split, {int(sec.max()) - int(sec0.max())} sections more'] + notes
+        elif par_note:
+            notes = [f'sections may span parent faults ({par_note})'] + notes
         section[srows] = sec
         ks = np.bincount(sec)
         weigh = spec != 'none'
         tfac = np.ones(N) if T_raw is None else T_raw[keep_r]   # --cfm-template-rho: each row's template weight (1 if off)
+        if T_raw is not None and weigh:                  # with sections, the correlation counted between sections
+            from cfm_sliprates import section_factors
+            par_raw, mates_t = corr_t
+            raw_s = np.asarray(keep_r)[srows]
+            tfac[srows], n_inside = section_factors(sec, [par_raw[r] if r < len(par_raw) else None for r in raw_s],
+                                                    mates_t, args.cfm_template_rho)
+            if n_inside:                                 # only where sections span faults (no rupture set, or a file)
+                say(f'   correlation counted between slip-rate sections: {n_inside} sections hold two or more correlated faults, '
+                    'whose copies their 1/sqrt(k) already counts once, so those faults are not counted as correlated again')
         t_sec = np.bincount(sec, weights=tfac[srows]) / np.maximum(ks, 1)   # each section's (its rows share one fault)
+        if T_raw is not None:
+            t_keep = tfac                                # the weights as applied, recorded with the problem
         if weigh or T_raw is not None:
             row_scale[srows] = (1.0 / np.sqrt(kr) if weigh else 1.0) * tfac[srows]
         first = np.r_[0, np.flatnonzero(np.diff(sec)) + 1] if spec in ('auto', 'none') else np.unique(sec, return_index=True)[1]
@@ -660,8 +699,9 @@ def main():
                                                                     f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
                                                                     args.cfm_pref, 'rounding' if args.cfm_rounding else '']),
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
-                 template_scale=None if T_raw is None else T_raw[keep_r], cfm_template_rho=args.cfm_template_rho,
-                 cfm_rate_links=True if args.cfm_rate_links else None)
+                 template_scale=t_keep, cfm_template_rho=args.cfm_template_rho,
+                 cfm_rate_links=True if args.cfm_rate_links else None,
+                 sections_by_fault=True if par_s is not None else None)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 

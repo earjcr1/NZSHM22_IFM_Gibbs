@@ -86,7 +86,8 @@ def load_problem(path):
                 slip_sd_multiplier=float(z['slip_sd_multiplier']) if 'slip_sd_multiplier' in z.files else None,
                 template_scale=z['template_scale'].astype(np.float64) if 'template_scale' in z.files else None,
                 cfm_template_rho=float(z['cfm_template_rho']) if 'cfm_template_rho' in z.files else None,
-                cfm_rate_links=bool(z['cfm_rate_links']) if 'cfm_rate_links' in z.files else False)
+                cfm_rate_links=bool(z['cfm_rate_links']) if 'cfm_rate_links' in z.files else False,
+                sections_by_fault=bool(z['sections_by_fault']) if 'sections_by_fault' in z.files else False)
 
 
 def split_weights(P, rows, res):
@@ -98,13 +99,16 @@ def split_weights(P, rows, res):
     return np.where(res < 0, P['split_lo2'][rows], P['split_hi2'][rows])
 
 
-def slip_sections(G, d, rows, keep_rows=None, spec='auto', rtol=1e-9):
+def slip_sections(G, d, rows, keep_rows=None, spec='auto', rtol=1e-9, parents=None):
     """Group the slip-rate rows `rows` (cleaned indices, in order) into fault sections, each one measurement.
 
     'auto': consecutive rows belong to one section when they are copies of one slip rate: identical targets, and
             identical coefficients for every rupture both rows contain (the same uncertainty, with the same slip on both
             subsections). A row unlike its neighbours is a section of its own (k = 1), so slip rates that vary from
-            subsection to subsection (a geodetic model, say) are left as they are.
+            subsection to subsection (a geodetic model, say) are left as they are. With parents (each row's parent fault,
+            aligned with rows), a section never spans two parent faults: sqrt(k) counts the copies of one fault's slip
+            rate on its own subsections, and a rate passed from one fault to another is the CFM's correlation's business
+            (preliminaries.py --cfm-template-rho, --cfm-rate-links).
     'none': the same detection, for reporting only; every row stays its own measurement (the inputs as given).
     a path: a file of 'original_row section' lines (whitespace or comma separated; '#' starts a comment), one for every
             slip-rate row, e.g. from the rupture set's subsection-to-section mapping.
@@ -120,6 +124,8 @@ def slip_sections(G, d, rows, keep_rows=None, spec='auto', rtol=1e-9):
         for t in range(1, len(rows)):
             a, b = rows[t - 1], rows[t]
             same = abs(d[a] - d[b]) <= rtol * max(abs(d[a]), abs(d[b]), 1e-300)
+            if same and parents is not None and parents[t - 1] != parents[t]:
+                same = False                               # copies, but on two parent faults
             if same:
                 ia, va = Gr.indices[Gr.indptr[a]:Gr.indptr[a + 1]], Gr.data[Gr.indptr[a]:Gr.indptr[a + 1]]
                 ib, vb = Gr.indices[Gr.indptr[b]:Gr.indptr[b + 1]], Gr.data[Gr.indptr[b]:Gr.indptr[b + 1]]
