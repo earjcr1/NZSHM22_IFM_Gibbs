@@ -108,12 +108,17 @@ check(argdefault(trees['gibbs.py'], '--prior') == 'spikeslab', f"gibbs.py --prio
 _cut = [k for k in ('PRIOR_KIND', 'THETA', 'BOX_TOP', 'USE_SWAPS', 'OUTPUT_DRAWS', 'SA_STARTS', 'BEST_FIT')
         if any(re.search(rf'\b{k}\b', c) for _, c in cells)]
 _gr = ''.join(c for _, c in cells if 'def gibbs_run(' in c)
+_gr_all = ''.join(c for _, c in cells if 'MAIN = [gibbs_run(' in c)
 check(not _cut and all(s in _gr for s in ("'--init', start", "start = 'fitted' if os.path.exists('nnls/fitted_vectors.npz') else 'nnls'",
                                           "'--no-samples'", "'--swap-cos', 0.99"))
       and "elif a.init == 'fitted':" in src['gibbs.py'] and 'nnls_key' in src['best_fit_as_fitted.py'],
       'notebook: no PRIOR_KIND, THETA, BOX_TOP, USE_SWAPS, OUTPUT_DRAWS, SA_STARTS or BEST_FIT; its runs start from the best '
       'fit (as fitted, gibbs.py --init fitted, when the notebook made it; else NNLS), store no draws and use swap moves'
       + (f'; found {_cut}' if _cut else ''))
+check(re.findall(r'^SEED = (\S+)', cells[0][1], re.M) == ['None'] and 'replicate_seed(r)' in _gr_all
+      and "np.random.SeedSequence([SEED_USED, r])" in _gr_all and 'seed=SEED_USED' in ''.join(c for _, c in cells),
+      "notebook SEED = None (each run's seed from its start time; an integer repeats a run, 'legacy' gives 101, 102, ...), "
+      'each replicate\'s seed hashed from it, recorded in the configuration')
 check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not None else \(1 if spike_mode else None\)", src['gibbs.py'])),
       'gibbs.py: --hyper-every defaults to 1 for spike-and-slab')
 check(argdefault(trees['gibbs.py'], '--slab') == 'log' and "choices=['log', 'sqrt']" in src['gibbs.py']
@@ -371,7 +376,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
