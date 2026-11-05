@@ -85,7 +85,8 @@ def load_problem(path):
                 slip_rate_factor=float(z['slip_rate_factor']) if 'slip_rate_factor' in z.files else None,
                 slip_sd_multiplier=float(z['slip_sd_multiplier']) if 'slip_sd_multiplier' in z.files else None,
                 template_scale=z['template_scale'].astype(np.float64) if 'template_scale' in z.files else None,
-                cfm_template_rho=float(z['cfm_template_rho']) if 'cfm_template_rho' in z.files else None)
+                cfm_template_rho=float(z['cfm_template_rho']) if 'cfm_template_rho' in z.files else None,
+                cfm_rate_links=bool(z['cfm_rate_links']) if 'cfm_rate_links' in z.files else False)
 
 
 def split_weights(P, rows, res):
@@ -665,7 +666,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

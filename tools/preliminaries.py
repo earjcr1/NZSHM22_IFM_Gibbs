@@ -402,6 +402,11 @@ def main():
                     help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
                          'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
                          'counts as one measurement (default: off)')
+    ap.add_argument('--cfm-rate-links', action='store_true',
+                    help='--cfm-template-rho: also the faults whose rate the CFM borrowed from another\'s, of any QualCode '
+                         '(named in its comment as the source, or an identical triple on an adjacent trace or a fault of the '
+                         'same name: cfm_sliprates.rate_links), each fault weighted 1 / sqrt(1 + m rho) for the m faults it '
+                         'shares a template or a cluster of links with; the links listed in cfm_rate_links.csv')
     ap.add_argument('--slip-rate-factor', type=float, default=None,
                     help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
                          'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22; the '
@@ -446,7 +451,15 @@ def main():
                                                                args.slip_rate_factor, args.cfm_pref, args.cfm_rounding)
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
-                    t_sub, lines_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho)
+                    t_sub, lines_t, links_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
+                                                               links=args.cfm_rate_links)
+                    if args.cfm_rate_links:
+                        f_links = os.path.join(os.path.dirname(stem), 'cfm_rate_links.csv') if not pre else pre + 'cfm_rate_links.csv'
+                        with open(f_links, 'w', newline='') as fh:
+                            w_ = csv.writer(fh)
+                            w_.writerow(['rule', 'fault', 'source', 'evidence'])
+                            w_.writerows(links_t)
+                        lines_t = lines_t + [f'   the links: {f_links}']
                     T_raw = np.ones(A.shape[0])
                     T_raw[:len(t_sub)] = t_sub
                     lines_c = lines_c + lines_t
@@ -458,6 +471,8 @@ def main():
             say(ln)
     if args.cfm_template_rho is not None and not args.cfm_sliprates:
         raise SystemExit('--cfm-template-rho needs --cfm-sliprates (the CFM\'s quality codes and slip-rate triples)')
+    if args.cfm_rate_links and args.cfm_template_rho is None:
+        raise SystemExit('--cfm-rate-links needs --cfm-template-rho (the correlation)')
 
     G, d, keep_r, keep_c, info = clean(A, d_raw, args.huge, not args.keep_empty_rows, not args.keep_soft_penalties)
     N, n = G.shape
@@ -572,7 +587,7 @@ def main():
                                     n_other, const)
         say(f'   fit check: if the uncertainties are right, the chi^2 of a draw should be near {chi2_exp[0]:.0f} +- {chi2_exp[1]:.0f} '
             + (f'({len(ks)} slip-rate measurements, one per section'
-               + (f', counted as {chi2_exp[0] - n_other - const:.0f} with the template groups\' correlation' if T_raw is not None else '')
+               + (f', counted as {chi2_exp[0] - n_other - const:.0f} with the template groups\'' + (' and borrowed rates\'' if args.cfm_rate_links else '') + ' correlation' if T_raw is not None else '')
                + f', and {n_other} other rows' if weigh else
                f'({len(srows)} slip-rate rows, whose copies of one section share its error, which widens the spread, and {n_other} other rows')
             + (f', plus a constant {const:g} from the all-zero rows kept' if const else '')
@@ -645,7 +660,8 @@ def main():
                                                                     f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
                                                                     args.cfm_pref, 'rounding' if args.cfm_rounding else '']),
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
-                 template_scale=None if T_raw is None else T_raw[keep_r], cfm_template_rho=args.cfm_template_rho)
+                 template_scale=None if T_raw is None else T_raw[keep_r], cfm_template_rho=args.cfm_template_rho,
+                 cfm_rate_links=True if args.cfm_rate_links else None)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 

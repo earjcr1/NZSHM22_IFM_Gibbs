@@ -30,11 +30,13 @@ import argparse
 import csv
 import json
 import os
+import re
 
 import numpy as np
 import scipy.sparse as sp
 
 NSIG_DEFAULT, FACTOR_DEFAULT = 2.0, 2.0       # SR_min and SR_max at 2 sd, doubled (the inputs read them at 1)
+LINK_KM = 5.0                                 # --cfm-rate-links: identical triples on traces this close are one estimate
 
 
 def load_cfm(path):
@@ -65,22 +67,29 @@ def load_cfm_steps(path):
     return out
 
 
-def template_factors(cfm_csv, rupture_dir, rho):
-    """--cfm-template-rho: the faults whose slip rates share one template, their errors correlated. Faults of QualCode 2-5
-    (rates from comparisons with nearby faults, geomorphology, geodesy, or none: Seebeck et al.'s quality codes) with an
-    identical SR_pref, SR_min and SR_max as written form a group of n; with a correlation rho between them, each fault's
-    rows are weighted 1 / sqrt(1 + (n - 1) rho), so at rho = 1 a group counts as one measurement (as a section's
-    subsections do). Returns (the factor per raw slip-rate row, subsections in FaultID order; report lines)."""
+def template_factors(cfm_csv, rupture_dir, rho, links=False):
+    """--cfm-template-rho: the faults whose slip rates share one estimate, their errors correlated (rho). Two kinds:
+      - templates: faults of QualCode 2-5 (rates from comparisons with nearby faults, geomorphology, geodesy, or none:
+        Seebeck et al.'s quality codes) with an identical SR_pref, SR_min and SR_max as written;
+      - with links (--cfm-rate-links), rates borrowed from another fault, of any QualCode (rate_links): a comment naming
+        the fault the rate was taken from or scaled from, or an identical triple on an adjacent trace or on a fault of the
+        same name; the links' connected faults form a cluster.
+    Faults i and j are correlated (C_ij = rho) when they share a template or a cluster, and each fault's rows are weighted
+    1 / sqrt(sum_j C_ij) = 1 / sqrt(1 + m rho), m the faults it is correlated with: for a template alone (m = n - 1), at
+    rho = 1, a group of n counts as one measurement, as a section's subsections do; a fault in both a template and a
+    cluster is correlated with both, without the two groups being merged. Returns (the factor per raw slip-rate row,
+    subsections in FaultID order; report lines; the links, one (rule, fault, source, evidence) per line, or [])."""
     if not (0.0 < rho <= 1.0):
         raise ValueError(f'--cfm-template-rho {rho:g}: give a correlation above 0 and at most 1')
     sub = load_subsections(rupture_dir)
     used = set(sub['parent'])
-    info = {}
+    info, rows = {}, {}
     with open(cfm_csv, encoding='utf-8-sig', newline='') as f:
         for row in csv.DictReader(f):
             nm = row['Name'].strip()
             if nm in used:
                 info[nm] = (tuple(str(row[k]).strip() for k in ('SR_pref', 'SR_min', 'SR_max')), str(row.get('QualCode', '')).strip())
+                rows[nm] = row
     if any(info[p][1] == '' for p in used):
         raise ValueError(f'{cfm_csv}: --cfm-template-rho needs the QualCode column for every fault')
     groups = {}
@@ -88,11 +97,32 @@ def template_factors(cfm_csv, rupture_dir, rho):
         t, q = info[p]
         if q in ('2', '3', '4', '5'):
             groups.setdefault(t, []).append(p)
-    fac = {p: 1.0 for p in used}
-    for t, ps in groups.items():
+    mates = {p: set() for p in used}                 # the faults each one is correlated with
+    for ps in groups.values():
         if len(ps) > 1:
             for p in ps:
-                fac[p] = 1.0 / np.sqrt(1.0 + (len(ps) - 1) * rho)
+                mates[p] |= set(ps) - {p}
+    m_tmpl = {p: len(mates[p]) for p in used}
+    L_links = []
+    if links:
+        if any('Comments' not in r for r in rows.values()):
+            raise ValueError(f'{cfm_csv}: --cfm-rate-links needs the Comments column')
+        L_links = rate_links({p: (info[p][0], rows[p]['Comments']) for p in used}, fault_traces(rupture_dir))
+        par = {p: p for p in used}
+        def root(x):
+            while par[x] != x:
+                par[x] = par[par[x]]
+                x = par[x]
+            return x
+        for _, a, b, _ in L_links:
+            par[root(a)] = root(b)
+        clusters = {}
+        for p in used:
+            clusters.setdefault(root(p), set()).add(p)
+        for c in clusters.values():
+            for p in c:
+                mates[p] |= c - {p}
+    fac = {p: 1.0 / np.sqrt(1.0 + len(mates[p]) * rho) if mates[p] else 1.0 for p in used}
     per_row = np.array([fac[p] for p in sub['parent']])
     big = sorted(((len(ps), t) for t, ps in groups.items() if len(ps) > 1), reverse=True)
     n_in = sum(n for n, _ in big)
@@ -100,7 +130,123 @@ def template_factors(cfm_csv, rupture_dir, rho):
          f'SR_max with another, in {len(big)} groups; each fault\'s rows weighted 1 / sqrt(1 + (n - 1) x {rho:g}) for a group of '
          f'n, so {"each group counts as one measurement" if rho == 1 else f"a group of n counts as n / (1 + (n - 1) x {rho:g}) measurements"}; '
          'largest: ' + ', '.join(f'{"/".join(t)} ({n})' for n, t in big[:5])]
-    return per_row, L
+    if links:
+        kinds = {k: sum(1 for l in L_links if l[0] == k) for k in ('comment', 'adjacent', 'same name')}
+        more = sorted(p for p in used if len(mates[p]) > m_tmpl[p])
+        n1 = sum(1 for p in more if info[p][1] == '1')
+        L.append(f'== borrowed slip rates (--cfm-rate-links): {len(L_links)} links ({kinds["comment"]} from the CFM\'s comments, '
+                 f'{kinds["adjacent"]} identical triples within {LINK_KM:g} km, {kinds["same name"]} on faults of one name); '
+                 f'{len(more)} faults correlated with more faults than their template\'s ({n1} of QualCode 1), each weighted '
+                 f'1 / sqrt(1 + m x {rho:g}) for the m faults it shares a template or a cluster with')
+    return per_row, L, L_links
+
+
+def _norm(s):
+    return ' '.join(re.sub(r'[^a-z0-9]+', ' ', s.lower()).split())
+
+
+def _base(n):
+    """A fault's name before a colon, a ' - ' or a number: 'Turi' of 'Turi: North', 'Hyde' of 'Hyde South - The Twins'."""
+    return re.split(r':| - |\s+\d', n)[0].strip()
+
+
+def fault_traces(rupture_dir):
+    """Each parent fault's surface trace in the rupture set, as a list of (n, 2) lon/lat arrays, one per subsection."""
+    F = json.load(open(os.path.join(rupture_dir, 'fault_sections.geojson')))['features']
+    tr = {}
+    for f in F:
+        g = f['geometry']
+        for ln in ([g['coordinates']] if g['type'] == 'LineString' else g['coordinates']):
+            tr.setdefault(str(f['properties']['ParentName']).strip(), []).append(np.array([c[:2] for c in ln], float))
+    return tr
+
+
+def _trace_km(a, b):
+    """The least distance (km) between two traces: every vertex of each against every segment of the other, on a flat
+    projection at their mean latitude."""
+    lat0 = np.mean(np.concatenate(a + b)[:, 1])
+    k = np.array([111.32 * np.cos(np.radians(lat0)), 110.57])
+    def one_way(P, S):
+        P = np.concatenate(P) * k
+        A_ = np.concatenate([s_[:-1] for s_ in S if len(s_) > 1]) * k
+        B_ = np.concatenate([s_[1:] for s_ in S if len(s_) > 1]) * k
+        D = B_ - A_
+        t = np.clip(((P[:, None] - A_[None]) * D[None]).sum(-1) / np.maximum((D * D).sum(-1), 1e-12)[None], 0.0, 1.0)
+        return np.sqrt(((A_[None] + t[..., None] * D[None] - P[:, None]) ** 2).sum(-1)).min()
+    return min(one_way(a, b), one_way(b, a))
+
+
+_COPY = r'(?:from|as|as for|same as|equal to|that for|that of|with)'
+_PART = re.compile(r'\b(combined|minus|plus|budget|sharing|partition|lower|higher|less than|junction|balanc|conservative)', re.I)
+_RATE = re.compile(r'\b(SR|slip[- ]rates?|rates?)\b', re.I)
+
+
+def rate_links(faults, traces, km=LINK_KM):
+    """--cfm-rate-links: the faults whose CFM slip rate was borrowed from another's, of any QualCode. faults: name ->
+    ((SR_pref, SR_min, SR_max) as written, the CFM's comment); traces: fault_traces. Three rules:
+      - comment: a sentence of the comment that speaks of a rate names another fault of the set right after 'from', 'as',
+        'same as', 'equal to', 'that for', 'that of' or 'with' ('SR from Lyell', 'adopted from adjacent Old Man Fault'),
+        or right before 'fault', 'source', 'SR' or 'rate' ('50% of the Hyde north rate', 'about half that of the Hororata
+        source'): by its full name; within one fault system ('Alpine: ...'), by the part after the colon or, failing
+        that, its first word if the two SR_pref are equal ('from George-Milford' -> Alpine: George to Jacksons); or by
+        the name the faults of one family share (Turi: Central, North, South). Scaled copies count ('0.5X', '3/4 of');
+        sentences of sums, differences and budgets ('combined', 'minus', 'sharing', 'lower', 'junction', ...), where an
+        independent term enters, do not;
+      - adjacent: an identical triple on traces within km of each other;
+      - same name: an identical triple on two faults of one family name (Ariel Bank and Ariel Bank 2).
+    Returns [(rule, fault, source, evidence)], each pair once per rule."""
+    names = sorted(faults)
+    full = {p: _norm(p) for p in names}
+    system = {p: p.split(':')[0].strip() if ':' in p else None for p in names}
+    bases = sorted({_base(p) for p in names}, key=len, reverse=True)
+    out = []
+    for p in names:
+        found = {}
+        for sent in re.split(r'(?<=[.;])\s+', faults[p][1]):
+            if not _RATE.search(sent) or _PART.search(sent):
+                continue
+            ns = ' ' + _norm(sent) + ' '
+            def near(nm):
+                if ' ' + nm + ' ' not in ns:             # the quick test first: most names are not in the sentence
+                    return False
+                e = re.escape(nm)
+                return bool(re.search(' ' + _COPY + ' (?:the )?(?:adjacent |nearby )?' + e + ' ', ns)
+                            or re.search(' ' + e + ' (?:fault |source )?(?:sr|slip rate|rate)s? ', ns)
+                            or re.search(' ' + e + ' (?:fault|source) ', ns))
+            hit = []
+            for q in sorted(names, key=lambda q: -len(full[q])):
+                if q != p and near(full[q]) and not any(full[q] in full[h] for h in hit):
+                    hit.append(q)
+            if not hit and system[p]:
+                sib = [q for q in names if q != p and system[q] == system[p]]
+                hit = [q for q in sib if near(_norm(q.split(':', 1)[1]))]
+                if not hit:
+                    hit = [q for q in sib if near(_norm(q.split(':', 1)[1]).split()[0]) and faults[q][0][0] == faults[p][0][0]]
+            if not hit:
+                for b in bases:
+                    nb = _norm(b)
+                    if len(nb) >= 4 and b != _base(p) and (' ' + nb + ' ') not in (' ' + full[p] + ' ') and near(nb):
+                        hit = [q for q in names if _base(q) == b and q != p]
+                        break
+            for q in hit:
+                found.setdefault(q, sent.strip())
+        out += [('comment', p, q, s_) for q, s_ in sorted(found.items())]
+    by_t = {}
+    for p in names:
+        by_t.setdefault(faults[p][0], []).append(p)
+    box = {p: (np.concatenate(traces[p]).min(0), np.concatenate(traces[p]).max(0)) for p in names}
+    pad = km / 60.0                                  # degrees: over km at every New Zealand latitude
+    for t, ps in by_t.items():
+        for i, p in enumerate(ps):
+            for q in ps[i + 1:]:
+                if _base(p) == _base(q):
+                    d = _trace_km(traces[p], traces[q])
+                    out.append(('adjacent' if d <= km else 'same name', p, q, f'{"/".join(t)}, {d:.1f} km apart'))
+                elif (box[p][0] - pad <= box[q][1]).all() and (box[q][0] - pad <= box[p][1]).all():
+                    d = _trace_km(traces[p], traces[q])
+                    if d <= km:
+                        out.append(('adjacent', p, q, f'{"/".join(t)}, {d:.1f} km apart'))
+    return out
 
 
 def load_subsections(rupture_dir):

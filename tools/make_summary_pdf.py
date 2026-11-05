@@ -134,6 +134,7 @@ def main():
     cpref = cfg.get('cfm_pref') or 'mode'              # SR_pref as each split normal's mode or its median
     cround = bool(cfg.get('cfm_rounding'))             # each side's sd widened by the CFM numbers' rounding
     ctmpl = cfg.get('cfm_template_rho')                # template groups' correlation, or None
+    clinks = bool(cfg.get('cfm_rate_links'))           # with ctmpl, also the faults whose rate the CFM borrowed
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
     if grp:
@@ -480,6 +481,10 @@ def main():
                     'faults of quality codes 2\u20135 sharing an identical SR_pref / SR_min / SR_max treated as correlated, '
                     f'each one\u2019s rows weighted 1/\u221a(1 + (n \u2212 1) \u00d7 {float(ctmpl):g}) for a group of n' if ctmpl is not None
                     else 'every fault\u2019s slip rate an independent measurement'],
+                   ['CFM_RATE_LINKS', str(clinks), 'also the faults of any quality code whose rate the CFM borrowed from '
+                    'another\u2019s (named in its comment as the source, or an identical triple on an adjacent trace or a fault '
+                    'of the same name), each weighted 1/\u221a(1 + m \u00d7 \u03c1) for the m faults it is correlated with'
+                    if clinks else ('the templates alone' if ctmpl is not None else 'off (with CFM_TEMPLATE_RHO only)')],
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
                    ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'

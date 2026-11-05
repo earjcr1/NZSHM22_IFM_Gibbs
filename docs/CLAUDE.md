@@ -123,7 +123,14 @@ reading with colleagues. --cfm-template-rho RHO (CFM_TEMPLATE_RHO, None by defau
 faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max as written (cfm_sliprates.template_factors) weighted
 1/sqrt(1 + (n - 1) rho) for a group of n, multiplied into row_scale with the sections' 1/sqrt(k) (so plate_rate's sigma_i
 and the figures' units stay each fault's own), recorded as the problem's template_scale and cfm_template_rho; the fit check
-(chi2_expectation) and block_measurements count each section t^2. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
+(chi2_expectation) and block_measurements count each section t^2. --cfm-rate-links (CFM_RATE_LINKS, True by default, only
+with CFM_TEMPLATE_RHO; the user asked for it 2026-11-05 to catch borrowed rates of any QualCode: Lyell South "SR from
+Lyell", Parihaka from Turi, the Alpine fan-offset sections, Whangamoa, Hyde South 0.5x, Kelly 0.75x, Wellington HV 1/2
+from 3, Ariel Bank 2, George to Jacksons / Caswell - South George, Kowai - View Hill, Teviot, Clear Hills - Waikopiro):
+cfm_sliprates.rate_links (comment names after copy words, the fault-system and family-name fallbacks; identical
+triples within LINK_KM = 5 km or on one family name), union-find clusters; weight 1/sqrt(1 + m rho), m = template mates
+plus cluster mates, not a merged partition (a merge chained 0.2/0.1/0.3 x15 with 2/1/3 x9 through Clear Hills);
+templates alone bit-identical to a38fc91; links listed in cfm_rate_links.csv; recorded as cfm_rate_links. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
 finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
 the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
 median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
