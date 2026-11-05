@@ -407,8 +407,7 @@ def main():
             if j == 0:
                 ax.set_ylabel(f'{mm} prediction (per year)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'{mm}: χ²{" as fitted" if TH is not None else ""} {D["chi2"]:.1f} over the {len(rows)} paleo rows'
-               + (' (−2 ln of the sites\' PDFs)' if TH is not None else '') + f'; within one sd {100 * D["in1"]:.0f}%, two '
+        sub = (f'{mm}: χ²{" as fitted" if TH is not None else ""} {D["chi2"]:.1f} over the {len(rows)} paleo rows; within one sd {100 * D["in1"]:.0f}%, two '
                f'{100 * D["in2"]:.0f}%' + (f'; within the sites\' own 15.9–84.1% ranges {100 * D["own1"]:.0f}%, 2.3–97.7% '
                                            f'{100 * D["own2"]:.0f}%' if phys else ''))
         above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
