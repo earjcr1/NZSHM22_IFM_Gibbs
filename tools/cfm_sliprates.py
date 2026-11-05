@@ -53,6 +53,18 @@ def load_cfm(path):
     return out
 
 
+def load_cfm_steps(path):
+    """Each fault's rounding step (mm/yr): the finest of its SR_pref, SR_min and SR_max as written, 10^-(decimal places)
+    of the shortest form of each (neither the CSV nor the spreadsheet keeps trailing zeros, so a '2' beside 1.5 and 2.8
+    is taken as given to 0.1, the fault's numbers being set at one precision)."""
+    dec = lambda v: len(v.split('.')[1]) if '.' in v else 0
+    out = {}
+    with open(path, encoding='utf-8-sig', newline='') as f:
+        for row in csv.DictReader(f):
+            out[row['Name'].strip()] = min(10.0 ** -dec(str(row[k]).strip()) for k in ('SR_pref', 'SR_min', 'SR_max'))
+    return out
+
+
 def load_subsections(rupture_dir):
     """The rupture set's subsections in FaultID order: parent name, SlipRate and SlipRateStdDev (mm/yr)."""
     F = json.load(open(os.path.join(rupture_dir, 'fault_sections.geojson')))['features']
@@ -135,7 +147,7 @@ def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
     return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
-def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode'):
+def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False):
     """The inputs' slip-rate rows (raw rows 0 .. subsections - 1) rebuilt from the CFM, each split normal scaled as a whole
     by srf (default: the inputs' own factor, 0.8). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
@@ -163,6 +175,16 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     if (s_lo <= 0).any() or (s_hi <= 0).any():
         bad = sorted({sub['parent'][j] for j in np.flatnonzero((s_lo <= 0) | (s_hi <= 0))})
         raise ValueError(f'{cfm_csv}: a slip rate of 0 with no range gives no uncertainty: ' + ', '.join(bad))
+    widen = np.ones(ns)
+    qstep = np.zeros(ns)
+    if rounding:                      # --cfm-rounding: each number known to half its fault's step q (uniform, variance
+        steps = load_cfm_steps(cfm_csv)   # q^2/12): the mode's, f^2 q^2/12, on both sides; each width's, a difference of two
+        qstep = np.array([steps[p] for p in sub['parent']]) * 1e-3     # rounded numbers, c^2 2 q^2/12 (c each side's sd
+        cc = factor * f / nsig                                          # per unit of width); added in quadrature
+        add = qstep ** 2 * (f ** 2 + 2.0 * cc ** 2) / 12.0
+        w_lo, w_hi = np.sqrt(s_lo ** 2 + add), np.sqrt(s_hi ** 2 + add)
+        widen = np.maximum(w_lo / s_lo, w_hi / s_hi)
+        s_lo, s_hi = w_lo, w_hi
     s_ref = 0.5 * (s_lo + s_hi)
     fallback = np.zeros(ns, bool)
     if pref_as == 'median':           # --cfm-pref median: SR_pref the median, each side's sd as above, the mode moved
@@ -187,7 +209,7 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     L2[:ns], H2[:ns] = (s_ref / s_lo) ** 2, (s_ref / s_hi) ** 2
     tab = dict(parent=sub['parent'], pref=pref, smin=smin, smax=smax, mode=mode, s_lo=s_lo, s_hi=s_hi, s_ref=s_ref,
                sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float), pref_as=pref_as,
-               fallback=fallback)
+               fallback=fallback, rounding=rounding, widen=widen, qstep=qstep)
     return A2, d2, L2, H2, tab, report_lines(tab, nsig, factor, cfm_csv)
 
 
@@ -213,6 +235,12 @@ def report_lines(tab, nsig, factor, cfm_csv):
          f'   {z1} faults with one side of zero width (it takes the other side\'s), {z2} with none (sd = the mode)',
          f'   the new sigma_ref against the inputs\' sigma: median {np.median(ratio):.3f} (5-95% {np.percentile(ratio, 5):.3f}-'
          f'{np.percentile(ratio, 95):.3f})']
+    if tab['rounding']:
+        wf = tab['widen'][first]
+        L.append(f'   rounding (--cfm-rounding): each fault\'s numbers known to half its finest step (from SR_pref, SR_min and '
+                 f'SR_max as written; {int(np.sum(tab["qstep"][first] >= 1e-3))} faults at 1 mm/yr), each side\'s sd widened in '
+                 f'quadrature: by a median factor {np.median(wf):.3f}, beyond 1.1 for {int(np.sum(wf > 1.1))} faults, largest '
+                 f'{wf.max():.2f} ({par[first[int(np.argmax(wf))]]})')
     if tab['pref_as'] == 'median':
         tgt = tab['f'][first] * tab['pref'][first] * 1e-3
         mv = (tab['mode'][first] - tgt) / tab['s_ref'][first]
@@ -236,12 +264,13 @@ def main():
     ap.add_argument('--cfm-sigmas', type=float, default=NSIG_DEFAULT)
     ap.add_argument('--slip-sd-multiplier', type=float, default=FACTOR_DEFAULT)
     ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'])
+    ap.add_argument('--cfm-rounding', action='store_true')
     ap.add_argument('--slip-rate-factor', type=float, default=None, help="default: the inputs' own (0.8)")
     a = ap.parse_args()
     from cru_common import find_rupture_set, load_colt_sparse, load_vector
     rd = find_rupture_set(a.ruptures)
     A, d = load_colt_sparse(a.A), load_vector(a.d)
-    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor, a.cfm_pref)
+    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor, a.cfm_pref, a.cfm_rounding)
     print('\n'.join(L))
 
 

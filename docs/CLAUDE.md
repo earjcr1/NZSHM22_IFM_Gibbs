@@ -119,7 +119,10 @@ SR_min/SR_max at 2 sd and doubled, so each side's sd is f x its width and sigma_
 run: slip chi2 698 against 507); the same sds as the 1-sd reading with SLIP_SD_MULTIPLIER = 1 (the user's run
 _1793831887, _sdx1). Before that, 1 and 2 (the inputs' reading; sigma_ref 0.80 of theirs, 5-95% 0.75-0.90); f on the
 mode only was tried and dropped. The user is checking the
-reading with colleagues. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
+reading with colleagues. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
+finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
+the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
+median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
 each split normal shifted, sds kept, so that its median is f x SR_pref (rebuild's pref_as; the shift from the side masses
 a = s_lo/(s_lo+s_hi): median - mode = s_hi Phi^-1(0.5 + (0.5-a)/(2(1-a))) for a < 0.5, -s_lo Phi^-1(1 - 1/(4a)) for
 a > 0.5); faults whose mode would fall at or below 0 keep the mode (18 at 211k), listed in the cleaning report; recorded

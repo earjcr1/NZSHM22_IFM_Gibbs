@@ -132,6 +132,7 @@ def main():
     mmis = cfg.get('mfd_misfit') or 'gaussian'         # the MFD bins' misfit
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
     cpref = cfg.get('cfm_pref') or 'mode'              # SR_pref as each split normal's mode or its median
+    cround = bool(cfg.get('cfm_rounding'))             # each side's sd widened by the CFM numbers' rounding
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
     if grp:
@@ -472,6 +473,8 @@ def main():
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
                    ['CFM_PREF', repr(cpref), 'SR_pref as each split normal\u2019s ' + ('median (each shifted, its sds kept)'
                     if cpref == 'median' else 'mode, the most likely slip rate')],
+                   ['CFM_ROUNDING', str(cround), 'each side\u2019s sd widened in quadrature by the rounding of the fault\u2019s '
+                    'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written'],
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
                    ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
