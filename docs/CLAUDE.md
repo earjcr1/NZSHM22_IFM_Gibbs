@@ -109,6 +109,15 @@ Gaussian, the recorded predictions unscaled), with tr['mfd_log_rows'] and tr['mf
 scores the MFD block in log10 (its spread the rest of the mean); selftest_mfdlog (both backends, against a grid
 integral, with positivity and swaps) in the full set; without it every run is bit-identical (REPORT.md, "The MFD bins'
 misfit in log10").
+chi2 as fitted (2026-11-05, the user's request: "the chi-squared always what the sampler fits"): gibbs.py records
+tr['misfit'] = chi2 with the paleo rows' and the bins' Gaussian shares replaced by tr['paleo_misfit'] / tr['mfd_misfit']
+(equal to chi2 when every misfit is Gaussian), tr['misfit_expect'] = cleaning's chi2_expect with each paleo site's 1 and 2
+replaced by paleo_misfit.site_moments (mean and variance of site_misfit with u drawn from the site's curve), and per site
+tr['paleo_th', 'paleo_best', 'paleo_sd', 'paleo_E', 'paleo_V', 'paleo_rows']; the sweep line, report(),
+check_convergence.py (misfit and misfit_expect when present, else chi2 and the problem's), block_fit.py (paleo block by
+site_misfit, its measurements sum E, sd sqrt(sum V); prints "fit check as fitted X +- Y", which make_summary_pdf.py
+reads), select_draws.py, plot_paleo_rates.py (curves refitted from the rupture set when the config says years) and
+plot_rate_magnitude.py (log10 when the config says so; cru_common.run_config) use it.
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /

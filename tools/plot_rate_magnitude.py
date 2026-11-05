@@ -68,7 +68,7 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predictions, legend_above, legend_height,
-                        load_problem, magnitude_bins, reference_rates, run_predictions, run_settings, settings_lines)
+                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, run_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
@@ -161,6 +161,18 @@ def main():
     else:
         head.append(f'order check skipped: no row block named {a.slip_block!r}')
 
+    cfg_ = run_config(a.config, a.problem) or {}
+    mlog = cfg_.get('mfd_misfit') == 'log10'           # the bins scored in log10 (gibbs.py --mfd-misfit log10)
+    s_log = np.log10(1.0 + 1.0 / P['d'][rows])         # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
+
+    def bins_fit(m_):
+        """chi2 over the bin rows as the likelihood scores them: the Gaussian, or (log10(total / R_j) / s_j)^2."""
+        y_ = Gr[rows] @ m_
+        if mlog:
+            with np.errstate(divide='ignore'):
+                return float(np.sum((np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2))
+        return float(np.sum((y_ - P['d'][rows]) ** 2))
+
     data = []
     for path, label in sets:
         z = np.load(path)
@@ -180,7 +192,7 @@ def main():
         del K
         data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen, q=q, used=used,
                          ndraws=0 if T is None else len(T), xs=Xk,
-                         chi2=float(np.sum((Gr[rows] @ m - P['d'][rows]) ** 2)),   # over the bin rows, as weighted
+                         chi2=bins_fit(m),                # over the bin rows, as the likelihood scores them
                          model=model))
     single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
     mean_ = '' if single else 'mean '
@@ -188,7 +200,7 @@ def main():
     if a.reference:                                  # another model's bin totals, marked on every panel
         ref = reference_rates(a.reference, P)
         ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
-        ref['chi2'] = float(np.sum((Gr[rows] @ ref['m'] - P['d'][rows]) ** 2))
+        ref['chi2'] = bins_fit(ref['m'])
     settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
     if settings and data[0]['model']:
         settings = [('model', data[0]['model'])] + settings
@@ -216,7 +228,7 @@ def main():
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' bin totals (select_draws.py)'
         lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s chi2 over the {B} '
-                  f'magnitude-bin rows, as the likelihood weights them, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
+                  f'magnitude-bin rows, as the likelihood weights them{" (in log10, MFD_MISFIT)" if mlog else ""}, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
                   f'(rate 0 by construction) not shown; {spread}',
                   f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
                   f'{"total: 16%":>11s} {"50%":>10s} {"84%":>10s} '
@@ -361,7 +373,7 @@ def main():
             draw_settings(ax, tab, 20 + leg_pt)
         else:
             ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20 + leg_pt)
-        ax.annotate(f'χ² {D["chi2"]:.1f} over the {B} magnitude bins; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
+        ax.annotate(f'χ²{" as fitted" if mlog else ""} {D["chi2"]:.1f} over the {B} magnitude bins{" (in log10)" if mlog else ""}; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
                     color=INK2, fontsize=8.5)

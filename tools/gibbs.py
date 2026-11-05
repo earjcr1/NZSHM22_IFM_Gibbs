@@ -2000,6 +2000,13 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
           else (PMr if PMr is not None else MFr)['d_data'])
     if MFr is not None:
         tr['mfd_log_rows'], tr['mfd_log_s'] = np.asarray(MFr['rows']), np.asarray(MFr['s'])
+    if PMr is not None and 'th' in PMr:                  # each paleo site's curve, for block_fit.py, and its misfit's moments
+        for k_ in ('sd', 'th', 'best', 'E', 'V'):
+            tr['paleo_' + k_] = np.asarray(PMr[k_])
+        tr['paleo_rows'] = np.asarray(PMr['rows'])
+    if getattr(T, 'fit_expect', None) is not None:       # the fit check as fitted (mean, sd), for the misfit below
+        tr['misfit_expect'] = np.array(T.fit_expect, float)
+    fitted = PMr is not None or MFr is not None          # chi2 as fitted differs from the Gaussian chi2
     dd = Dd @ Dd
     nbal = T.n_fit if T.n_bal is None else T.n_bal       # the balance term's rows, nd:nbal; --slip-sum's, nbal:n_fit
     if T.balance is not None and nd < nbal:              # the balance term's rows: recorded on their own
@@ -2091,9 +2098,16 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             y[:, mr_] /= MFr['eps']
             Rd = y - Dd
         if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
-            tr['chi2'][:, rec] = np.sum(_sp_w(T, np.arange(nd), Rd) * Rd ** 2, 1) / T.sigma ** 2
+            C_ = _sp_w(T, np.arange(nd), Rd) * Rd ** 2
         else:
-            tr['chi2'][:, rec] = np.sum(Rd ** 2, 1) / T.sigma ** 2
+            C_ = Rd ** 2
+        tr['chi2'][:, rec] = np.sum(C_, 1) / T.sigma ** 2
+        mis_ = tr['chi2'][:, rec].copy()                     # chi2 as fitted: each group scored as the likelihood scores it
+        if PMr is not None:
+            mis_ += tr['paleo_misfit'][:, rec] - np.sum(C_[:, PMr['rows']], 1) / T.sigma ** 2
+        if MFr is not None:
+            mis_ += tr['mfd_misfit'][:, rec] - np.sum(C_[:, MFr['rows']], 1) / T.sigma ** 2
+        tr.setdefault('misfit', np.zeros((K, n_rec)))[:, rec] = mis_
         if T.rlo is not None:                                # rows outside the band: always 0, a check
             tr.setdefault('band_outside', np.zeros((K, n_rec), np.int64))[:, rec] = T.band_outside(R)
         if T.balance is not None and nd < nbal:              # the balance term, and each type's relative shortfall
@@ -2165,7 +2179,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                         ST['tot_' + key][:, t] = (stream['inc_' + key] @ Xm.T).T
         if verbose and (rec % max(1, n_rec // 20) == 0 or rec == n_rec - 1):
             el = time.time() - t0
-            print(f'[gibbs:{backend}] sweep {(rec + 1) * thin:6d}/{sweeps}  chi2 per chain {np.round(tr["chi2"][:, rec], 0)}  '
+            print(f'[gibbs:{backend}] sweep {(rec + 1) * thin:6d}/{sweeps}  chi2 {"as fitted " if fitted else ""}per chain '
+                  f'{np.round(tr["misfit"][:, rec], 0)}  '
                   f'pred/data scale {tr["tscale"][:, rec].mean():.3f}  ({el:.0f}s, {el / ((rec + 1) * thin):.3f}s/sweep)', flush=True)
     tr['final_X'] = X if sc is None else X * sc
     tr['seconds'] = time.time() - t0
@@ -2193,7 +2208,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
 
 def report(tr, burn, thin, names=None):
     nb = burn // thin
-    q = {'chi2': tr['chi2'][:, nb:], 'sum_m': tr['sum_m'][:, nb:], 'pred/data scale': tr['tscale'][:, nb:]}
+    fitted = 'misfit' in tr and not np.array_equal(tr['misfit'], tr['chi2'])
+    q = ({'chi2 as fitted': tr['misfit'][:, nb:], 'chi2 (Gaussians)': tr['chi2'][:, nb:]} if fitted else {'chi2': tr['chi2'][:, nb:]})
+    q.update({'sum_m': tr['sum_m'][:, nb:], 'pred/data scale': tr['tscale'][:, nb:]})
     for j, idx in enumerate(tr['monitor']):
         q[f'm[{idx}]' if names is None else names[j]] = tr['mon'][:, nb:, j]
     print(f'{"quantity":>18s} {"mean":>11s} {"sd":>10s} {"q05":>10s} {"q95":>10s} {"Rhat":>6s} {"ESS":>7s}')
@@ -4115,6 +4132,12 @@ def main():
                           F=np.ascontiguousarray(pm_tab['F']), D=np.ascontiguousarray(pm_tab['DF']),
                           K=np.ascontiguousarray(pm_tab['KAPPA']), H=pm_tab['H'], NG=pm_tab['NG'], rows=pm_rows,
                           eps=PALEO_EPS, d_data=d_data, mode=a.paleo_misfit)
+        from paleo_misfit import site_moments           # each site's curve, and its misfit's mean and variance (fit check)
+        T.lw['PM']['sd'] = np.asarray(sd_p, float)
+        T.lw['PM']['th'] = np.array([f_[0] for f_ in pm_tab['fits']], float)
+        T.lw['PM']['best'] = np.array([s_['best'] for s_ in sites], float)
+        mom_ = np.array([site_moments(th_, b_, a.paleo_misfit) for th_, b_ in zip(T.lw['PM']['th'], T.lw['PM']['best'])])
+        T.lw['PM']['E'], T.lw['PM']['V'] = mom_[:, 0], mom_[:, 1]
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, pm_rows]
         f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], np.arange(len(pm_rows)), np.log(np.maximum(y0, 1e-300)))))
         print(f'paleo misfit: {len(pm_rows)} paleo rows out of the Gaussian (scaled by {PALEO_EPS:g}), each scored by -2 ln of '
@@ -4195,6 +4218,18 @@ def main():
         if len(pr['dup_cos']):
             k = int(np.argmax(pr['dup_cos']))
             mon += [int(pr['dup_i'][k]), int(pr['dup_j'][k])]
+    fe_ = P.get('chi2_expect')                     # the fit check as the likelihood scores the data (chi2 as fitted)
+    if fe_ is not None:
+        m_, v_ = float(fe_[0]), float(fe_[1]) ** 2
+        if pm_rows is not None:                    # each paleo row's misfit's own mean and variance, for the Gaussian's 1 and 2
+            m_ += float(np.sum(T.lw['PM']['E'])) - len(pm_rows)
+            v_ += float(np.sum(T.lw['PM']['V'])) - 2.0 * len(pm_rows)
+        T.fit_expect = (m_, float(np.sqrt(max(v_, 0.0))))   # the MFD bins in log10 keep 1 and 2 each: Gaussian in log10
+        if pm_rows is not None:
+            print(f'fit check as fitted: a draw\'s chi2 as the likelihood scores it should be near {m_:.0f} +- {np.sqrt(v_):.0f} if the '
+                  f'uncertainties are right (the paleo sites\' misfits {np.sum(T.lw["PM"]["E"]):.1f} +- {np.sqrt(np.sum(T.lw["PM"]["V"])):.1f} '
+                  f'in place of the Gaussian\'s {len(pm_rows)} +- {np.sqrt(2 * len(pm_rows)):.1f}; cleaning\'s, for the Gaussians: '
+                  f'{float(fe_[0]):.0f} +- {float(fe_[1]):.0f})')
     print(f'Gibbs: {a.chains} chains x {a.sweeps} sweeps (burn {a.burn}, thin {a.thin}), prior {a.prior}, backend {a.backend}, '
           f'threads {a.threads}; monitoring parameters {mon}')
     Gr = sp_csc(P['G']).tocsr()

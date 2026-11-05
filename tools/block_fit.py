@@ -17,6 +17,11 @@ data closely, a block's misfit is mostly spread: it is set by the stated uncerta
 little about whether they are right. That is the case for the MFD bins, whose uncertainty level is a modelling choice
 (preliminaries.py --mfd-uncertainty, the notebook's MFD_UNCERTAINTY), so the report notes the setting with them.
 
+chi^2 is as the runs' likelihood scores each block (chi2 as fitted): the slip rates by their split normals with the
+CFM's, the MFD bins in log10 with gibbs.py --mfd-misfit log10, and the paleo rows by -2 ln of each site's
+recurrence-interval PDF with --paleo-misfit, each site's share of the fit check then its misfit's own mean and variance
+(paleo_misfit.site_moments) in place of a Gaussian row's 1 and 2.
+
 --selftest checks this arithmetic, and the problem helpers in cru_common.py that set the MFD bins' uncertainty
 (magnitude_bins, mfd_uncertainty, scale_rows), on synthetic problems.
 """
@@ -43,6 +48,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     d, sig2, N = P['d'], P['sigma'] ** 2, len(P['d'])
     per_run, S1, S2, nd, shapes = [], np.zeros(N), np.zeros(N), 0, []
     LOG = {}                                                          # --mfd-misfit log10: each row's log width s, by row
+    PAL = {}                                                          # --paleo-misfit: each row's site curve, by row
     for r in runs:
         z = np.load(run_file(r))
         if 'y' not in z.files:
@@ -55,7 +61,15 @@ def block_stats(P, runs, first=('S', 'MFD')):
         c = {}
         if 'mfd_log_s' in z.files:                                    # the run scored the bins in log10 (gibbs.py --mfd-misfit)
             LOG.update(zip(z['mfd_log_rows'].tolist(), z['mfd_log_s'].tolist()))
+        if 'paleo_th' in z.files:                                     # the run scored the paleo rows by their sites' curves
+            mode_ = str(z['paleo_mode'])
+            for j_, r_ in enumerate(z['paleo_rows'].tolist()):
+                PAL[int(r_)] = (z['paleo_th'][j_], float(z['paleo_best'][j_]), float(z['paleo_sd'][j_]), mode_,
+                                float(z['paleo_E'][j_]), float(z['paleo_V'][j_]))
         for m in meas:
+            if PAL and all(int(i) in PAL for i in m['rows']):         # -2 ln of each site's PDF, as the run's likelihood
+                c[m['name']] = paleo_misfit_rows(PAL, m['rows'], y[:, :, m['rows']].astype(np.float64))
+                continue
             if LOG and all(int(i) in LOG for i in m['rows']):         # (log10(total / R_j) / s_j)^2, as the run's likelihood
                 sl = np.array([LOG[int(i)] for i in m['rows']])
                 with np.errstate(divide='ignore'):
@@ -85,7 +99,10 @@ def block_stats(P, runs, first=('S', 'MFD')):
         out = dict(mean=float(allx.mean()), sd=float(allx.std()), mcse=float(allx.std() / np.sqrt(sum(n_eff))),
                    rhat=rh, by_run=[float(x.mean()) for x in x_runs],
                    mcse_by_run=[float(x.std() / np.sqrt(e)) for x, e in zip(x_runs, n_eff)])
-        if rows is not None and LOG and all(int(i) in LOG for i in rows):   # the bins in log10: the mean model's own,
+        if rows is not None and PAL and all(int(i) in PAL for i in rows):   # the paleo sites' curves: the mean model's own,
+            mm = float(paleo_misfit_rows(PAL, rows, ybar[rows]))              # the spread the rest of the mean
+            out.update(mean_model=mm, spread=float(allx.mean()) - mm)
+        elif rows is not None and LOG and all(int(i) in LOG for i in rows):   # the bins in log10: the mean model's own,
             sl = np.array([LOG[int(i)] for i in rows])                        # the spread the rest of the mean
             with np.errstate(divide='ignore'):
                 mm = float(np.sum((np.log10(np.maximum(ybar[rows], 0.0) / d[rows]) / sl) ** 2))
@@ -101,17 +118,34 @@ def block_stats(P, runs, first=('S', 'MFD')):
 
     stats = {}
     for m in meas:
+        if PAL and all(int(i) in PAL for i in m['rows']):             # each site's share of the fit check, as fitted
+            m['expect'] = float(sum(PAL[int(i)][4] for i in m['rows']))
+            m['sd'] = float(np.sqrt(sum(PAL[int(i)][5] for i in m['rows'])))
         s = summary([c[m['name']] for c in per_run], m['rows'])
         s.update(rows=len(m['rows']), measurements=m['expect'], meas_sd=m['sd'])
         stats[m['name']] = s
     allrows = np.concatenate([m['rows'] for m in meas])
     tot = summary([sum(c.values()) for c in per_run], allrows)
-    if LOG:                                                           # the bins in log10: the blocks' mean models added up
+    if LOG or PAL:                                                    # log10 bins or paleo curves: the blocks' mean models added up
         tot['mean_model'] = float(sum(st_['mean_model'] for st_ in stats.values()))
         tot['spread'] = tot['mean'] - tot['mean_model']
     tot.update(rows=len(allrows), measurements=sum(m['expect'] for m in meas),
                meas_sd=float(np.sqrt(sum(m['sd'] ** 2 for m in meas))))
+    tot['fitted'] = [w_ for w_, on_ in (('the MFD bins in log10', LOG), ('the paleo sites by -2 ln of their recurrence-interval PDFs', PAL)) if on_]
     return stats, tot, shapes
+
+
+def paleo_misfit_rows(PAL, rows, y):
+    """The paleo rows' misfit, summed over rows (the last axis of y, predictions in the rows' units, target bestEstimate /
+    sd): 2 (f(ln rate) - f(ln best)) for each site's curve (paleo_misfit.site_misfit), rate = y x the site's sd."""
+    from paleo_misfit import site_misfit
+    y = np.asarray(y, np.float64)
+    out = np.zeros(y.shape[:-1])
+    for j, i in enumerate(rows):
+        th, best, sd, mode = PAL[int(i)][:4]
+        with np.errstate(divide='ignore'):
+            out = out + site_misfit(th, best, np.log(np.maximum(y[..., j] * sd, 0.0)), mode)
+    return out
 
 
 def table(stats, tot, labels):
@@ -123,6 +157,9 @@ def table(stats, tot, labels):
         lines.append(f'{lab:{w}s} {s["rows"]:5d} {s["measurements"]:12.1f} {s["mean"]:9.1f} +- {s["sd"]:6.1f} {s["mcse"]:8.2f} '
                      f'{s["rhat"]:6.3f} {s["mean"] / s["measurements"]:9.2f} {(s["mean"] - s["measurements"]) / s["meas_sd"]:+5.1f} '
                      f'{s["mean_model"]:10.1f} {s["spread"]:7.1f}')
+    if tot.get('fitted'):
+        lines.append(f'chi2 as fitted: each block scored as the runs\' likelihood scores it ({" and ".join(tot["fitted"])}); fit check as fitted '
+                     f'{tot["measurements"]:.1f} +- {tot["meas_sd"]:.1f}')
     lines.append('measurements: each block\'s share of the fit check (its chi2 if the model matched the truth and the '
                  'uncertainties were right); z: (chi2 - measurements) / the fit check\'s sd for the block; mean model + spread = '
                  'chi2: the misfit of the posterior-mean prediction, and the posterior variance of the predictions (the freedom '

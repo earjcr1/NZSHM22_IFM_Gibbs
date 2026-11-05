@@ -676,10 +676,9 @@ FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 
-def run_settings(config, problem):
-    """The settings that tell runs apart (the notebook's, SLIP_SECTIONS to FLOOR), as (name, value) pairs for the fit
-    figures' settings table: from config, a workflow_config.json (default: the one next to problem, as the notebook
-    writes it; 'none': no table), or None if there is none."""
+def run_config(config, problem):
+    """A run's workflow_config.json, as a dict: config (default: the one next to problem, as the notebook writes it;
+    'none': none), or None if there is none."""
     if config == 'none':
         return None
     path = config or os.path.join(os.path.dirname(os.path.abspath(problem)), 'workflow_config.json')
@@ -688,7 +687,16 @@ def run_settings(config, problem):
             raise SystemExit(f'--config {config}: no such file')
         return None
     with open(path) as f:
-        cfg = json.load(f)
+        return json.load(f)
+
+
+def run_settings(config, problem):
+    """The settings that tell runs apart (the notebook's, SLIP_SECTIONS to FLOOR), as (name, value) pairs for the fit
+    figures' settings table: from config, a workflow_config.json (default: the one next to problem, as the notebook
+    writes it; 'none': no table), or None if there is none."""
+    cfg = run_config(config, problem)
+    if cfg is None:
+        return None
     return [(name, str(cfg[key])) for name, key in FIGURE_SETTINGS if key in cfg]
 
 

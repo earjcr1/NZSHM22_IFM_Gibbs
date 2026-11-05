@@ -68,7 +68,7 @@ import numpy as np
 
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
-                        run_settings, settings_lines)
+                        run_config, run_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
@@ -181,6 +181,22 @@ def main():
             f'{t.max():.3g}; ' + ('rates per year (each row\'s sd its site\'s in paleo_constraint_data.json)' if phys else
                                   'targets and predictions in units of each row\'s uncertainty (a target is one over its '
                                   'relative uncertainty)')]
+    cfg_ = run_config(a.config, a.problem) or {}
+    pmode = cfg_.get('paleo_misfit') or 'gaussian'
+    TH = None                                            # with PALEO_MISFIT 'years' (and the rupture set): each site's curve
+    if phys and pmode != 'gaussian':
+        from paleo_misfit import fit_site, site_misfit
+        TH = [fit_site(sites[i]['best'], sites[i]['q'], pmode)[0] for i in si]
+
+    def paleo_fit(yw_):
+        """chi2 over the paleo rows as the likelihood scores them: the Gaussian, or -2 ln of each site's PDF from its
+        minimum (paleo_misfit.site_misfit), as gibbs.py --paleo-misfit has it."""
+        if TH is None:
+            return float(np.sum((yw_ - dw) ** 2))
+        with np.errstate(divide='ignore'):
+            lr_ = np.log(np.maximum(yw_ / sc, 0.0))        # ln of the predicted rate per year
+        return float(sum(site_misfit(th_, sites[i]['best'], lr_[j], pmode) for j, (th_, i) in enumerate(zip(TH, si))))
+
     data = []
     for path, label in sets:
         z = np.load(path)
@@ -200,20 +216,22 @@ def main():
         del K
         data.append(dict(path=path, label=label, y=y, r=r, ratio=y / t, q=q, used=used, ndraws=0 if Y is None else len(Y),
                          xs=Xk,
-                         chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(r / u) <= 1)),
+                         chi2=paleo_fit(yw), in1=float(np.mean(np.abs(r / u) <= 1)),
                          in2=float(np.mean(np.abs(r / u) <= 2)), groups=list(np.argsort(-np.abs(r / u), kind='stable')[:max(0, a.label)]),
                          own1=float(np.mean((y >= QR[:, 1]) & (y <= QR[:, 2]))) if phys else None,   # within the site's
                          own2=float(np.mean((y >= QR[:, 0]) & (y <= QR[:, 3]))) if phys else None,   # own ranges
                          model=model))
     mm = 'model' if all(D['model'] for D in data) else 'mean model'
+    fit_note = (f' as the likelihood scores them (-2 ln of each site\'s recurrence-interval PDF, PALEO_MISFIT {pmode!r})'
+                if TH is not None else '')
     ref = None
     if a.reference:                                      # another model's predictions, marked on every panel
         ref = reference_rates(a.reference, P)
         yw = Gp @ ref['m']
         r = yw / sc - t
-        ref.update(y=yw / sc, chi2=float(np.sum((yw - dw) ** 2)), in1=float(np.mean(np.abs(r / u) <= 1)),
+        ref.update(y=yw / sc, chi2=paleo_fit(yw), in1=float(np.mean(np.abs(r / u) <= 1)),
                    in2=float(np.mean(np.abs(r / u) <= 2)), q=np.percentile(yw / sc / t, [5, 50, 95]))
-        head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the paleo rows {ref["chi2"]:.1f}; '
+        head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the paleo rows{fit_note} {ref["chi2"]:.1f}; '
                     f'{100 * ref["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * ref["in2"]:.0f}% '
                     f'within two; prediction / target: median {ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to '
                     f'{ref["q"][2]:.2f})' + (f'; {ref["note"]}' if ref['note'] else ''))
@@ -233,7 +251,7 @@ def main():
                   else 'no runs found next to the rate vectors, so no posterior spread')
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' predictions (select_draws.py)'
-        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the paleo rows {D["chi2"]:.1f}; '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the paleo rows{fit_note} {D["chi2"]:.1f}; '
                   f'{100 * D["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two; '
                   f'prediction / target: median {rq[1]:.2f} (5-95%: {rq[0]:.2f} to {rq[2]:.2f}); {spread}; furthest from their '
                   'targets: ' + '; '.join(f'row {orig[k]} ({D["r"][k] / u[k]:+.2f} sd)' for k in D['groups'])
@@ -389,7 +407,8 @@ def main():
             if j == 0:
                 ax.set_ylabel(f'{mm} prediction (per year)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'{mm}: χ² {D["chi2"]:.1f} over the {len(rows)} paleo rows; within one sd {100 * D["in1"]:.0f}%, two '
+        sub = (f'{mm}: χ²{" as fitted" if TH is not None else ""} {D["chi2"]:.1f} over the {len(rows)} paleo rows'
+               + (' (−2 ln of the sites\' PDFs)' if TH is not None else '') + f'; within one sd {100 * D["in1"]:.0f}%, two '
                f'{100 * D["in2"]:.0f}%' + (f'; within the sites\' own 15.9–84.1% ranges {100 * D["own1"]:.0f}%, 2.3–97.7% '
                                            f'{100 * D["own2"]:.0f}%' if phys else ''))
         above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend

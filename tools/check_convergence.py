@@ -10,12 +10,15 @@ its stored draws (<run>_samples.npy) when it has them, otherwise from the runnin
 notebook's FLOOR) count as equal for every prior.
 
 Prints, and writes to REPORT (default: convergence_report.txt next to the first run):
-- per run: chi2 and the total rate with their effective draws; the worst R-hat of the per-rupture log rates and the
+- per run: chi2 (as fitted: each group scored as the likelihood scores it, the paleo sites by their recurrence-interval
+  PDFs and the MFD bins in log10 where the run did so; the Gaussian chi2 for older runs) and the total rate with their
+  effective draws; the worst R-hat of the per-rupture log rates and the
   noise baseline, the worst R-hat that independent draws would give over this many rates; how many rates lie above
   it; and the rates' effective draws (median and 5th percentile);
 - for spike-and-slab: ruptures on per draw (with its R-hat) and each bin's fraction on (worst R-hat, fewest effective
   draws);
-- the fit check: each run's chi2 against the value a model matching the truth would have (from cleaning);
+- the fit check: each run's chi2 against the value a model matching the truth would have (as fitted, from the run;
+  for older runs from cleaning);
 - the verdict against the targets of --preset (docs/TESTING.md, "Convergence"), with the targets missed;
 - the slow-mixing minority: ruptures whose R-hat exceeds 1.01, or the noise baseline if higher, with their share of the
   total rate; reported apart from the verdict;
@@ -86,7 +89,9 @@ def convergence(name, floor, stats):
     rh, es = np.where(const, np.nan, rh), np.where(const, np.nan, es)
     stats[name] = dict(mean=mean, var=var, ess=es, rhat=rh, rate=rate)
     w = int(z['burn']) // int(z['thin'])
-    chi, tot = z['chi2'][:, w:], z['sum_m'][:, w:]
+    chi, tot = (z['misfit'] if 'misfit' in z else z['chi2'])[:, w:], z['sum_m'][:, w:]   # chi2 as fitted (older runs: chi2)
+    stats[name]['fitted'] = 'misfit' in z and not np.array_equal(z['misfit'], z['chi2'])
+    stats[name]['expect'] = tuple(float(v) for v in z['misfit_expect']) if 'misfit_expect' in z else None
     base = rhat_noise(K, D, nn)
     stats[name]['slow_at'] = max(1.01, base)            # slow mixing: R-hat above 1.01, or above the noise baseline if higher
     stats[name]['chi2'] = (float(chi.mean()), float(chi.std()))
@@ -140,12 +145,15 @@ def main():
         print()
         print('spike-and-slab: ruptures on per draw (with its R-hat), and the fraction on in each bin (worst R-hat, fewest effective draws):')
         table([show_rhat({k: r[k] for k in ('run',) + SS_KEYS}) for r in ssr])
-    if FIT is not None:                                   # the fit check (from the cleaning step): not part of the verdict
+    if FIT is not None or any(STATS[r]['expect'] for r in runs):   # the fit check: not part of the verdict
         print()
         for r in runs:
-            c_ = STATS[r]['chi2']
-            print(f'{r}: fit check: chi2 {c_[0]:.0f} +- {c_[1]:.0f} against {FIT[0]:.0f} +- {FIT[1]:.0f} expected if the uncertainties '
-                  f'are right ({(c_[0] - FIT[0]) / FIT[1]:+.1f} sd)')
+            c_, F_ = STATS[r]['chi2'], STATS[r]['expect'] or FIT
+            if F_ is None:
+                continue
+            asf = ' as fitted' if STATS[r]['fitted'] else ''
+            print(f'{r}: fit check: chi2{asf} {c_[0]:.0f} +- {c_[1]:.0f} against {F_[0]:.0f} +- {F_[1]:.0f} expected if the '
+                  f'uncertainties are right ({(c_[0] - F_[0]) / F_[1]:+.1f} sd)')
     need_rate, need_sum, rhat_sum = NEED[a.preset]     # effective draws: 95% of ruptures, the total rate; R-hat of chi2 and the total
     print()
     for r in rows:

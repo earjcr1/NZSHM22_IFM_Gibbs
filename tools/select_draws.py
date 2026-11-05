@@ -166,14 +166,15 @@ def main():
     scores = U[:, :nc] * np.sqrt(ev[:nc])
     del Z
 
-    # the posterior to check against: traces (chi2, total rate) and per-draw totals over every recorded draw
+    # the posterior to check against: traces (chi2 as fitted, total rate) and per-draw totals over every recorded draw
     chi2_all, tot_all, tr_chi2, tr_tot, post_s, post_b = [], [], [], [], [], []
     for run in a.runs:
         z = np.load(run + '.npz')
         nb_ = int(z['burn']) // int(z['thin'])
-        tr_chi2.append(z['chi2'])
+        c_ = z['misfit'] if 'misfit' in z.files else z['chi2']   # chi2 as fitted (older runs: the Gaussian chi2)
+        tr_chi2.append(c_)
         tr_tot.append(z['sum_m'])
-        chi2_all.append(z['chi2'][:, nb_:].ravel())
+        chi2_all.append(c_[:, nb_:].ravel())
         tot_all.append(z['sum_m'][:, nb_:].ravel())
         st = load_stream(run, ('tot_s', 'tot_b'))
         post_s.append(st['tot_s'].reshape(-1, nS).astype(np.float64))

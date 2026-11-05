@@ -99,6 +99,30 @@ def fit_site(best, q, mode='years'):
     return th, err, ok
 
 
+def site_misfit(th, best, u, mode='years'):
+    """A site's misfit at u = ln(rate), as the sampler scores it: 2 (f(u) - f(ln best)), on chi2's scale, continued
+    linearly beyond the tables' grid (ln best + GRID_LO to ln best + GRID_HI), as the kernel's tables are (tables)."""
+    ub = np.log(best)
+    u = np.asarray(u, float)
+    uc = np.clip(u, ub + GRID_LO, ub + GRID_HI)
+    f, fp = half_misfit(th, uc, mode)
+    with np.errstate(invalid='ignore'):
+        f = np.where(u == uc, f, f + fp * (u - uc))
+    return 2.0 * (f - half_misfit(th, np.array([ub]), mode)[0][0])
+
+
+def site_moments(th, best, mode='years', n=6001):
+    """The mean and variance of a site's misfit (site_misfit) when the rate is drawn from the site's own curve, u =
+    quantile_u(th, z) with z standard normal (for 'years' the interval T = e^-u then has the analysis's PDF in years):
+    the site's share of the fit check, as a Gaussian row's is 1 with a variance of 2. Integrated on a grid of z from -9 to 9."""
+    z = np.linspace(-9.0, 9.0, n)
+    w = norm.pdf(z)
+    w /= w.sum()
+    m = site_misfit(th, best, quantile_u(th, z), mode)
+    E = float(w @ m)
+    return E, float(w @ (m - E) ** 2)
+
+
 def tables(sites, mode='years', h=GRID_H):
     """Each site's tabulated half misfit for the kernel: dict of U0 (grid start in u = ln rate), H (step), NG (points
     per site), F and DF (values and slopes, sites one after another; F 0 at the minimum, ln best), KAPPA (the largest

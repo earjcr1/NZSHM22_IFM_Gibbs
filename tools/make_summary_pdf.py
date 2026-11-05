@@ -270,6 +270,8 @@ def main():
     bmap = {r[0].strip(): r for r in brow}
     tot = bmap.get('total')
     chi2, chi2_sd, z_all = (float(tot[3]), float(tot[4]), float(tot[8])) if tot else (None, None, None)
+    fa_ = re.search(r'fit check as fitted ([\d.]+) \+- ([\d.]+)', bf or '')   # chi2 as fitted: block_fit's own fit check
+    fc_fit = (float(fa_.group(1)), float(fa_.group(2))) if fa_ else None
     if not tot:
         MISSING.append('row-block table')
 
@@ -305,10 +307,10 @@ def main():
     r_schi2, r_sin1 = grab(sr, r'^reference: .*?as the likelihood weights them, ([\d.]+); (\d+)% of sections within one',
                            'reference slip-rate fit', float, (1, 2)) if ref else (None, None)
     pr_ = read(os.path.join(PR, 'fig_paleo_rates.txt'))
-    p_chi2, p_in1, p_in2, p_med = grab(pr_, r'^' + re.escape(a.prior) + r' \(.*?chi2 over the paleo rows ([\d.]+); (\d+)% '
+    p_chi2, p_in1, p_in2, p_med = grab(pr_, r'^' + re.escape(a.prior) + r' \(.*?chi2 over the paleo rows(?: as the likelihood scores them \([^)]*\))? ([\d.]+); (\d+)% '
                                        r'of rows within one .*?(\d+)% within two; prediction / target: median ([\d.]+)',
                                        'paleo fit', float, (1, 2, 3, 4))
-    r_pchi2 = grab(pr_, r'^reference: .*?chi2 over the paleo rows ([\d.]+);', 'reference paleo fit') if ref else None
+    r_pchi2 = grab(pr_, r'^reference: .*?chi2 over the paleo rows(?: as the likelihood scores them \([^)]*\))? ([\d.]+);', 'reference paleo fit') if ref else None
 
     ss = read(os.path.join(PR, 'fig_slip_sections.txt'))
     faults = []
@@ -533,7 +535,11 @@ def main():
          + f'The MFD bin targets run from {fmt(t_lo, "{:.2g}")} to {fmt(t_hi, "{:.2g}")} per year and sum to '
          f'{fmt(t_tot, "{:.4f}")} per year, with relative uncertainties of {fmt(u_lo, "{:.1f}")}% to {fmt(u_hi, "{:.1f}")}%. '
          f'If the stated uncertainties are right, a model drawn from the posterior should have χ² near {fmt(fc)} ± '
-         f'{fmt(fc_sd)}: this is the <i>fit check</i> used below. The diagnostics ({fref("prelim.png")}) show how weakly '
+         f'{fmt(fc_sd)}: this is the <i>fit check</i>'
+         + (', for the Gaussians; with the paleo rows scored by their sites\u2019 recurrence-interval PDFs, each site\u2019s own '
+            'expected misfit replaces its Gaussian share in the fit check used below (section 7)'
+            if (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian' else ' used below')
+         + f'. The diagnostics ({fref("prelim.png")}) show how weakly '
          f'individual rates are determined: <i>G</i> has rank {fmt(rank)}, and the median diagonal of the resolution '
          f'matrix is {fmt(res_med, "{:.3f}")}, so the data fix sums of rates far better than single rates. There are also '
          f'{fmt(dup)} pairs of near-duplicate ruptures (cosine similarity above 0.99), which the sampler handles with swap '
@@ -726,7 +732,13 @@ def main():
                ' A χ² below the fit check means the data are fitted more closely than their uncertainties imply.'
                if z_all < -2 else ' A χ² above the fit check means some data are fitted worse than their uncertainties '
                'allow, or the uncertainties are too small.' if z_all > 2 else '')
-        para(f'The posterior\u2019s χ² is {chi2:.1f} ± {chi2_sd:.1f}, against the fit check\u2019s {fmt(fc)} ± {fmt(fc_sd)}: '
+        fc_txt = (f'the fit check as fitted, {fc_fit[0]:.1f} ± {fc_fit[1]:.1f} (χ² as the likelihood scores the data: the '
+                  + ' and '.join(w_ for w_, on_ in (('paleo sites by −2 ln of their recurrence-interval PDFs, each with its own '
+                                                     'expected share', (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian'),
+                                                    ('MFD bins in log10', (cfg.get('mfd_misfit') or 'gaussian') != 'gaussian')) if on_)
+                  + f'; cleaning\u2019s, for the Gaussians alone: {fmt(fc)} ± {fmt(fc_sd)})' if fc_fit else
+                  f'the fit check\u2019s {fmt(fc)} ± {fmt(fc_sd)}')
+        para(f'The posterior\u2019s χ²{" as fitted" if fc_fit else ""} is {chi2:.1f} ± {chi2_sd:.1f}, against {fc_txt}: '
              f'{how}.{why} The row-block fit ({tt("block_fit.py")}) splits χ² by data type: a block\u2019s χ² per measurement '
              'near 1 is fitted as its uncertainties say, below 1 more closely, above 1 worse. In the table, the '
              '\u201cmean model\u201d is the misfit of the posterior-mean prediction and the \u201cspread\u201d is the posterior '
