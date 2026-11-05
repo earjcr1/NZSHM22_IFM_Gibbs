@@ -65,6 +65,44 @@ def load_cfm_steps(path):
     return out
 
 
+def template_factors(cfm_csv, rupture_dir, rho):
+    """--cfm-template-rho: the faults whose slip rates share one template, their errors correlated. Faults of QualCode 2-5
+    (rates from comparisons with nearby faults, geomorphology, geodesy, or none: Seebeck et al.'s quality codes) with an
+    identical SR_pref, SR_min and SR_max as written form a group of n; with a correlation rho between them, each fault's
+    rows are weighted 1 / sqrt(1 + (n - 1) rho), so at rho = 1 a group counts as one measurement (as a section's
+    subsections do). Returns (the factor per raw slip-rate row, subsections in FaultID order; report lines)."""
+    if not (0.0 < rho <= 1.0):
+        raise ValueError(f'--cfm-template-rho {rho:g}: give a correlation above 0 and at most 1')
+    sub = load_subsections(rupture_dir)
+    used = set(sub['parent'])
+    info = {}
+    with open(cfm_csv, encoding='utf-8-sig', newline='') as f:
+        for row in csv.DictReader(f):
+            nm = row['Name'].strip()
+            if nm in used:
+                info[nm] = (tuple(str(row[k]).strip() for k in ('SR_pref', 'SR_min', 'SR_max')), str(row.get('QualCode', '')).strip())
+    if any(info[p][1] == '' for p in used):
+        raise ValueError(f'{cfm_csv}: --cfm-template-rho needs the QualCode column for every fault')
+    groups = {}
+    for p in sorted(used):
+        t, q = info[p]
+        if q in ('2', '3', '4', '5'):
+            groups.setdefault(t, []).append(p)
+    fac = {p: 1.0 for p in used}
+    for t, ps in groups.items():
+        if len(ps) > 1:
+            for p in ps:
+                fac[p] = 1.0 / np.sqrt(1.0 + (len(ps) - 1) * rho)
+    per_row = np.array([fac[p] for p in sub['parent']])
+    big = sorted(((len(ps), t) for t, ps in groups.items() if len(ps) > 1), reverse=True)
+    n_in = sum(n for n, _ in big)
+    L = [f'== slip-rate templates (--cfm-template-rho {rho:g}): {n_in} faults of QualCode 2-5 share their SR_pref / SR_min / '
+         f'SR_max with another, in {len(big)} groups; each fault\'s rows weighted 1 / sqrt(1 + (n - 1) x {rho:g}) for a group of '
+         f'n, so {"each group counts as one measurement" if rho == 1 else f"a group of n counts as n / (1 + (n - 1) x {rho:g}) measurements"}; '
+         'largest: ' + ', '.join(f'{"/".join(t)} ({n})' for n, t in big[:5])]
+    return per_row, L
+
+
 def load_subsections(rupture_dir):
     """The rupture set's subsections in FaultID order: parent name, SlipRate and SlipRateStdDev (mm/yr)."""
     F = json.load(open(os.path.join(rupture_dir, 'fault_sections.geojson')))['features']

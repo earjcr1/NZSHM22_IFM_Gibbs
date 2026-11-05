@@ -398,6 +398,10 @@ def main():
     ap.add_argument('--cfm-rounding', action='store_true',
                     help='--cfm-sliprates: each fault\'s SR_pref, SR_min and SR_max known to half the finest step among them '
                          'as written (1, 0.1, 0.01 mm/yr, ...), uniform, its variance added in quadrature to each side\'s sd')
+    ap.add_argument('--cfm-template-rho', type=float, default=None, metavar='RHO',
+                    help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
+                         'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
+                         'counts as one measurement (default: off)')
     ap.add_argument('--slip-rate-factor', type=float, default=None,
                     help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
                          'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22; the '
@@ -421,6 +425,7 @@ def main():
     say(f'== raw: G {A.shape[0]} x {A.shape[1]}, nnz {A.nnz}; d {d_raw.shape}; min entry {A.data.min():.4g}, max {A.data.max():.4g}')
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
     L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
+    T_raw = None                                         # --cfm-template-rho: each raw slip row's template weight
     if args.cfm_sliprates or args.slip_rate_factor is not None or args.slip_sd_multiplier is not None:
         from cfm_sliprates import rebuild, rescale_inputs
         from cru_common import find_rupture_set
@@ -439,12 +444,20 @@ def main():
                 A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
                                                                2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier,
                                                                args.slip_rate_factor, args.cfm_pref, args.cfm_rounding)
+                if args.cfm_template_rho is not None:
+                    from cfm_sliprates import template_factors
+                    t_sub, lines_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho)
+                    T_raw = np.ones(A.shape[0])
+                    T_raw[:len(t_sub)] = t_sub
+                    lines_c = lines_c + lines_t
             else:
                 A, d_raw, lines_c = rescale_inputs(A, d_raw, rd_c, args.slip_rate_factor, args.slip_sd_multiplier)
         except ValueError as e:
             raise SystemExit(f'{what}: {e}')
         for ln in lines_c:
             say(ln)
+    if args.cfm_template_rho is not None and not args.cfm_sliprates:
+        raise SystemExit('--cfm-template-rho needs --cfm-sliprates (the CFM\'s quality codes and slip-rate triples)')
 
     G, d, keep_r, keep_c, info = clean(A, d_raw, args.huge, not args.keep_empty_rows, not args.keep_soft_penalties)
     N, n = G.shape
@@ -530,8 +543,10 @@ def main():
         section[srows] = sec
         ks = np.bincount(sec)
         weigh = spec != 'none'
-        if weigh:
-            row_scale[srows] = 1.0 / np.sqrt(kr)
+        tfac = np.ones(N) if T_raw is None else T_raw[keep_r]   # --cfm-template-rho: each row's template weight (1 if off)
+        t_sec = np.bincount(sec, weights=tfac[srows]) / np.maximum(ks, 1)   # each section's (its rows share one fault)
+        if weigh or T_raw is not None:
+            row_scale[srows] = (1.0 / np.sqrt(kr) if weigh else 1.0) * tfac[srows]
         first = np.r_[0, np.flatnonzero(np.diff(sec)) + 1] if spec in ('auto', 'none') else np.unique(sec, return_index=True)[1]
         _, inv, cnt = np.unique(np.round(d[srows[first]], 12), return_inverse=True, return_counts=True)
         shared = int(np.sum(cnt[inv] > 1))               # sections whose target another section also has
@@ -549,13 +564,16 @@ def main():
                 'neighbouring sections whose slip rates happen to be equal; a mapping file (--slip-sections FILE) settles it')
         for nt in notes:
             say('   note: ' + nt)
-        if weigh:
+        if weigh or T_raw is not None:
             G = sp.csc_matrix(sp.diags(row_scale) @ G)
             d = d * row_scale
         n_other = int(nonempty.sum()) - len(srows) - n_soft
-        chi2_exp = chi2_expectation(ks, 1.0 / np.sqrt(ks) if weigh else np.ones(len(ks)), n_other, const)
+        chi2_exp = chi2_expectation(ks, (1.0 / np.sqrt(ks) if weigh else np.ones(len(ks))) * (t_sec if T_raw is not None else 1.0),
+                                    n_other, const)
         say(f'   fit check: if the uncertainties are right, the chi^2 of a draw should be near {chi2_exp[0]:.0f} +- {chi2_exp[1]:.0f} '
-            + (f'({len(ks)} slip-rate measurements, one per section, and {n_other} other rows' if weigh else
+            + (f'({len(ks)} slip-rate measurements, one per section'
+               + (f', counted as {chi2_exp[0] - n_other - const:.0f} with the template groups\' correlation' if T_raw is not None else '')
+               + f', and {n_other} other rows' if weigh else
                f'({len(srows)} slip-rate rows, whose copies of one section share its error, which widens the spread, and {n_other} other rows')
             + (f', plus a constant {const:g} from the all-zero rows kept' if const else '')
             + (f'; the {n_soft} soft zero-forcing rows kept are left out' if n_soft else '') + '; assuming each section\'s slip rate is uniform along it)')
@@ -626,7 +644,8 @@ def main():
                                                                     f'{args.cfm_sigmas:g}',
                                                                     f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
                                                                     args.cfm_pref, 'rounding' if args.cfm_rounding else '']),
-                 slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier)
+                 slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
+                 template_scale=None if T_raw is None else T_raw[keep_r], cfm_template_rho=args.cfm_template_rho)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
 

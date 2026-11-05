@@ -83,7 +83,9 @@ def load_problem(path):
                 split_hi2=z['split_hi2'].astype(np.float64) if 'split_hi2' in z.files else None,
                 cfm_sliprates=[str(v) for v in z['cfm_sliprates']] if 'cfm_sliprates' in z.files else None,
                 slip_rate_factor=float(z['slip_rate_factor']) if 'slip_rate_factor' in z.files else None,
-                slip_sd_multiplier=float(z['slip_sd_multiplier']) if 'slip_sd_multiplier' in z.files else None)
+                slip_sd_multiplier=float(z['slip_sd_multiplier']) if 'slip_sd_multiplier' in z.files else None,
+                template_scale=z['template_scale'].astype(np.float64) if 'template_scale' in z.files else None,
+                cfm_template_rho=float(z['cfm_template_rho']) if 'cfm_template_rho' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -191,6 +193,10 @@ def block_measurements(P):
         k = np.bincount(s[s >= 0]) if (s >= 0).any() else np.zeros(0, int)
         k = k[k > 0].astype(float)
         kw2 = np.ones(len(k)) if weigh else k               # k w^2 per section: 1 when its rows are divided by sqrt(k)
+        if P.get('template_scale') is not None and (s >= 0).any():   # --cfm-template-rho: each section's template weight^2
+            ts = np.asarray(P['template_scale'])[rows]
+            tw = np.bincount(s[s >= 0], weights=ts[s >= 0]) / np.maximum(np.bincount(s[s >= 0]), 1)
+            kw2 = kw2 * (tw[np.bincount(s[s >= 0]) > 0]) ** 2
         n1 = int(np.sum(s < 0))                             # rows outside sections: one measurement each
         out.append(dict(name=name, index=b, rows=rows, expect=float(kw2.sum() + n1),
                         sd=float(np.sqrt(2 * np.sum(kw2 ** 2) + 2 * n1))))
@@ -659,7 +665,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

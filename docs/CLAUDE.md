@@ -119,7 +119,11 @@ SR_min/SR_max at 2 sd and doubled, so each side's sd is f x its width and sigma_
 run: slip chi2 698 against 507); the same sds as the 1-sd reading with SLIP_SD_MULTIPLIER = 1 (the user's run
 _1793831887, _sdx1). Before that, 1 and 2 (the inputs' reading; sigma_ref 0.80 of theirs, 5-95% 0.75-0.90); f on the
 mode only was tried and dropped. The user is checking the
-reading with colleagues. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
+reading with colleagues. --cfm-template-rho RHO (CFM_TEMPLATE_RHO, None by default; the user's choice when on: 1):
+faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max as written (cfm_sliprates.template_factors) weighted
+1/sqrt(1 + (n - 1) rho) for a group of n, multiplied into row_scale with the sections' 1/sqrt(k) (so plate_rate's sigma_i
+and the figures' units stay each fault's own), recorded as the problem's template_scale and cfm_template_rho; the fit check
+(chi2_expectation) and block_measurements count each section t^2. --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
 finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
 the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
 median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
