@@ -87,7 +87,7 @@ PALEO_BAND_SOFT, since then gibbs.py options only: --paleo-misfit years keeps th
 positive) act on the subsections' slip-rate rows and the paleo rows separately (Target.set_groups; the MFD bins get no
 band, which would count them twice); they replace, in the notebook, BAND and BAND_SOFT, which acted on every
 positive-target row through the older flags below, still there for older runs and tests and not combinable with the new
-ones. Defaults: SLIP_BAND = 'positive', no soft band. --paleo-misfit years (PALEO_MISFIT, 'years' by default since 2026-11-05,
+ones. Defaults: every prediction above zero (--all-positive; SLIP_BAND out of the notebook since 2026-11-10), no soft band. --paleo-misfit years (PALEO_MISFIT, 'years' by default since 2026-11-05,
 'gaussian' before; with --rupture-set; the paleo rows kept above zero by it, pa_b = 'positive' in the per-group limits,
 unless --paleo-band gives a factor; with 'gaussian' they get no limit unless --paleo-band is given): the paleo rows scaled out of the Gaussian (by PALEO_EPS = 1e-9, as
 constraint rows are) and each scored instead by -2 ln of its site's recurrence-interval PDF in years, a sinh-arcsinh
@@ -147,9 +147,9 @@ T.lw W (x b; slip sided WL), paleo via PM tables F, D, K x b (V0 uses ln(sd / sc
 recording: paleo_misfit = 2 sum f / b (the whole curve), mfd_misfit, slip_log (whole), misfit += b (log - Gaussian) per group;
 tr slip_geo_b, mfd_log_b, mfd_log_expect, paleo_b. Fit check: geo_moments(P, rows, b, kind) (density on a log10 grid
 exp(-m1/2) x^(1-b)), paleo_misfit.site_moments_mixed (b < 1). --all-positive (the notebook always): slip_band and
-paleo_band positive unless a factor, MFD bins positive (g_mfd in set_groups). SLIP_BAND None and SLIP_BAND_SOFT with
-MISFIT != 'linear' raise in the notebook. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
-in the full set. run_quick_checks pins MISFIT='linear', SLIP_BAND='positive' (TESTING.md's values predate positivity).
+paleo_band positive unless a factor, MFD bins positive (g_mfd in set_groups). SLIP_BAND removed from the notebook (2026-11-10, the user:
+'take out SLIP_BAND'; --slip-band/--paleo-band stay in gibbs.py); SLIP_BAND_SOFT with MISFIT != 'linear' raises in the notebook. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
+in the full set. run_quick_checks pins MISFIT='linear' (positivity always) (TESTING.md's values predate positivity).
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
@@ -357,7 +357,7 @@ aside with it.
 - Log chi-squared, R-hat and ESS for every run; write draws to disk as a memmap,
   or with --no-samples keep only summaries and functionals (needed before the 5e5 configuration).
 - Default model: spike-and-slab (--prior spikeslab; the notebook's only prior) under the Gaussian likelihood (the only
-  one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate and paleo prediction above zero by default (SLIP_BAND = 'positive', --slip-band positive; the paleo rows by PALEO_MISFIT = 'years')
+  one: the chi2 cap, --target cutoff, was removed in October 2026), with every slip-rate, paleo and MFD prediction above zero (--all-positive, always, since 2026-11-10)
   and without the balance term (DOWN_THE_MIDDLE = False); no other prior is run as a cross-check (the square-root slab, --slab sqrt, was
   dropped at the end of October 2026). Tests and smoke runs use the default prior only (the smoke test,
   tools/run_quick_checks.sh, pins FLOOR = -10, DOWN_THE_MIDDLE = True, no band on either group, PALEO_MISFIT = 'gaussian' and CFM_SLIPRATES = False, under which TESTING.md's quick-preset

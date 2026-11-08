@@ -122,11 +122,13 @@ def main():
                                             f'between {plate[0]:g} and {plate[1]:g}')
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
     tau = cfg.get('band_soft') or None                 # the soft band's width in decades, or None
-    grp = 'slip_band' in cfg                           # since November 2026: a band per row group (slip rates, paleo)
+    allpos = 'misfit' in cfg                           # since 2026-11-10: every prediction above zero (no SLIP_BAND setting)
+    grp = 'slip_band' in cfg or allpos                 # since November 2026: a band per row group (slip rates, paleo)
     pband_set = 'paleo_band' in cfg                    # PALEO_BAND a setting (until 2026-11-05); since, paleo positivity
     pband = (cfg.get('paleo_band') if pband_set        # comes with PALEO_MISFIT = 'years'
-             else 'positive' if (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian' else None)
-    g_band = {'slip-rate': cfg.get('slip_band'), 'paleo': pband} if grp else {}
+             else 'positive' if (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian' or allpos else None)
+    g_band = ({'slip-rate': cfg.get('slip_band') or ('positive' if allpos else None), 'paleo': pband}
+              | ({'MFD bin': 'positive'} if allpos else {})) if grp else {}
     g_soft = {'slip-rate': cfg.get('slip_band_soft'), 'paleo': cfg.get('paleo_band_soft')} if grp else {}
     pmis = cfg.get('paleo_misfit') or 'gaussian'       # the paleo rows' misfit
     mmis = cfg.get('mfd_misfit') or 'gaussian'         # the MFD bins' misfit
@@ -148,8 +150,9 @@ def main():
         hard = bool(band or positive or mono or plate)
 
     def rows_txt(groups):                              # 'each subsection's slip rate and each paleo rate'
-        word = {'slip-rate': 'each subsection\u2019s slip rate', 'paleo': 'each paleo rate'}
-        return ' and '.join(word[k] for k in ('slip-rate', 'paleo') if k in groups)
+        word = {'slip-rate': 'each subsection\u2019s slip rate', 'paleo': 'each paleo rate', 'MFD bin': 'each MFD bin'}
+        w_ = [word[k] for k in ('slip-rate', 'paleo', 'MFD bin') if k in groups]
+        return ', '.join(w_[:-1]) + (' and ' if len(w_) > 1 else '') + w_[-1] if w_ else ''
     pos_g = [k for k, v in g_band.items() if v == 'positive']
     band_g = [k for k, v in g_band.items() if v not in (None, 'positive')]
     soft_g = [k for k, v in g_soft.items() if v]
@@ -462,7 +465,7 @@ def main():
                  (f'each {k} prediction kept above zero (a hard constraint)' if g_band[k] == 'positive' else
                   f'each {k} prediction kept within a factor {float(g_band[k]):g} of its target (a hard constraint)'
                   if g_band[k] else 'no limit')] for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))
-                 if nm == 'SLIP' or pband_set]
+                 if (nm == 'SLIP' and 'slip_band' in cfg) or (nm == 'PALEO' and pband_set)]
                 + [[f'{nm}_BAND_SOFT', 'None' if not g_soft[k] else f'{float(g_soft[k]):g}',
                     f'each {k} prediction within {dec(float(g_soft[k]))} of its target at 1 sd (a soft band: a penalty on '
                     'the log ratio of prediction to target, beside the misfit)' if g_soft[k] else 'no soft band']
@@ -608,7 +611,7 @@ def main():
             'their weak slip-rate targets tolerate a prediction of zero; with it every subsection must slip at no less '
             f'than 1/{band:g} of its target rate. The factor is a modelling choice the data do not make.' if band else '')
          + (' <b>Positivity.</b> In addition, '
-            + (rows_txt(pos_g) + ' must be above zero (the MFD bins have no such limit)' if grp else
+            + (rows_txt(pos_g) + ' must be above zero' + ('' if allpos else ' (the MFD bins have no such limit)') if grp else
                'every prediction with a positive target (each subsection\u2019s slip rate, each MFD bin and each paleo rate) '
                'must be above zero')
             + ', so at least one rupture is on in each, with no other limit: a hard constraint.' if positive else '')
