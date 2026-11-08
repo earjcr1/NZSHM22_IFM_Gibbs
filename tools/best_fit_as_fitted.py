@@ -11,7 +11,10 @@ paleo rows by -2 ln of each site's recurrence-interval PDF (--paleo-misfit years
 in log10 (--mfd-misfit log10), the slip rates in log10 (--slip-misfit log10), or each group half and half (split+log10,
 gaussian+log10, gaussian+years: half its Gaussian plus half its log misfit, the notebook's MISFIT 'half'). This is the fit that minimizes that misfit, chi2 as fitted, over nonnegative rates:
 L-BFGS-B from the NNLS fit, each rate at least --lower (1e-20 by default, far below the slab floor, so that every
-prediction stays above zero, where the paleo and log10 misfits are finite; the coefficients are nonnegative). Only the
+prediction stays above zero, where the paleo and log10 misfits are finite; the coefficients are nonnegative). The start
+is the NNLS fit with its rates below the slab floor (--floor) at --lower and, where a row with a log misfit is then
+predicted at 0, ruptures crossing it switched on at twice the floor, as gibbs.py's positive start does (positive_start):
+from the NNLS fit itself such rows sit tens of decades below their targets, and L-BFGS-B's line search stalls. Only the
 data misfit counts: no prior, and no soft terms (the balance term, the soft band, the summed slip rates).
 
 Writes OUT.npz (mean: the rates, one per rupture of the original problem, 0 for the ruptures cleaning removed;
@@ -53,6 +56,29 @@ def paleo_rows(P, rupture_set, mode):
     if not all(f[2] for f in fits):
         raise SystemExit('--paleo-misfit: some sites\' curves could not be fitted')
     return rows, [f[0] for f in fits], np.array([s['best'] for s in sites]), np.array([s['sd'] for s in sites])
+
+
+def positive_start(G, rows, m, floor, lower):
+    """The start: the NNLS rates m with those below the slab floor at `lower`, then, for the rows (those with a log misfit)
+    the rates at or above the floor predict at 0, ruptures crossing them switched on at twice the floor, each time the one
+    crossing the most such rows (ties: the lowest index), as gibbs.py's positive_start does. A row predicted at about
+    `lower` times its coefficients would cost tens of decades in log10, with gradients that stall L-BFGS-B's line search.
+    Returns (the start, how many were switched on)."""
+    on = m >= floor
+    m = np.where(on, m, lower)
+    if len(rows) == 0:
+        return m, 0
+    Gr = G[rows].tocsr()
+    Gc = Gr.tocsc()
+    covered = np.asarray(Gr @ on.astype(np.float64)).ravel() > 0
+    added = 0
+    while not covered.all():
+        counts = np.bincount(Gr[np.flatnonzero(~covered)].indices, minlength=G.shape[1])
+        i = int(np.argmax(counts))
+        m[i] = max(m[i], 2.0 * floor)
+        covered[Gc.indices[Gc.indptr[i]:Gc.indptr[i + 1]]] = True
+        added += 1
+    return m, added
 
 
 def nnls_key(m):
@@ -143,6 +169,9 @@ def main():
     ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10'],
                     help="the slip-rate rows' misfit, as gibbs.py --slip-misfit (default split)")
     ap.add_argument('--slip-block', default='S', help='the slip-rate rows (default S)')
+    ap.add_argument('--floor', type=float, default=1e-10, help='the slab floor (default 1e-10, the notebook\'s FLOOR): the start '
+                    'switches off the NNLS rates below it and, where a row with a log misfit is then predicted at 0, switches '
+                    'on ruptures crossing it at twice it, as gibbs.py\'s positive start does')
     ap.add_argument('--lower', type=float, default=1e-20, help='the least rate (default 1e-20), so every prediction stays above zero')
     ap.add_argument('--max-iter', type=int, default=20000, help='L-BFGS-B iterations at most (default 20000)')
     ap.add_argument('--tol', type=float, default=0.01, help='stop once the misfit falls by less than this (on chi2\'s scale) '
@@ -159,7 +188,7 @@ def main():
     G = P['G'].tocsr()
     keep_c = np.asarray(P['keep_cols'])
     z0 = np.load(a.start or os.path.join(here, 'nnls', 'nnls_vectors.npz'))
-    m0 = np.maximum(np.asarray(z0['mean'], float)[keep_c], a.lower)
+    m_nnls = np.asarray(z0['mean'], float)[keep_c]
     pal = None
     if a.paleo_misfit != 'gaussian':
         if not a.rupture_set:
@@ -177,7 +206,11 @@ def main():
         geo = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
     b_s, b_m, b_p = (misfit_log_weight(a.slip_misfit), misfit_log_weight(a.mfd_misfit), misfit_log_weight(a.paleo_misfit))
     fun, by_block = make_objective(P, G, pal, mlog, a.paleo_misfit, geo, b_s, b_m, b_p)
-    f0, _ = fun(m0)
+    f0, _ = fun(np.maximum(m_nnls, a.lower))          # the NNLS fit itself, every rate at least --lower
+    log_rows = np.concatenate([r_ for r_, b_ in ((geo, b_s), (mlog, b_m), (pal[0] if pal is not None else None, b_p))
+                               if r_ is not None and b_ > 0]).astype(np.int64)
+    m0, added = positive_start(G, log_rows, m_nnls, a.floor, a.lower)
+    fs, _ = fun(m0)
     b0 = by_block(m0)
     how = ', '.join(w for w, on in ((f'the slip rates {a.slip_misfit} (log10 weighted {b_s:g}, its sds the effective ones)', geo is not None),
                                     ('the slip rates by their split normals', geo is None and P.get('split_lo2') is not None),
@@ -185,6 +218,9 @@ def main():
                                     (f'the MFD bins {a.mfd_misfit} (log10 weighted {b_m:g})', mlog is not None)) if on) or 'every row Gaussian'
     print(f'best fit as fitted: {G.shape[0]} rows x {G.shape[1]} ruptures; the misfit as the sampler scores it ({how}); '
           f'L-BFGS-B from the NNLS fit, every rate at least {a.lower:g}')
+    print(f'   start: the NNLS fit with its rates below the slab floor {a.floor:g} at {a.lower:g}, and {added} ruptures '
+          f'switched on at {2 * a.floor:g} where rows with a log misfit were then predicted at 0 (as gibbs.py\'s positive '
+          f'start); chi2 as fitted {f0:.2f} at the NNLS fit itself, {fs:.2f} at the start')
     c = np.sqrt(np.asarray(G.multiply(G).sum(0)).ravel())   # each rate scaled by its column's norm: v = c m, so that the
     c = np.where(c > 0, c, 1.0)                               # misfit's curvature is about the same in every direction
 
@@ -202,18 +238,23 @@ def main():
     r = minimize(fun_v, m0 * c, jac=True, method='L-BFGS-B', bounds=list(zip(a.lower * c, [None] * len(c))),
                  options=dict(maxiter=a.max_iter, maxfun=4 * a.max_iter, ftol=1e-15, gtol=1e-12, maxcor=20), callback=stop)
     m = r.x / c
-    b1 = by_block(m)
+    f1, _ = fun(m)                                    # the misfit at the rates returned (after an abnormal stop, r.fun
+    b1 = by_block(m)                                  # can be another point's)
+    tol_stop = len(hist) > a.window and hist[-1 - a.window] - hist[-1] < a.tol
     print(f'   {r.nit} iterations, {r.nfev} evaluations, {time.time() - t0:.0f}s: '
-          + (f'stopped: the misfit fell by less than {a.tol:g} over the last {a.window} iterations' if len(hist) > a.window
-             and hist[-1 - a.window] - hist[-1] < a.tol else str(r.message)))
-    print(f'   chi2 as fitted: {f0:.2f} at the NNLS fit -> {r.fun:.2f}; by block: '
+          + (f'stopped: the misfit fell by less than {a.tol:g} over the last {a.window} iterations' if tol_stop
+             else str(r.message)))
+    if not (tol_stop or r.success):
+        print(f'   Warning: L-BFGS-B stopped abnormally ({r.message}); the fit below is where it stopped, which may be far '
+              'from the best fit as fitted')
+    print(f'   chi2 as fitted: {f0:.2f} at the NNLS fit, {fs:.2f} at the start -> {f1:.2f}; by block, from the start: '
           + ', '.join(f'{k} {b0[k]:.1f} -> {b1[k]:.1f}' for k in b0))
     on0, on1 = int(np.sum(z0['mean'][keep_c] > 1e-10)), int(np.sum(m > 1e-10))
     print(f'   rates above 1e-10: {on0} -> {on1}; total rate {np.sum(z0["mean"]):.5g} -> {np.sum(m):.5g}')
     full = np.zeros(len(z0['mean']))
     full[keep_c] = m
     np.savez(out + '.npz', mean=full, penalised=z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int),
-             model=np.array('best fit as fitted'), misfit=np.array(r.fun), misfit_nnls=np.array(f0),
+             model=np.array('best fit as fitted'), misfit=np.array(f1), misfit_nnls=np.array(f0),
              nnls_key=np.array(nnls_key(np.asarray(z0['mean'], float)[keep_c])),
              paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit),
              slip_misfit=np.array(a.slip_misfit))

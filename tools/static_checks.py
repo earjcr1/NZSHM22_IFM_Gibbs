@@ -247,10 +247,12 @@ check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_ra
 check(all('axis_span(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'randomized_nnls.py'))
       and 'best_fit_rates(' in src['plot_rate_magnitude.py'] and '\ndef axis_span(' in src['cru_common.py'],
       'the fit figures take fixed axes from the targets and the best fit (cru_common.axis_span, best_fit_rates)')
-check(all("'--config'" in src[sc] and 'run_settings(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py',
-                                                                          'plot_rate_magnitude.py'))
-      and '\ndef run_settings(' in src['cru_common.py'] and "('FLOOR', 'floor')" in src['cru_common.py'],
-      'the fit figures show the run\'s settings, SLIP_SECTIONS to FLOOR, in place of the label (cru_common.run_settings)')
+check(all("'--config'" in src[sc] and 'figure_settings(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py',
+                                                                              'plot_rate_magnitude.py'))
+      and '\ndef run_settings(' in src['cru_common.py'] and '\ndef figure_settings(' in src['cru_common.py']
+      and "('FLOOR', 'floor')" in src['cru_common.py'],
+      'the fit figures show the model and every one of the run\'s settings, SLIP_SECTIONS to FLOOR, whatever its value, in a '
+      'table of fixed size (cru_common.figure_settings, run_settings)')
 check(not any('RANDOMIZED_NNLS' in c or "'randomized_nnls.py'" in c for _, c in cells)
       and "'--selftest'" in src['randomized_nnls.py'],
       'notebook has no RANDOMIZED_NNLS (retired from the notebook on 2026-11-03; randomized_nnls.py stays for the command '

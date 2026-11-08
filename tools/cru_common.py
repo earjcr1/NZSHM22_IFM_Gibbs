@@ -148,6 +148,14 @@ def geo_rows(P, rows, y, b=0.5, kind='slip'):
     as the problem gives them): (1 - b) x the linear misfit (with the split normal's weight on each side, where there is
     one) + b x the log10 Gaussian's, (1/k) (log10(y / d) / s)^2, s the row's log10 sd on the prediction's side (log_sds: its
     effective sd's, so both share one sd). b = 1/2: the geometric mean of the two densities; each section one measurement."""
+    lin, lg = geo_parts(P, rows, y, kind)
+    return (1.0 - b) * lin + b * lg
+
+
+def geo_parts(P, rows, y, kind='slip'):
+    """A slip-rate or MFD row group's two misfits, each on chi2's scale and unweighted, for each row: the linear misfit
+    (the split normal's weight on each side, where there is one) and the log10 Gaussian's, (1/k) (log10(y / d) / s)^2
+    (inf where y <= 0). geo_rows weighs them (1 - b) and b."""
     d = np.asarray(P['d'], float)[rows]
     r = np.asarray(y, float) - d
     lin = split_weights(P, rows, r) * r * r / float(P['sigma']) ** 2
@@ -155,7 +163,45 @@ def geo_rows(P, rows, y, b=0.5, kind='slip'):
     with np.errstate(divide='ignore', invalid='ignore'):
         u = np.log10(np.maximum(np.asarray(y, float), 0.0) / d)
         lg = wk * (u / np.where(u < 0, s_lo, s_hi)) ** 2
-    return (1.0 - b) * lin + b * lg
+    return lin, lg
+
+
+def misfit_parts(lin, lg, b):
+    """A row group's misfit split for the fit figures: lin and lg, each row's linear and log misfits (unweighted, on
+    chi2's scale; lg inf where a prediction is 0), and b, the log part's weight (misfit_log_weight). Returns a dict: lin
+    and log, their sums (log None if lg is None); total, the misfit as fitted, (1 - b) lin + b log (a part with weight 0 left out, so that an
+    infinite log part does not reach a linear fit); b; nzero, the rows whose log misfit is infinite (predicted at 0); and
+    log_rest, the log misfit over the other rows."""
+    lin = np.asarray(lin, float)
+    if lg is None:                                       # no log misfit to compare with (the paleo rows without their curves)
+        return dict(lin=float(lin.sum()), log=None, total=float(lin.sum()), b=0.0, nzero=0, log_rest=None)
+    lg = np.asarray(lg, float)
+    fin = np.isfinite(lg)
+    L, G = float(lin.sum()), float(lg.sum()) if fin.all() else np.inf
+    total = (1.0 - b) * L if b < 1 else 0.0
+    if b > 0:
+        total += b * G
+    return dict(lin=L, log=G, total=total, b=float(b), nzero=int((~fin).sum()), log_rest=float(lg[fin].sum()))
+
+
+def misfit_text(mp, log_name='log10', fig=False):
+    """misfit_parts' dict as one phrase: the misfit as fitted (in MISFIT's terms), then the linear and the log misfit each
+    as if it were the whole misfit (unweighted), e.g. 'chi2 as fitted 2726.5 (half linear, half log10); linear alone 62.0,
+    log10 alone 5391.1'. fig: the figures' form (χ², no decimals over 100). log_name: the log misfit's name ('years' for
+    the paleo rows' curves)."""
+    num = (lambda v: 'inf' if not np.isfinite(v) else f'{v:.0f}' if abs(v) >= 100 else f'{v:.1f}') if fig else \
+          (lambda v: 'inf' if not np.isfinite(v) else f'{v:.1f}')
+    chi = 'χ²' if fig else 'chi2'
+    if mp['log'] is None:
+        return f'{chi} {num(mp["total"])} (linear)'
+    lg = num(mp['log'])
+    if mp['nzero']:
+        lg += (f' ({mp["nzero"]} row{"s" if mp["nzero"] > 1 else ""} predicted at 0; {num(mp["log_rest"])} over the rest)')
+    b = mp['b']
+    how = ('linear' if b <= 0 else log_name if b >= 1 else
+           (f'½ linear, ½ {log_name}' if fig else f'half linear, half {log_name}') if b == 0.5 else
+           f'{1 - b:g} linear, {b:g} {log_name}')
+    return f'{chi} as fitted {num(mp["total"])} ({how}); linear alone {num(mp["lin"])}, {log_name} alone {lg}'
 
 
 def slip_geo_rows(P, rows, y, b=0.5):
@@ -779,8 +825,15 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('MISFIT', 'misfit'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'), ('SLIP_MISFIT', 'slip_misfit'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
-                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT', 'misfit'), ('MFD_MONOTONIC', 'mfd_monotonic'),
+                   ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'),
+                   ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'),
+                   ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'),
+                   ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'),
+                   ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR, every
+                                                                # one in every figure's table, whatever its value
+SETTINGS_PER_LINE = 7                                          # the table's columns per line: 'model' and these 19 in 3 lines
 
 
 def run_config(config, problem):
@@ -799,13 +852,32 @@ def run_config(config, problem):
 
 def run_settings(config, problem):
     """The settings that tell runs apart (the notebook's, SLIP_SECTIONS to FLOOR), as (name, value) pairs for the fit
-    figures' settings table: from config, a workflow_config.json (default: the one next to problem, as the notebook
-    writes it; 'none': no table), or None if there is none."""
+    figures' settings table: every one of FIGURE_SETTINGS, whatever its value, so that every figure's table has the same
+    size ('—' for one the configuration does not record; MISFIT, for a run before it, from its groups' modes): from
+    config, a workflow_config.json (default: the one next to problem, as the notebook writes it; 'none': no table), or
+    None if there is none."""
     cfg = run_config(config, problem)
     if cfg is None:
         return None
-    per_group = ('slip_misfit', 'mfd_misfit', 'paleo_misfit')   # with MISFIT (since 2026-11-10) each group's follows from it
-    return [(name, str(cfg[key])) for name, key in FIGURE_SETTINGS if key in cfg and not ('misfit' in cfg and key in per_group)]
+    cfg = dict(cfg)
+    if 'misfit' not in cfg:                              # before MISFIT: the one its groups' modes match, if any
+        modes = tuple(cfg.get(k) for k in ('slip_misfit', 'mfd_misfit', 'paleo_misfit'))
+        cfg['misfit'] = next((k for k, v in MISFIT_MODES.items() if v == modes), None)
+        if cfg['misfit'] is None:
+            del cfg['misfit']
+    if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
+        name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))
+        cfg['rupture_set'] = name if len(name) <= 20 else name[:19] + '…'
+    return [(name, str(cfg[key]) if key in cfg else '—') for name, key in FIGURE_SETTINGS]
+
+
+def figure_settings(config, problem, model):
+    """The fit figures' settings table: the model shown ('posterior mean', or a single model's name; several joined by
+    ' / ') and run_settings, as settings_lines' rows of SETTINGS_PER_LINE columns; None without a configuration."""
+    pairs = run_settings(config, problem)
+    if pairs is None:
+        return None
+    return [('model', model)] + pairs
 
 
 LEGEND_ROW = 8.5 * 1.5                               # points per legend row: the figures' 8.5-point text and half a line
@@ -838,18 +910,22 @@ def legend_above(fig, ax, items, ncol, y, x=0.0, **kw):
                          offset_copy(ax.transAxes, fig=fig, x=x, y=y, units='points'), **kw)
 
 
-def settings_lines(pairs, width):
-    """Settings as a small table in monospace text: a line of names over a line of values, column by column, continued
-    on further pairs of lines when wider than width characters. Returns [(names, values), ...]."""
+def settings_lines(pairs, width=None, per_line=SETTINGS_PER_LINE):
+    """Settings as a small table in monospace text: a line of names over a line of values, column by column, per_line
+    columns to a pair of lines (so that every figure's table has as many lines; or, with per_line None, continued on
+    further pairs of lines when wider than width characters). Returns [(names, values), ...]."""
     cols = [(n, v, max(len(n), len(v))) for n, v in pairs]
-    groups, cur, used = [], [], 0
-    for c in cols:
-        if cur and used + c[2] > width:
-            groups.append(cur)
-            cur, used = [], 0
-        cur.append(c)
-        used += c[2] + 3
-    groups.append(cur)
+    if per_line:
+        groups = [cols[k:k + per_line] for k in range(0, len(cols), per_line)]
+    else:
+        groups, cur, used = [], [], 0
+        for c in cols:
+            if cur and used + c[2] > width:
+                groups.append(cur)
+                cur, used = [], 0
+            cur.append(c)
+            used += c[2] + 3
+        groups.append(cur)
     return [('   '.join(n.ljust(w) for n, _, w in g).rstrip(), '   '.join(v.ljust(w) for _, v, w in g).rstrip()) for g in groups]
 
 

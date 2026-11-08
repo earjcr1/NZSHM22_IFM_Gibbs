@@ -307,16 +307,16 @@ def main():
               re.finditer(r'^(\d\.\d\d)-(\d\.\d\d)\s+\d+\s+\S+\s+\S+\s+([\d.]+)', post_part, re.M)][:n_bins or 99]
 
     sr = read(os.path.join(PR, 'fig_slip_rates.txt'))
-    s_chi2, s_in1, s_in2, s_med = grab(sr, r'^' + re.escape(a.prior) + r' \(.*?chi2 over the slip-rate rows, as the '
-                                       r'likelihood weights them(?: \([^)]*\))?, ([\d.]+); (\d+)% of sections within one .*?(\d+)% within '
+    s_chi2, s_in1, s_in2, s_med = grab(sr, r'^' + re.escape(a.prior) + r' \(.*?(?:chi2|misfit) over the slip-rate rows, as the '
+                                       r'likelihood weights them(?: \([^)]*\))?, (?:chi2(?: as fitted)? )?([\d.]+|inf)\b.*?(\d+)% of sections within one .*?(\d+)% within '
                                        r'two.*?median ([\d.]+)', 'slip-rate fit', float, (1, 2, 3, 4))
-    r_schi2, r_sin1 = grab(sr, r'^reference: .*?as the likelihood weights them, ([\d.]+); (\d+)% of sections within one',
+    r_schi2, r_sin1 = grab(sr, r'^reference: .*?as the likelihood weights them(?: \([^)]*\))?, (?:chi2(?: as fitted)? )?([\d.]+|inf)\b.*?(\d+)% of sections within one',
                            'reference slip-rate fit', float, (1, 2)) if ref else (None, None)
     pr_ = read(os.path.join(PR, 'fig_paleo_rates.txt'))
-    p_chi2, p_in1, p_in2, p_med = grab(pr_, r'^' + re.escape(a.prior) + r' \(.*?chi2 over the paleo rows(?: as the likelihood scores them \([^)]*\))? ([\d.]+); (\d+)% '
+    p_chi2, p_in1, p_in2, p_med = grab(pr_, r'^' + re.escape(a.prior) + r' \(.*?(?:chi2|misfit) over the paleo rows(?: as the likelihood scores them \([^)]*\))?,? (?:chi2(?: as fitted)? )?([\d.]+|inf)\b.*?(\d+)% '
                                        r'of rows within one .*?(\d+)% within two; prediction / target: median ([\d.]+)',
                                        'paleo fit', float, (1, 2, 3, 4))
-    r_pchi2 = grab(pr_, r'^reference: .*?chi2 over the paleo rows(?: as the likelihood scores them \([^)]*\))? ([\d.]+);', 'reference paleo fit') if ref else None
+    r_pchi2 = grab(pr_, r'^reference: .*?(?:chi2|misfit) over the paleo rows(?: as the likelihood scores them \([^)]*\))?,? (?:chi2(?: as fitted)? )?([\d.]+|inf)\b', 'reference paleo fit') if ref else None
 
     ss = read(os.path.join(PR, 'fig_slip_sections.txt'))
     faults = []

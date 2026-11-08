@@ -327,9 +327,9 @@ def main():
     if a.reference:                                      # another model's column means, beside the posterior's
         ref = reference_rates(a.reference, P)
         ref['ys'] = ((Gs @ ref['m']) / scale) @ avg
-    settings = run_settings(a.config, a.problem)
-    if settings and model:
-        settings = [('model', model)] + settings
+    settings = run_settings(a.config, a.problem)       # every setting, whatever its value, so every table has the same size
+    if settings:
+        settings = [('model', model or 'posterior mean')] + settings
 
     # table view
     spread = (f'posterior distributions from the {ndraws} draws recorded by {", ".join(used)}' if q is not None

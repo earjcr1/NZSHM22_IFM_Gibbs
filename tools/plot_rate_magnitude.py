@@ -68,7 +68,7 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predictions, legend_above, legend_height,
-                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, run_settings, settings_lines)
+                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, figure_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
@@ -162,20 +162,19 @@ def main():
         head.append(f'order check skipped: no row block named {a.slip_block!r}')
 
     cfg_ = run_config(a.config, a.problem) or {}
-    from cru_common import misfit_log_weight
+    from cru_common import misfit_log_weight, misfit_parts, misfit_text
     mmode = cfg_.get('mfd_misfit') or 'gaussian'
     mlog = mmode != 'gaussian'                         # the bins scored in log10 (gibbs.py --mfd-misfit log10, gaussian+log10)
     b_m = misfit_log_weight(mmode)
     s_log = np.log10(1.0 + 1.0 / P['d'][rows])         # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
 
     def bins_fit(m_):
-        """chi2 over the bin rows as the likelihood scores them: (1 - b) x the Gaussian + b x (log10(total / R_j) / s_j)^2."""
+        """The misfit over the bin rows as the likelihood scores them, (1 - b) x the Gaussian + b x
+        (log10(total / R_j) / s_j)^2, and its two parts (cru_common.misfit_parts)."""
         y_ = Gr[rows] @ m_
-        g_ = float(np.sum((y_ - P['d'][rows]) ** 2))
-        if mlog:
-            with np.errstate(divide='ignore'):
-                return (1.0 - b_m) * g_ + b_m * float(np.sum((np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2))
-        return g_
+        with np.errstate(divide='ignore'):
+            lg_ = (np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2
+        return misfit_parts((y_ - P['d'][rows]) ** 2, lg_, b_m)
 
     data = []
     for path, label in sets:
@@ -205,9 +204,8 @@ def main():
         ref = reference_rates(a.reference, P)
         ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
         ref['chi2'] = bins_fit(ref['m'])
-    settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
-    if settings and data[0]['model']:
-        settings = [('model', data[0]['model'])] + settings
+    settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
+    # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
         head.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
 
@@ -218,8 +216,8 @@ def main():
     dw = max(6, max(len(s) for s in dlab)) + 1
     lines = list(head)
     if ref is not None:
-        lines += ['', f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the {B} magnitude-bin rows '
-                  f'{ref["chi2"]:.1f}; bin totals; total rate {ref["tot"].sum():.4g} '
+        lines += ['', f'reference: {ref["label"]} ({ref["path"]}): its misfit over the {B} magnitude-bin rows ({mmode}), '
+                  f'{misfit_text(ref["chi2"])}; bin totals; total rate {ref["tot"].sum():.4g} '
                   f'against targets totalling {R.sum():.4g}' + (f'; {ref["note"]}' if ref['note'] else ''),
                   f'{"bin":<11s} {"target R_j":>11s} {"total":>11s} {"ratio":>6s}']
         for k in range(B):
@@ -231,8 +229,8 @@ def main():
                   else 'no runs found next to the rate vectors, so no posterior spread')
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' bin totals (select_draws.py)'
-        lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s chi2 over the {B} '
-                  f'magnitude-bin rows, as the likelihood weights them{f" ({mmode})" if mlog else ""}, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s misfit over the {B} '
+                  f'magnitude-bin rows, as the likelihood weights them ({mmode}), {misfit_text(D["chi2"])}; {D["pen"]:,} penalised ruptures '
                   f'(rate 0 by construction) not shown; {spread}',
                   f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
                   f'{"total: 16%":>11s} {"50%":>10s} {"84%":>10s} '
@@ -296,8 +294,9 @@ def main():
     bars = any(D['q'] is not None and D['xs'] is None for D in data)
     k_panels = len(data)
     fig_w = 8.6 if k_panels == 1 else 0.6 + 6.3 * k_panels
-    tab = settings_lines(settings, int((fig_w - 0.8) / 0.062500)) if settings else None
-    more_top = max(0.0, 2 * len(tab) * 10.5 - 10.0) / 72 if tab else 0.0   # room for the settings table
+    tab = settings_lines(settings) if settings else None
+    title_pt = 18.0 if tab and k_panels > 1 else 0.0     # several panels: the settings once, above each panel's title
+    more_top = (max(0.0, 2 * len(tab) * 10.5 - 10.0) + title_pt) / 72 if tab else 0.0   # room for the settings table
     pens = sorted({D['pen'] for D in data})
     foot = textwrap.fill('Bins counted up in the bin rows original order. Lower panel: each bin\'s total over its target, '
                          'with the band within one uncertainty of it, at the level the likelihood gives the bins'
@@ -312,9 +311,11 @@ def main():
                             'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
     n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low)     # the legend's entries
     lc = n_h if n_h <= 4 else 2 if k_panels == 1 else 3          # columns: two under a single panel
-    more = 0.168 * foot.count('\n')                    # room for a longer footnote, in inches
-    leg_pt = legend_height(n_h, lc) + 6                  # the legend, between the settings and the subtitle
-    top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top + leg_pt / 72, 1.3, 0.22, 3.9, 0.78 + more   # in inches
+    more = 0.168 * max(1, foot.count('\n'))           # room for the footnote, two lines at least, in inches
+    leg_pt = legend_height(8, 2 if k_panels == 1 else 3) + 6   # room for the fullest legend, whichever entries this
+                                                         # one has, so that the panels keep their size
+    sub_pt = 24.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top + (leg_pt + sub_pt) / 72, 1.3, 0.22, 3.9, 0.78 + more   # in inches
     H = top_in + ratio_in + gap_in + main_in + bot_in
     fig, axs = plt.subplots(2, k_panels, figsize=(fig_w, H), sharex='col', sharey='row', squeeze=False,
                             gridspec_kw=dict(height_ratios=[main_in, ratio_in]), facecolor=SURFACE)
@@ -373,14 +374,16 @@ def main():
                           dict(s=26, c=REF, zorder=4.2))
         nb = int(D['below'].sum())
         nz = int((D['m'] == 0).sum())
-        if tab:
-            draw_settings(ax, tab, 20 + leg_pt)
-        else:
-            ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20 + leg_pt)
-        ax.annotate(f'χ²{" as fitted" if mlog else ""} {D["chi2"]:.1f} over the {B} magnitude bins{f" ({mmode})" if mlog else ""}; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
+        if tab and ax is axs[0][0]:                      # the settings once, above the first panel
+            draw_settings(ax, tab, 20 + sub_pt + leg_pt + title_pt)
+        if not tab or k_panels > 1:                      # several panels: each one's title
+            ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20 + sub_pt + leg_pt)
+        ax.annotate(f'{"model" if single else "mean model"} over the {B} bins: {misfit_text(D["chi2"], fig=True)}\n'
+                    + (f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' if ref is not None else '')
+                    + f'{n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
-                    color=INK2, fontsize=8.5)
+                    color=INK2, fontsize=8.5 if k_panels == 1 else 8)
         ar.set_xlabel(f'Magnitude bin (each rupture at a random magnitude within its {w:g} bin)', color=INK2, fontsize=9)
     ticks = list(range(int(np.ceil(bottom)), int(np.floor(top)) + 1))
     axs[0][0].set_yticks(ticks)
@@ -400,7 +403,7 @@ def main():
                               label=f'bin total of each of the {n_k:,} kept draws'))
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=REF, mec=SURFACE, mew=1.0,
-                              label=f'bin total of {ref["label"]} (χ² {ref["chi2"]:.1f})'))
+                              label=f'bin total of {ref["label"]}'))
     handles.append(Patch(facecolor=BAND, edgecolor='none', label='lower panel: within one uncertainty of the target'))
     handles.append(Line2D([], [], color=MUTED, lw=0.9, ls=(0, (4, 3)), label=f'slab floor (1e{floor:g})'))
     if any_low:
@@ -408,7 +411,7 @@ def main():
                               label=f'{mean_}rate below 1e{bottom:g}, including 0: on the bottom edge'))
     fig.suptitle(('Rate' if single else 'Posterior mean rate') + ' of each rupture, by magnitude', x=0.5 / fig_w + 0.01, ha='left',
                  color=INK, fontsize=13, fontweight='bold', y=1 - 0.15 / H)
-    legend_above(fig, axs[0][0], [(h, h.get_label()) for h in handles], lc, 20, labelcolor=INK2,
+    legend_above(fig, axs[0][0], [(h, h.get_label()) for h in handles], lc, 20 + sub_pt, labelcolor=INK2,
                  handlelength=2.0)                       # above the subtitle, below the settings
     fig.text(0.5, 0.072 / H, foot, ha='center', va='bottom', color=MUTED, fontsize=8, linespacing=1.4)
     fig.subplots_adjust(left=0.07 if k_panels > 1 else 0.75 / fig_w, right=0.985, top=1 - top_in / H, bottom=bot_in / H,

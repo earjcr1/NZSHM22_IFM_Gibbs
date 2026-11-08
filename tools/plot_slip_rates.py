@@ -70,10 +70,10 @@ import textwrap
 
 import numpy as np
 
-from cru_common import split_weights
+from cru_common import geo_parts, misfit_log_weight, misfit_parts, misfit_text, split_weights
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
-                        run_config, run_settings, settings_lines, slip_sections)
+                        run_config, figure_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 REF = INK                                        # the reference model's marks: black, apart from every series colour
@@ -165,14 +165,10 @@ def main():
     us = np.bincount(sec, weights=u, minlength=S) / ks   # each section's sd in the display units (its copies share it)
     rep_row = rows[np.unique(sec, return_index=True)[1]] if (ks > 0).all() else None   # a row of each section (its copies
     sw = (lambda e: np.sqrt(split_weights(P, rep_row, e)) * e) if rep_row is not None else (lambda e: e)   # share its sds)
-    chi_w = lambda yw_: float(np.sum(split_weights(P, rows, yw_ - dw) * (yw_ - dw) ** 2))   # chi2 as the likelihood counts it
     cfg_ = run_config(a.config, a.problem) or {}
-    geo_tau = None                                       # the slip rows in log10 too (MISFIT 'half', 'log10'): (1 - b) x the
-    if (cfg_.get('slip_misfit') or 'split') != 'split':  # split normal + b x the log10 Gaussian, with the same sds
-        from cru_common import misfit_log_weight, slip_geo_rows
-        geo_b = misfit_log_weight(cfg_['slip_misfit'])
-        geo_tau = cfg_['slip_misfit']
-        chi_w = lambda yw_: float(np.sum(slip_geo_rows(P, rows, yw_, geo_b)))
+    geo_tau = cfg_.get('slip_misfit') or 'split'         # the slip rows' misfit (MISFIT): (1 - b) x the split normal + b x
+    geo_b = misfit_log_weight(geo_tau)                   # the log10 Gaussian with the same sds; both parts reported
+    chi_w = lambda yw_: misfit_parts(*geo_parts(P, rows, yw_, 'slip'), geo_b)   # chi2 as the likelihood counts it, and its parts
     rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
@@ -224,15 +220,14 @@ def main():
             ratio_s = np.where(ts > 0, ys / ts, np.nan)
         ref.update(y=y, ys=ys, chi2=chi_w(yw), in1=float(np.mean(np.abs(sw((ys - ts) / us)) <= 1)),
                    in2=float(np.mean(np.abs(sw((ys - ts) / us)) <= 2)), q=np.nanpercentile(ratio_s, [5, 50, 95]))
-        head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the slip-rate rows, as the likelihood '
-                    f'weights them, {ref["chi2"]:.1f}; {100 * ref["in1"]:.0f}% of sections within one measurement '
+        head.append(f'reference: {ref["label"]} ({ref["path"]}): its misfit over the slip-rate rows, as the likelihood '
+                    f'weights them ({geo_tau}), {misfit_text(ref["chi2"])}; {100 * ref["in1"]:.0f}% of sections within one measurement '
                     f'uncertainty of their targets, {100 * ref["in2"]:.0f}% within two; section mean / target: median '
                     f'{ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to {ref["q"][2]:.2f})'
                     + (f'; {ref["note"]}' if ref['note'] else ''))
     rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the tables
-    settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
-    if settings and data[0]['model']:
-        settings = [('model', data[0]['model'])] + settings
+    settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
+    # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
         head.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
 
@@ -255,9 +250,9 @@ def main():
                   else 'no runs found next to the rate vectors, so no posterior spread')
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' section means (select_draws.py)'
-        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them'
-                  + (f' ({geo_tau}: the log10 Gaussian with the split normal\'s sds)' if geo_tau else '') + ', '
-                  f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s misfit over the slip-rate rows, as the likelihood weights them ({geo_tau}'
+                  + (': the log10 Gaussian with the split normal\'s sds' if geo_b > 0 else '') + '), '
+                  f'{misfit_text(D["chi2"])}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
                   f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); {spread}; furthest from their targets: '
                   + '; '.join(f'{rows_name(s)} ({sw(D["rs"] / us)[s]:+.2f} sd)' for s in D['groups']),
@@ -322,12 +317,14 @@ def main():
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; values '
                'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
-    extra = 0.16 * note.count('\n')                      # room for a note of more than one line
+    extra = 0.16 * max(2, note.count('\n'))           # room for the note: three lines at least, so that the panels keep their size
     n_h = 3 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries (above): one row of up to four
     lc = n_h if n_h <= 4 else 3
-    leg_pt = legend_height(n_h, lc) + 6                  # the legend, between the settings and the first subtitle
-    tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
-    top_in, row_in, bot_in = 0.45 + leg_pt / 72, 5.6, 0.8 + extra   # figure layout, in inches
+    leg_pt = legend_height(7, 3) + 6                 # room for the fullest legend, whichever entries this one has, so
+                                                         # that the panels keep their size
+    sub_pt = 25.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    tab = settings_lines(settings) if settings else None
+    top_in, row_in, bot_in = 0.45 + (leg_pt + sub_pt) / 72, 5.6, 0.8 + extra   # figure layout, in inches
     if tab:                                              # the settings table takes a little more room than a label
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
@@ -396,10 +393,11 @@ def main():
             if j == 0:
                 ax.set_ylabel(f'{mm} prediction (mm/yr)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'{mm}: χ²{" as fitted" if geo_tau else ""} {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted and not geo_tau else ""}; '
-               f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
-        above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
-        if tab:
+        sub = (f'{D["label"] if len(data) > 1 else mm} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted and not geo_b else ""}: {misfit_text(D["chi2"], fig=True)}\n'
+               + (f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' if ref is not None else '')
+               + f'{D["label"] if len(data) > 1 else mm}: {100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
+        above = 40 + sub_pt + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
+        if tab and i == 0:                               # the settings once, above the first row
             draw_settings(axs[i][0], tab, above)
         else:
             axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, above), textcoords='offset points',
@@ -420,17 +418,17 @@ def main():
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.5),
-                        f'{ref["label"]}: section mean (χ² {ref["chi2"]:.0f})'))
+                        f'{ref["label"]}: section mean'))
     if clipped:
         handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))
     h_in = fig.get_size_inches()[1]
     fig.suptitle(f'Slip-rate targets against the {mm}\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
-    legend_above(fig, axs[0][0], handles, lc, 40, labelcolor=INK2)   # above the first subtitle, below the settings
+    legend_above(fig, axs[0][0], handles, lc, 40 + sub_pt, labelcolor=INK2)   # above the first subtitle, below the settings
     fig.text(0.5, 0.12 / h_in, note, ha='center', va='baseline' if not extra else 'bottom', color=MUTED, fontsize=8,
              linespacing=1.4)
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.55) / h_in, bottom=bot_in / h_in, wspace=0.22,
-                        hspace=0.55 / (row_in - 0.55))
+                        hspace=(0.55 + sub_pt / 72) / (row_in - 0.55 - sub_pt / 72))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     with open(os.path.splitext(out)[0] + '.txt', 'w') as f:
         f.write(text + '\n')

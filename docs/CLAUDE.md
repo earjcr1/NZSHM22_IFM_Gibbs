@@ -118,10 +118,15 @@ check_convergence.py (misfit and misfit_expect when present, else chi2 and the p
 site_misfit, its measurements sum E, sd sqrt(sum V); prints "fit check as fitted X +- Y", which make_summary_pdf.py
 reads), select_draws.py, plot_paleo_rates.py (curves refitted from the rupture set when the config says years) and
 plot_rate_magnitude.py (log10 when the config says so; cru_common.run_config) use it. best_fit_as_fitted.py (the user's
-request, 2026-11-05): the best fit under chi2 as fitted, L-BFGS-B from the NNLS fit with rates >= 1e-20, column-norm
-scaling, stop when the misfit falls < 0.01 over 500 iterations (scipy >= 1.11 callback StopIteration); writes
-nnls/fitted_vectors.npz (model 'best fit as fitted') and _report.txt; the notebook's best-fit figure cell runs it when
-CFM_SLIPRATES or a non-Gaussian misfit is on and draws both fits side by side (141 s at 211k). The notebook's runs start
+request, 2026-11-05): the best fit under chi2 as fitted, L-BFGS-B with rates >= 1e-20, column-norm
+scaling, stop when the misfit falls < 0.01 over 500 iterations (scipy >= 1.11 callback StopIteration), from a positive
+start since 2026-11-09 (positive_start, as gibbs.py's: NNLS rates below --floor 1e-10 at 1e-20, then ruptures switched on
+at 2e-10 where a log-scored row is predicted at 0; from the NNLS fit itself, under MISFIT 'half' at 211k, 155 slip rows
+sat at ~1e-20 and L-BFGS-B stopped ABNORMAL at 0 iterations, run _1794177625: 15,159 -> start 2,672 -> 180.8 in 108 s);
+an abnormal stop is reported as a Warning, and the misfit reported and saved is fun at the rates returned (r.fun was
+another point's); writes nnls/fitted_vectors.npz (model 'best fit as fitted') and _report.txt; the notebook's best-fit
+figure cell runs it when CFM_SLIPRATES or a non-Gaussian misfit is on and draws both fits side by side in the
+rates-by-magnitude figure, the NNLS fit alone in the slip-rate and paleo figures (the user, 2026-11-09). The notebook's runs start
 from it when nnls/fitted_vectors.npz exists (gibbs.py --init fitted; refuses a fit whose nnls_key, sha1 of the NNLS rates
 on the kept columns, or paleo_misfit / mfd_misfit differ from the run's); no visible burn-in gain at 211k (chi2 as
 fitted reaches the posterior's ~1,100-1,250 within 8 sweeps from either start). SEED (2026-11-06, the user's request
@@ -137,7 +142,15 @@ plus T.lw['SM'] (rows, s_lo, s_hi, d_data, E, V, t2, t4 from cru_common.slip_geo
 --slip-band positive set automatically; recorded predictions unscaled (y *= sqrt 2); misfit += log_band - 0.5 sum C_ over
 the slip rows; tr['slip_geo_s', 'slip_geo_expect']; selftest_slipgeo (grid integral, a lopsided row, both backends, misfit
 recorded); block_fit, best_fit_as_fitted (--slip-misfit; fitted file records it, and --init fitted checks it),
-plot_slip_rates (from the config) use cru_common.slip_geo_rows.
+plot_slip_rates (from the config) use cru_common.slip_geo_rows. The three fit figures (2026-11-09, the user's request) give
+each model's misfit (and the reference's) as chi2 as fitted, then the linear and the log misfit each alone, unweighted, as if
+it were the whole misfit (cru_common.geo_parts, misfit_parts, misfit_text; the paleo rows' log misfit the years curve, fitted
+for the comparison under 'linear' too; rows predicted at 0 counted, their log misfit inf), one line per model in the
+subtitle; and every figure's settings table lists the model and all of FIGURE_SETTINGS (the 19 notebook settings, '—' when
+not recorded) in 3 lines of SETTINGS_PER_LINE = 7 columns (cru_common.figure_settings, settings_lines), with room reserved
+for the fullest legend, the reference's subtitle line and a 3-line footnote, so the figures and their panels keep one size
+(slip and paleo 10.6 x 8.8 in; the rates-by-magnitude figure's width still follows its number of panels).
+make_summary_pdf.py's patterns read both the old and the new wording.
 MISFIT (2026-11-10, the user's request: half linear / half log for every group, one setting): 'linear' | 'log10' | 'half'
 (default) -> (slip, mfd, paleo) modes via MISFIT_MODES (cru_common; the notebook has its copy MISFIT_MODES_ and derives
 SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT from it; CONFIG records misfit and the three). misfit_log_weight(mode) = b: 0 linear,

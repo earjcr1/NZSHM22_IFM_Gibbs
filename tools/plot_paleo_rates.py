@@ -68,7 +68,7 @@ import numpy as np
 
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
-                        run_config, run_settings, settings_lines)
+                        run_config, figure_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 BAND, BAND2 = '#ebeae5', '#f2f1ec'               # within one and within two uncertainties of the target
@@ -183,22 +183,28 @@ def main():
                                   'relative uncertainty)')]
     cfg_ = run_config(a.config, a.problem) or {}
     pmode = cfg_.get('paleo_misfit') or 'gaussian'
-    TH = None                                            # with PALEO_MISFIT 'years' (and the rupture set): each site's curve
-    if phys and pmode != 'gaussian':
-        from cru_common import misfit_log_weight
+    from cru_common import misfit_log_weight, misfit_parts, misfit_text
+    b_p = misfit_log_weight(pmode)                       # 'gaussian+years': half the Gaussian, half the curve
+    TH = None                                            # with the rupture set: each site's curve (PALEO_MISFIT's, or 'years'
+    if phys:                                             # under MISFIT 'linear', for the log part's comparison)
         from paleo_misfit import curve_mode, fit_site, site_misfit
-        b_p = misfit_log_weight(pmode)                   # 'gaussian+years': half the Gaussian, half the curve
-        TH = [fit_site(sites[i]['best'], sites[i]['q'], curve_mode(pmode))[0] for i in si]
+        cmode = curve_mode(pmode) if b_p > 0 else 'years'
+        TH = [fit_site(sites[i]['best'], sites[i]['q'], cmode)[0] for i in si]
+    elif b_p > 0:                                        # no curves without the rupture set: the Gaussian alone, as before
+        b_p = 0.0
 
     def paleo_fit(yw_):
-        """chi2 over the paleo rows as the likelihood scores them: the Gaussian, or -2 ln of each site's PDF from its
-        minimum (paleo_misfit.site_misfit), as gibbs.py --paleo-misfit has it."""
+        """The misfit over the paleo rows as the likelihood scores them, and its parts (cru_common.misfit_parts): the
+        Gaussian in rate and -2 ln of each site's PDF from its minimum (paleo_misfit.site_misfit), weighted 1 - b and b, as
+        gibbs.py --paleo-misfit has it."""
+        lin_ = (yw_ - dw) ** 2
         if TH is None:
-            return float(np.sum((yw_ - dw) ** 2))
+            return misfit_parts(lin_, None, 0.0)
         with np.errstate(divide='ignore'):
             lr_ = np.log(np.maximum(yw_ / sc, 0.0))        # ln of the predicted rate per year
-        cur_ = float(sum(site_misfit(th_, sites[i]['best'], lr_[j], curve_mode(pmode)) for j, (th_, i) in enumerate(zip(TH, si))))
-        return cur_ if b_p >= 1 else (1.0 - b_p) * float(np.sum((yw_ - dw) ** 2)) + b_p * cur_
+        cur_ = np.array([float(site_misfit(th_, sites[i]['best'], lr_[j], cmode)) if np.isfinite(lr_[j]) else np.inf
+                         for j, (th_, i) in enumerate(zip(TH, si))])
+        return misfit_parts(lin_, cur_, b_p)
 
     data = []
     for path, label in sets:
@@ -225,8 +231,9 @@ def main():
                          own2=float(np.mean((y >= QR[:, 0]) & (y <= QR[:, 3]))) if phys else None,   # own ranges
                          model=model))
     mm = 'model' if all(D['model'] for D in data) else 'mean model'
-    fit_note = ((f' as the likelihood scores them (-2 ln of each site\'s recurrence-interval PDF, {pmode!r})' if b_p >= 1 else
-                 f' as the likelihood scores them (half the Gaussian, half -2 ln of each site\'s recurrence-interval PDF, {pmode!r})')
+    curve_txt = '-2 ln of each site\'s recurrence-interval PDF in years'
+    fit_note = (f' as the likelihood scores them ({pmode!r}: ' + (f'the Gaussian in rate; the curve, {curve_txt}, for comparison'
+                if b_p <= 0 else f'half the Gaussian in rate, half {curve_txt}' if b_p < 1 else curve_txt) + ')'
                 if TH is not None else '')
     ref = None
     if a.reference:                                      # another model's predictions, marked on every panel
@@ -235,14 +242,13 @@ def main():
         r = yw / sc - t
         ref.update(y=yw / sc, chi2=paleo_fit(yw), in1=float(np.mean(np.abs(r / u) <= 1)),
                    in2=float(np.mean(np.abs(r / u) <= 2)), q=np.percentile(yw / sc / t, [5, 50, 95]))
-        head.append(f'reference: {ref["label"]} ({ref["path"]}): its chi2 over the paleo rows{fit_note} {ref["chi2"]:.1f}; '
+        head.append(f'reference: {ref["label"]} ({ref["path"]}): its misfit over the paleo rows{fit_note}, {misfit_text(ref["chi2"], "years")}; '
                     f'{100 * ref["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * ref["in2"]:.0f}% '
                     f'within two; prediction / target: median {ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to '
                     f'{ref["q"][2]:.2f})' + (f'; {ref["note"]}' if ref['note'] else ''))
     rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the table
-    settings = run_settings(a.config, a.problem) if len(data) == 1 else None   # the run's settings replace the label
-    if settings and data[0]['model']:
-        settings = [('model', data[0]['model'])] + settings
+    settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
+    # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
         head.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
 
@@ -255,7 +261,7 @@ def main():
                   else 'no runs found next to the rate vectors, so no posterior spread')
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' predictions (select_draws.py)'
-        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the paleo rows{fit_note} {D["chi2"]:.1f}; '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s misfit over the paleo rows{fit_note}, {misfit_text(D["chi2"], "years")}; '
                   f'{100 * D["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two; '
                   f'prediction / target: median {rq[1]:.2f} (5-95%: {rq[0]:.2f} to {rq[2]:.2f}); {spread}; furthest from their '
                   'targets: ' + '; '.join(f'row {orig[k]} ({D["r"][k] / u[k]:+.2f} sd)' for k in D['groups'])
@@ -319,12 +325,14 @@ def main():
             + (' The axes are fixed by the targets and the best fit, the same for every model of these inputs; '
                'predictions beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
-    extra = 0.16 * note.count('\n')
+    extra = 0.16 * max(2, note.count('\n'))           # room for the note: three lines at least, so that the panels keep their size
     n_h = 4 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries
     lc = 3 if n_h > 3 else n_h
-    leg_pt = legend_height(n_h, lc) + 6
-    tab = settings_lines(settings, int(9.7 / 0.062500)) if settings else None
-    top_in, row_in, bot_in = 0.45 + leg_pt / 72, 5.6, 0.8 + extra   # figure layout, in inches
+    leg_pt = legend_height(7, 3) + 6                 # room for the fullest legend, whichever entries this one has, so
+                                                         # that the panels keep their size
+    sub_pt = 25.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    tab = settings_lines(settings) if settings else None
+    top_in, row_in, bot_in = 0.45 + (leg_pt + sub_pt) / 72, 5.6, 0.8 + extra   # figure layout, in inches
     if tab:
         top_in += max(0.0, 2 * len(tab) * 10.5 - 14.0) / 72
     fig, axs = plt.subplots(nrow, 2, figsize=(10.6, top_in + row_in * nrow + bot_in), squeeze=False, facecolor=SURFACE)
@@ -411,11 +419,13 @@ def main():
             if j == 0:
                 ax.set_ylabel(f'{mm} prediction (per year)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'{mm}: χ²{" as fitted" if TH is not None else ""} {D["chi2"]:.1f} over the {len(rows)} paleo rows; within one sd {100 * D["in1"]:.0f}%, two '
+        sub = (f'{D["label"] if len(data) > 1 else mm} over the {len(rows)} paleo rows: {misfit_text(D["chi2"], "years", fig=True)}\n'
+               + (f'{ref["label"]}: {misfit_text(ref["chi2"], "years", fig=True)}\n' if ref is not None else '')
+               + f'{D["label"] if len(data) > 1 else mm}: within one sd {100 * D["in1"]:.0f}%, two '
                f'{100 * D["in2"]:.0f}%' + (f'; within the sites\' own 15.9–84.1% ranges {100 * D["own1"]:.0f}%, 2.3–97.7% '
                                            f'{100 * D["own2"]:.0f}%' if phys else ''))
-        above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
-        if tab:
+        above = 40 + sub_pt + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
+        if tab and i == 0:                               # the settings once, above the first row
             draw_settings(axs[i][0], tab, above)
         else:
             axs[i][0].annotate(D['label'], (0, 1), xycoords='axes fraction', xytext=(0, above), textcoords='offset points',
@@ -434,7 +444,7 @@ def main():
                         f'each of the {n_k:,} kept draws\' prediction'))
     if ref is not None:
         handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.5),
-                        f'{ref["label"]} (χ² {ref["chi2"]:.1f})'))
+                        f'{ref["label"]}'))
     handles.append((Line2D([], [], color=INK, lw=1.0), 'prediction = target'))
     if phys:
         handles += [(tuple(Line2D([], [], color=c, lw=1.6, alpha=0.55) for c in few), 'the site\'s 15.9–84.1% range'),
@@ -447,11 +457,11 @@ def main():
     h_in = fig.get_size_inches()[1]
     fig.suptitle('Paleo rates: targets against the model\'s predictions', x=0.035, ha='left', color=INK, fontsize=13,
                  fontweight='bold', y=1 - 0.2 / h_in, va='top')
-    legend_above(fig, axs[0][0], handles, lc, 40, labelcolor=INK2)
+    legend_above(fig, axs[0][0], handles, lc, 40 + sub_pt, labelcolor=INK2)
     fig.text(0.5, 0.12 / h_in, note, ha='center', va='baseline' if not extra else 'bottom', color=MUTED, fontsize=8,
              linespacing=1.4)
     fig.subplots_adjust(left=0.08, right=0.98, top=1 - (top_in + 0.55) / h_in, bottom=bot_in / h_in, wspace=0.22,
-                        hspace=0.55 / (row_in - 0.55))
+                        hspace=(0.55 + sub_pt / 72) / (row_in - 0.55 - sub_pt / 72))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     with open(os.path.splitext(out)[0] + '.txt', 'w') as f:
         f.write(text + '\n')
