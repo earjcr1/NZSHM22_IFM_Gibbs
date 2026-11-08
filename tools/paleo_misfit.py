@@ -123,6 +123,44 @@ def site_moments(th, best, mode='years', n=6001):
     return E, float(w @ (m - E) ** 2)
 
 
+def curve_mode(mode):
+    """The curve of a paleo misfit mode: 'gaussian+years' -> 'years' (and 'gaussian+log' -> 'log'); 'years', 'log' as they are."""
+    return str(mode).split('+')[-1]
+
+
+def site_misfit_mixed(th, best, sd, y, mode='gaussian+years', b=0.5):
+    """A site's misfit at the row's prediction y (rate / sd, as the problem's paleo row has it), on chi2's scale, as the
+    sampler scores it with log weight b (cru_common.misfit_log_weight): (1 - b) (y - best / sd)^2, the inputs' Gaussian in
+    rate, + b x the curve's (site_misfit, in u = ln(y sd)); b = 1/2 for 'gaussian+years', the geometric mean of the two."""
+    y = np.asarray(y, float)
+    with np.errstate(divide='ignore'):
+        cur = site_misfit(th, best, np.log(np.maximum(y, 1e-300) * sd), curve_mode(mode))
+    return (1.0 - b) * (y - best / sd) ** 2 + b * cur
+
+
+def site_moments_mixed(th, best, sd, mode='gaussian+years', b=0.5, n=8001):
+    """A site's share of the fit check with log weight b: the mean and variance of site_misfit_mixed when the rate is drawn
+    from the geometric mean, with weights 1 - b and b, of the inputs' Gaussian in rate and the site's curve, both as
+    densities in u = ln rate. b = 1: site_moments; b = 0: the Gaussian's 1 and 2 (truncated at rate 0)."""
+    cm = curve_mode(mode)
+    if b >= 1.0:
+        return site_moments(th, best, cm)
+    lo = min(float(quantile_u(th, -9.0)), np.log(max(best - 9.0 * sd, best * 1e-6)))
+    hi = max(float(quantile_u(th, 9.0)), np.log(best + 9.0 * sd))
+    u = np.linspace(lo, hi, n)
+    x = np.exp(u)
+    lin = ((x - best) / sd) ** 2
+    lp_lin = -0.5 * lin + u                                         # the Gaussian in rate, as a density in u
+    f, _ = half_misfit(th, u, cm)
+    lp_cur = -f - (u if cm == 'years' else 0.0)                     # the curve's density in u (half_misfit's f, undone)
+    lw = (1.0 - b) * lp_lin + b * lp_cur
+    w = np.exp(lw - lw.max())
+    w /= w.sum()
+    m = (1.0 - b) * lin + b * site_misfit(th, best, u, cm)
+    E = float(w @ m)
+    return E, float(w @ (m - E) ** 2)
+
+
 def tables(sites, mode='years', h=GRID_H):
     """Each site's tabulated half misfit for the kernel: dict of U0 (grid start in u = ln rate), H (step), NG (points
     per site), F and DF (values and slopes, sites one after another; F 0 at the minimum, ln best), KAPPA (the largest

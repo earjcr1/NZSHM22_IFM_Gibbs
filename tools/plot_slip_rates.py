@@ -167,11 +167,12 @@ def main():
     sw = (lambda e: np.sqrt(split_weights(P, rep_row, e)) * e) if rep_row is not None else (lambda e: e)   # share its sds)
     chi_w = lambda yw_: float(np.sum(split_weights(P, rows, yw_ - dw) * (yw_ - dw) ** 2))   # chi2 as the likelihood counts it
     cfg_ = run_config(a.config, a.problem) or {}
-    geo_tau = None                                       # SLIP_MISFIT 'split+log10': half the split normal, half the log10
-    if cfg_.get('slip_misfit') == 'split+log10':
-        from cru_common import slip_geo_rows
-        geo_tau = True
-        chi_w = lambda yw_: float(np.sum(slip_geo_rows(P, rows, yw_)))
+    geo_tau = None                                       # the slip rows in log10 too (MISFIT 'half', 'log10'): (1 - b) x the
+    if (cfg_.get('slip_misfit') or 'split') != 'split':  # split normal + b x the log10 Gaussian, with the same sds
+        from cru_common import misfit_log_weight, slip_geo_rows
+        geo_b = misfit_log_weight(cfg_['slip_misfit'])
+        geo_tau = cfg_['slip_misfit']
+        chi_w = lambda yw_: float(np.sum(slip_geo_rows(P, rows, yw_, geo_b)))
     rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
@@ -255,7 +256,7 @@ def main():
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' section means (select_draws.py)'
         lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them'
-                  + (' (half the split normal plus half a log10 Gaussian with the same sds)' if geo_tau else '') + ', '
+                  + (f' ({geo_tau}: the log10 Gaussian with the split normal\'s sds)' if geo_tau else '') + ', '
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
                   f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); {spread}; furthest from their targets: '

@@ -138,6 +138,18 @@ plus T.lw['SM'] (rows, s_lo, s_hi, d_data, E, V, t2, t4 from cru_common.slip_geo
 the slip rows; tr['slip_geo_s', 'slip_geo_expect']; selftest_slipgeo (grid integral, a lopsided row, both backends, misfit
 recorded); block_fit, best_fit_as_fitted (--slip-misfit; fitted file records it, and --init fitted checks it),
 plot_slip_rates (from the config) use cru_common.slip_geo_rows.
+MISFIT (2026-11-10, the user's request: half linear / half log for every group, one setting): 'linear' | 'log10' | 'half'
+(default) -> (slip, mfd, paleo) modes via MISFIT_MODES (cru_common; the notebook has its copy MISFIT_MODES_ and derives
+SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT from it; CONFIG records misfit and the three). misfit_log_weight(mode) = b: 0 linear,
+1/2 any 'a+b', 1 log ('log10', 'years', 'log'). Paleo: linear = the inputs' Gaussian in rate, log = the years curve. gibbs.py:
+lin_sc(b) scales each group's rows (1, 1/sqrt 2, PALEO_EPS), lin_cut(b) the swap pairs' inner products; slip/MFD log via
+T.lw W (x b; slip sided WL), paleo via PM tables F, D, K x b (V0 uses ln(sd / scale)); SM/MF/PM dicts carry b and eps;
+recording: paleo_misfit = 2 sum f / b (the whole curve), mfd_misfit, slip_log (whole), misfit += b (log - Gaussian) per group;
+tr slip_geo_b, mfd_log_b, mfd_log_expect, paleo_b. Fit check: geo_moments(P, rows, b, kind) (density on a log10 grid
+exp(-m1/2) x^(1-b)), paleo_misfit.site_moments_mixed (b < 1). --all-positive (the notebook always): slip_band and
+paleo_band positive unless a factor, MFD bins positive (g_mfd in set_groups). SLIP_BAND None and SLIP_BAND_SOFT with
+MISFIT != 'linear' raise in the notebook. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
+in the full set. run_quick_checks pins MISFIT='linear', SLIP_BAND='positive' (TESTING.md's values predate positivity).
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /

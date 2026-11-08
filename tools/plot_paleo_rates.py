@@ -185,8 +185,10 @@ def main():
     pmode = cfg_.get('paleo_misfit') or 'gaussian'
     TH = None                                            # with PALEO_MISFIT 'years' (and the rupture set): each site's curve
     if phys and pmode != 'gaussian':
-        from paleo_misfit import fit_site, site_misfit
-        TH = [fit_site(sites[i]['best'], sites[i]['q'], pmode)[0] for i in si]
+        from cru_common import misfit_log_weight
+        from paleo_misfit import curve_mode, fit_site, site_misfit
+        b_p = misfit_log_weight(pmode)                   # 'gaussian+years': half the Gaussian, half the curve
+        TH = [fit_site(sites[i]['best'], sites[i]['q'], curve_mode(pmode))[0] for i in si]
 
     def paleo_fit(yw_):
         """chi2 over the paleo rows as the likelihood scores them: the Gaussian, or -2 ln of each site's PDF from its
@@ -195,7 +197,8 @@ def main():
             return float(np.sum((yw_ - dw) ** 2))
         with np.errstate(divide='ignore'):
             lr_ = np.log(np.maximum(yw_ / sc, 0.0))        # ln of the predicted rate per year
-        return float(sum(site_misfit(th_, sites[i]['best'], lr_[j], pmode) for j, (th_, i) in enumerate(zip(TH, si))))
+        cur_ = float(sum(site_misfit(th_, sites[i]['best'], lr_[j], curve_mode(pmode)) for j, (th_, i) in enumerate(zip(TH, si))))
+        return cur_ if b_p >= 1 else (1.0 - b_p) * float(np.sum((yw_ - dw) ** 2)) + b_p * cur_
 
     data = []
     for path, label in sets:
@@ -222,7 +225,8 @@ def main():
                          own2=float(np.mean((y >= QR[:, 0]) & (y <= QR[:, 3]))) if phys else None,   # own ranges
                          model=model))
     mm = 'model' if all(D['model'] for D in data) else 'mean model'
-    fit_note = (f' as the likelihood scores them (-2 ln of each site\'s recurrence-interval PDF, PALEO_MISFIT {pmode!r})'
+    fit_note = ((f' as the likelihood scores them (-2 ln of each site\'s recurrence-interval PDF, {pmode!r})' if b_p >= 1 else
+                 f' as the likelihood scores them (half the Gaussian, half -2 ln of each site\'s recurrence-interval PDF, {pmode!r})')
                 if TH is not None else '')
     ref = None
     if a.reference:                                      # another model's predictions, marked on every panel

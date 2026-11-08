@@ -162,16 +162,20 @@ def main():
         head.append(f'order check skipped: no row block named {a.slip_block!r}')
 
     cfg_ = run_config(a.config, a.problem) or {}
-    mlog = cfg_.get('mfd_misfit') == 'log10'           # the bins scored in log10 (gibbs.py --mfd-misfit log10)
+    from cru_common import misfit_log_weight
+    mmode = cfg_.get('mfd_misfit') or 'gaussian'
+    mlog = mmode != 'gaussian'                         # the bins scored in log10 (gibbs.py --mfd-misfit log10, gaussian+log10)
+    b_m = misfit_log_weight(mmode)
     s_log = np.log10(1.0 + 1.0 / P['d'][rows])         # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
 
     def bins_fit(m_):
-        """chi2 over the bin rows as the likelihood scores them: the Gaussian, or (log10(total / R_j) / s_j)^2."""
+        """chi2 over the bin rows as the likelihood scores them: (1 - b) x the Gaussian + b x (log10(total / R_j) / s_j)^2."""
         y_ = Gr[rows] @ m_
+        g_ = float(np.sum((y_ - P['d'][rows]) ** 2))
         if mlog:
             with np.errstate(divide='ignore'):
-                return float(np.sum((np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2))
-        return float(np.sum((y_ - P['d'][rows]) ** 2))
+                return (1.0 - b_m) * g_ + b_m * float(np.sum((np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2))
+        return g_
 
     data = []
     for path, label in sets:
@@ -228,7 +232,7 @@ def main():
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' bin totals (select_draws.py)'
         lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s chi2 over the {B} '
-                  f'magnitude-bin rows, as the likelihood weights them{" (in log10, MFD_MISFIT)" if mlog else ""}, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
+                  f'magnitude-bin rows, as the likelihood weights them{f" ({mmode})" if mlog else ""}, {D["chi2"]:.1f}; {D["pen"]:,} penalised ruptures '
                   f'(rate 0 by construction) not shown; {spread}',
                   f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
                   f'{"total: 16%":>11s} {"50%":>10s} {"84%":>10s} '
@@ -373,7 +377,7 @@ def main():
             draw_settings(ax, tab, 20 + leg_pt)
         else:
             ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20 + leg_pt)
-        ax.annotate(f'χ²{" as fitted" if mlog else ""} {D["chi2"]:.1f} over the {B} magnitude bins{" (in log10)" if mlog else ""}; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
+        ax.annotate(f'χ²{" as fitted" if mlog else ""} {D["chi2"]:.1f} over the {B} magnitude bins{f" ({mmode})" if mlog else ""}; {n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
                     color=INK2, fontsize=8.5)

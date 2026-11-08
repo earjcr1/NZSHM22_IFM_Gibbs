@@ -149,12 +149,13 @@ check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['F
 check(re.findall(r'^SLIP_BAND = (\S+)', cells[0][1], re.M) == ["'positive'"]
       and not re.findall(r'^PALEO_BAND', cells[0][1], re.M) and "pa_b = 'positive'" in src['gibbs.py']
       and 'slip_band' in _cfg_keys and not re.findall(r'^BAND = ', cells[0][1], re.M)
-      and any("args += ['--slip-band', SLIP_BAND]" in c for _, c in cells)
+      and any("args += ['--slip-band', SLIP_BAND]" in c and "args += ['--all-positive']" in c for _, c in cells)
+      and "ap.add_argument('--all-positive'" in src['gibbs.py']
       and "'--slip-band'" in src['gibbs.py'] and "'--paleo-band'" in src['gibbs.py'] and '    def set_groups(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
       "notebook SLIP_BAND = 'positive' (the slip-rate predictions above zero; a number: within that factor of "
-      'its target; the paleo rows kept above zero by PALEO_MISFIT = \'years\' itself; the MFD bins get none), recorded and passed '
-      'to gibbs.py --slip-band (Target.set_groups; --paleo-band a command-line option), '
+      'its target; None gone since 2026-11-10), recorded and passed to gibbs.py --slip-band, with --all-positive (every slip-rate, '
+      'paleo and MFD prediction above zero; Target.set_groups; --paleo-band a command-line option), '
       'with the band\'s exact test in both self-test sets and set_groups checked against set_positive and set_band')
 check(not re.findall(r'^MFD_MONOTONIC = ', cells[0][1], re.M) and 'mfd_monotonic' not in _cfg_keys
       and not any('--mfd-monotonic' in c or 'MFD_RISE_SD' in c for _, c in cells)
@@ -203,21 +204,21 @@ check(re.findall(r'^SLIP_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
       'notebook SLIP_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
       '--slip-log-band (--paleo-log-band a command-line option; with that group\'s positivity; kept by a Metropolis step in the kernel, its '
       'exact test in the full self-test set)')
-check(re.findall(r'^PALEO_MISFIT = (\S+)', cells[0][1], re.M) == ["'years'"] and 'paleo_misfit' in _cfg_keys
-      and any("args += ['--paleo-misfit', PALEO_MISFIT]" in c for _, c in cells)
-      and "'--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log']" in src['gibbs.py']
-      and src['gibbs.py'].count('ok &= selftest_paleo()') == 1 and 'static double pm_f(' in src['gibbs.py']
-      and '\ndef fit_site(' in src['paleo_misfit.py'] and '\ndef tables(' in src['paleo_misfit.py'],
-      "notebook PALEO_MISFIT = 'years' (by default since 2026-11-05, each site's recurrence-interval PDF; 'gaussian': the inputs', "
-      'paleo_misfit.py\'s curves), recorded and passed to gibbs.py --paleo-misfit, with its exact test in the full '
-      'self-test set')
-check(re.findall(r'^MFD_MISFIT = (\S+)', cells[0][1], re.M) == ["'gaussian'"] and 'mfd_misfit' in _cfg_keys
-      and any("args += ['--mfd-misfit', MFD_MISFIT]" in c for _, c in cells)
-      and "'--mfd-misfit', default='gaussian', choices=['gaussian', 'log10']" in src['gibbs.py']
-      and src['gibbs.py'].count('ok &= selftest_mfdlog()') == 1 and "'mfd_log_s' in z.files" in src['block_fit.py'],
-      "notebook MFD_MISFIT = 'gaussian' (the inputs' Gaussian by default; 'log10': each bin's total scored in log10, its "
-      'positivity kept), recorded and passed to gibbs.py --mfd-misfit, with its exact test in the full self-test set and '
-      'block_fit.py scoring the bins as the run did')
+check(re.findall(r'^MISFIT = (\S+)', cells[0][1], re.M) == ["'half'"] and {'misfit', 'paleo_misfit', 'mfd_misfit', 'slip_misfit'} <= set(_cfg_keys)
+      and 'SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT = MISFIT_MODES_[MISFIT]' in cells[0][1]
+      and all(f"args += ['--{g_}-misfit', {g_.upper()}_MISFIT]" in ''.join(c for _, c in cells) for g_ in ('paleo', 'mfd', 'slip'))
+      and "choices=['gaussian', 'years', 'log', 'gaussian+years', 'gaussian+log']" in src['gibbs.py']
+      and "choices=['gaussian', 'log10', 'gaussian+log10']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10']" in src['gibbs.py']
+      and "'half': ('split+log10', 'gaussian+log10', 'gaussian+years')" in src['cru_common.py']
+      and "'half': ('split+log10', 'gaussian+log10', 'gaussian+years')" in cells[0][1]
+      and all(src['gibbs.py'].count(t_) == 1 for t_ in ('ok &= selftest_paleo()', 'ok &= selftest_paleo(b=0.5)', 'ok &= selftest_mfdlog()',
+                                                         'ok &= selftest_mfdlog(b=0.5)', 'ok &= selftest_slipgeo()', 'ok &= selftest_slipgeo(b=1.0)'))
+      and 'static double pm_f(' in src['gibbs.py'] and '\ndef fit_site(' in src['paleo_misfit.py'] and '\ndef tables(' in src['paleo_misfit.py']
+      and '\ndef site_moments_mixed(' in src['paleo_misfit.py'] and "'mfd_log_s' in z.files" in src['block_fit.py'],
+      "notebook MISFIT = 'half' (by default since 2026-11-10: every group half linear, half log, with its own effective sd; "
+      "'linear', 'log10'), recorded with each group's mode (cru_common.MISFIT_MODES) and passed to gibbs.py --slip-misfit, "
+      '--mfd-misfit and --paleo-misfit, with exact tests of each group\'s log and half modes in the full self-test set and '
+      'block_fit.py scoring each group as the run did')
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and any("args += ['--cfm-sliprates', os.path.expanduser(CFM_FILE)]" in c and "if not SLIP_AS_GIVEN:" in c
           and "'--slip-sd-multiplier', str(SLIP_SD_MULTIPLIER)" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
@@ -355,7 +356,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND', 'SLIP_BAND_SOFT',
-                  'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_MISFIT', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
+                  'MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
@@ -376,7 +377,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'PALEO_MISFIT', 'MFD_MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_MISFIT', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('SLIP_BAND', 'SLIP_BAND_SOFT', 'MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
