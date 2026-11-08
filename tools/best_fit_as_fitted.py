@@ -25,7 +25,7 @@ import time
 import numpy as np
 from scipy.optimize import minimize
 
-from cru_common import load_problem, report_to, split_weights
+from cru_common import load_problem, report_to, slip_log_sds, split_weights
 
 LN10 = np.log(10.0)
 
@@ -59,7 +59,7 @@ def nnls_key(m):
     return hashlib.sha1(np.ascontiguousarray(m, np.float64).tobytes()).hexdigest()
 
 
-def make_objective(P, G, pal, mlog, mode):
+def make_objective(P, G, pal, mlog, mode, geo=None):
     """The misfit as fitted, on chi2's scale, and its gradient in the rates; and a function giving it by row block."""
     from paleo_misfit import half_misfit
     from paleo_misfit import GRID_HI, GRID_LO
@@ -78,6 +78,10 @@ def make_objective(P, G, pal, mlog, mode):
         gauss[m_rows] = False
         s_log = np.log10(1.0 + 1.0 / d[m_rows])           # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
     g_rows = np.flatnonzero(gauss)
+    s_rows = np.zeros(0, np.int64)                        # --slip-misfit split+log10: the slip rows, their log10 sds each
+    if geo is not None:                                   # side (their effective sds', as gibbs.py has them) and 1/k
+        s_rows = geo
+        s_lo, s_hi, wk = slip_log_sds(P, s_rows)[:3]
     GT = G.T.tocsr()
 
     def parts(y):
@@ -87,6 +91,13 @@ def make_objective(P, G, pal, mlog, mode):
         w = split_weights(P, g_rows, r)                   # the CFM slip rates: each side's weight (1 elsewhere)
         f[g_rows] = w * r * r / sig2
         g[g_rows] = 2.0 * w * r / sig2
+        if len(s_rows):                                   # half the split normal plus half the log10 Gaussian
+            ys = y[s_rows]
+            u = np.log10(ys / d[s_rows])
+            sd_ = np.where(u < 0, s_lo, s_hi)
+            q = u / sd_
+            f[s_rows] = 0.5 * f[s_rows] + 0.5 * wk * q * q
+            g[s_rows] = 0.5 * g[s_rows] + wk * q / (sd_ * LN10 * ys)
         for j, i in enumerate(p_rows):                    # -2 ln of each site's PDF, from its minimum (site_misfit)
             th, ub = TH[j], UB[j]
             u = np.log(y[i] * SD[j])
@@ -102,7 +113,7 @@ def make_objective(P, G, pal, mlog, mode):
 
     def fun(m):
         y = G @ m
-        if (y[p_rows] <= 0).any() or (y[m_rows] <= 0).any():
+        if (y[p_rows] <= 0).any() or (y[m_rows] <= 0).any() or (y[s_rows] <= 0).any():
             return np.inf, np.zeros_like(m)
         f, g = parts(y)
         return float(f.sum()), GT @ g
@@ -126,6 +137,9 @@ def main():
     ap.add_argument('--mfd-misfit', default='gaussian', choices=['gaussian', 'log10'],
                     help="the MFD bins' misfit, as gibbs.py --mfd-misfit (default gaussian)")
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin rows (default MFD)')
+    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10'],
+                    help="the slip-rate rows' misfit, as gibbs.py --slip-misfit (default split)")
+    ap.add_argument('--slip-block', default='S', help='the slip-rate rows (default S)')
     ap.add_argument('--lower', type=float, default=1e-20, help='the least rate (default 1e-20), so every prediction stays above zero')
     ap.add_argument('--max-iter', type=int, default=20000, help='L-BFGS-B iterations at most (default 20000)')
     ap.add_argument('--tol', type=float, default=0.01, help='stop once the misfit falls by less than this (on chi2\'s scale) '
@@ -153,10 +167,16 @@ def main():
         if a.bins_block not in P['block_names']:
             raise SystemExit(f'--mfd-misfit log10: no row block named {a.bins_block!r}')
         mlog = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.bins_block))
-    fun, by_block = make_objective(P, G, pal, mlog, a.paleo_misfit)
+    geo = None
+    if a.slip_misfit == 'split+log10':
+        if a.slip_block not in P['block_names']:
+            raise SystemExit(f'--slip-misfit split+log10: no row block named {a.slip_block!r}')
+        geo = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
+    fun, by_block = make_objective(P, G, pal, mlog, a.paleo_misfit, geo)
     f0, _ = fun(m0)
     b0 = by_block(m0)
-    how = ', '.join(w for w, on in (('the slip rates by their split normals', P.get('split_lo2') is not None),
+    how = ', '.join(w for w, on in (('the slip rates by half their split normal plus half a log10 Gaussian with the same sds', geo is not None),
+                                    ('the slip rates by their split normals', geo is None and P.get('split_lo2') is not None),
                                     (f'the paleo rows by their sites\' PDFs ({a.paleo_misfit})', pal is not None),
                                     ('the MFD bins in log10', mlog is not None)) if on) or 'every row Gaussian'
     print(f'best fit as fitted: {G.shape[0]} rows x {G.shape[1]} ruptures; the misfit as the sampler scores it ({how}); '
@@ -191,7 +211,8 @@ def main():
     np.savez(out + '.npz', mean=full, penalised=z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int),
              model=np.array('best fit as fitted'), misfit=np.array(r.fun), misfit_nnls=np.array(f0),
              nnls_key=np.array(nnls_key(np.asarray(z0['mean'], float)[keep_c])),
-             paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit))
+             paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit),
+             slip_misfit=np.array(a.slip_misfit))
     with open(out + '.csv', 'w') as fh:
         fh.write('rupture,penalised,best_fit_as_fitted\n')
         pen = z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int)

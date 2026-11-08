@@ -33,7 +33,7 @@ import tempfile
 
 import numpy as np
 
-from cru_common import block_labels, block_measurements, ess, load_problem, split_rhat, split_weights, report_to
+from cru_common import block_labels, block_measurements, ess, load_problem, slip_geo_rows, split_rhat, split_weights, report_to
 
 
 def run_file(r):
@@ -49,6 +49,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     per_run, S1, S2, nd, shapes = [], np.zeros(N), np.zeros(N), 0, []
     LOG = {}                                                          # --mfd-misfit log10: each row's log width s, by row
     PAL = {}                                                          # --paleo-misfit: each row's site curve, by row
+    GEO = None                                                        # --slip-misfit split+log10: (tau, fit-check mean, variance)
     for r in runs:
         z = np.load(run_file(r))
         if 'y' not in z.files:
@@ -66,7 +67,12 @@ def block_stats(P, runs, first=('S', 'MFD')):
             for j_, r_ in enumerate(z['paleo_rows'].tolist()):
                 PAL[int(r_)] = (z['paleo_th'][j_], float(z['paleo_best'][j_]), float(z['paleo_sd'][j_]), mode_,
                                 float(z['paleo_E'][j_]), float(z['paleo_V'][j_]))
+        if 'slip_geo_expect' in z.files:                              # the run scored the slip rows by split+log10
+            GEO = (None, float(z['slip_geo_expect'][0]), float(z['slip_geo_expect'][1]))
         for m in meas:
+            if GEO and m['name'] == first[0]:                         # half the split normal plus half the log10 Gaussian
+                c[m['name']] = np.sum(slip_geo_rows(P, m['rows'], y[:, :, m['rows']].astype(np.float64)), axis=2)
+                continue
             if PAL and all(int(i) in PAL for i in m['rows']):         # -2 ln of each site's PDF, as the run's likelihood
                 c[m['name']] = paleo_misfit_rows(PAL, m['rows'], y[:, :, m['rows']].astype(np.float64))
                 continue
@@ -87,6 +93,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
         nd += y.shape[0] * y.shape[1]
         shapes.append(y.shape[:2])
     ybar = S1 / nd
+    slip_rows = next((m['rows'] for m in meas if m['name'] == first[0]), np.zeros(0, np.int64))
     var = np.maximum(S2 / nd - ybar ** 2, 0.0)
     same_len = len({s[1] for s in shapes}) == 1
 
@@ -99,7 +106,10 @@ def block_stats(P, runs, first=('S', 'MFD')):
         out = dict(mean=float(allx.mean()), sd=float(allx.std()), mcse=float(allx.std() / np.sqrt(sum(n_eff))),
                    rhat=rh, by_run=[float(x.mean()) for x in x_runs],
                    mcse_by_run=[float(x.std() / np.sqrt(e)) for x, e in zip(x_runs, n_eff)])
-        if rows is not None and PAL and all(int(i) in PAL for i in rows):   # the paleo sites' curves: the mean model's own,
+        if rows is not None and GEO and len(rows) == len(slip_rows) and np.array_equal(rows, slip_rows):   # split+log10
+            mm = float(np.sum(slip_geo_rows(P, rows, ybar[rows])))
+            out.update(mean_model=mm, spread=float(allx.mean()) - mm)
+        elif rows is not None and PAL and all(int(i) in PAL for i in rows):   # the paleo sites' curves: the mean model's own,
             mm = float(paleo_misfit_rows(PAL, rows, ybar[rows]))              # the spread the rest of the mean
             out.update(mean_model=mm, spread=float(allx.mean()) - mm)
         elif rows is not None and LOG and all(int(i) in LOG for i in rows):   # the bins in log10: the mean model's own,
@@ -118,6 +128,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
 
     stats = {}
     for m in meas:
+        if GEO and m['name'] == first[0]:                             # each slip section's share, from its own curve
+            m['expect'], m['sd'] = GEO[1], float(np.sqrt(GEO[2]))
         if PAL and all(int(i) in PAL for i in m['rows']):             # each site's share of the fit check, as fitted
             m['expect'] = float(sum(PAL[int(i)][4] for i in m['rows']))
             m['sd'] = float(np.sqrt(sum(PAL[int(i)][5] for i in m['rows'])))
@@ -126,12 +138,14 @@ def block_stats(P, runs, first=('S', 'MFD')):
         stats[m['name']] = s
     allrows = np.concatenate([m['rows'] for m in meas])
     tot = summary([sum(c.values()) for c in per_run], allrows)
-    if LOG or PAL:                                                    # log10 bins or paleo curves: the blocks' mean models added up
+    if LOG or PAL or GEO:                                             # misfits as fitted: the blocks' mean models added up
         tot['mean_model'] = float(sum(st_['mean_model'] for st_ in stats.values()))
         tot['spread'] = tot['mean'] - tot['mean_model']
     tot.update(rows=len(allrows), measurements=sum(m['expect'] for m in meas),
                meas_sd=float(np.sqrt(sum(m['sd'] ** 2 for m in meas))))
-    tot['fitted'] = [w_ for w_, on_ in (('the MFD bins in log10', LOG), ('the paleo sites by -2 ln of their recurrence-interval PDFs', PAL)) if on_]
+    tot['fitted'] = [w_ for w_, on_ in ((f'the slip rates by half their split normal plus half a log10 Gaussian (sd {GEO[0]:g} '
+                                          'decades)' if GEO else '', GEO), ('the MFD bins in log10', LOG),
+                                        ('the paleo sites by -2 ln of their recurrence-interval PDFs', PAL)) if on_]
     return stats, tot, shapes
 
 

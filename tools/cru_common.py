@@ -99,6 +99,76 @@ def split_weights(P, rows, res):
     return np.where(res < 0, P['split_lo2'][rows], P['split_hi2'][rows])
 
 
+def slip_log_sds(P, rows):
+    """--slip-misfit split+log10: each slip-rate row's log10 sds below and above its target, from the row's own effective
+    sd, as the MFD bins' in log10 (--mfd-misfit log10): s = log10(1 + sigma_eff / target), sigma_eff the split normal's sd on
+    that side over the row's template weight t (--cfm-template-rho, --cfm-rate-links: sd / t, as the linear half has it),
+    so each row's log10 half and linear half share one sd; sigma_eff here is the whole propagated sd (the CFM's ranges, the
+    doubling, the slip-rate factor, the rounding, the correlations' weights). The section's k copies are not an uncertainty:
+    each row's log10 half counts 1/k, as its linear half does. Returns (s_lo, s_hi, 1/k, t, s1_lo, s1_hi): s1 the sds at
+    t = 1, for the fit check."""
+    rows = np.asarray(rows)
+    rs = np.asarray(P['row_scale'], float)[rows]
+    t = np.asarray(P['template_scale'], float)[rows] if P.get('template_scale') is not None else np.ones(len(rows))
+    L2 = np.asarray(P['split_lo2'], float)[rows] if P.get('split_lo2') is not None else np.ones(len(rows))
+    H2 = np.asarray(P['split_hi2'], float)[rows] if P.get('split_hi2') is not None else np.ones(len(rows))
+    D1 = np.asarray(P['d'], float)[rows] / (rs * float(P['sigma']))   # target / sigma_ref, each row's own
+    lo1, hi1 = 1.0 / (D1 * np.sqrt(L2)), 1.0 / (D1 * np.sqrt(H2))     # sd / target, below and above
+    return (np.log10(1.0 + lo1 / t), np.log10(1.0 + hi1 / t), (rs / t) ** 2, t, np.log10(1.0 + lo1), np.log10(1.0 + hi1))
+
+
+def slip_geo_rows(P, rows, y):
+    """--slip-misfit split+log10, on chi2's scale, for each slip-rate row (any leading shape of y, the rows' predictions
+    as the problem gives them): half the linear misfit (the split normal's, each side's own weight) plus half the log10
+    Gaussian's, (1/k) (log10(y / d) / s)^2 with s the row's log10 sd on the prediction's side (slip_log_sds: its effective
+    sd's, so both halves share one sd). The geometric mean of the two densities: each section one measurement."""
+    d = np.asarray(P['d'], float)[rows]
+    r = np.asarray(y, float) - d
+    lin = split_weights(P, rows, r) * r * r / float(P['sigma']) ** 2
+    s_lo, s_hi, wk = slip_log_sds(P, rows)[:3]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        u = np.log10(np.maximum(np.asarray(y, float), 0.0) / d)
+        lg = wk * (u / np.where(u < 0, s_lo, s_hi)) ** 2
+    return 0.5 * lin + 0.5 * lg
+
+
+def slip_geo_moments(P, rows, n=4001):
+    """--slip-misfit split+log10: each slip-rate section's share of the fit check, the mean and variance of its misfit
+    when its prediction is drawn from its own curve at t = 1, p(x) ~ exp(-m1(x) / 2), m1(x) = w (x - D)^2 / 2 +
+    (log10(x / D) / s1)^2 / 2, and scored as the likelihood scores it, m(x) = t^2 w (x - D)^2 / 2 + (log10(x / D) / s)^2 / 2
+    (x and D the prediction and target in units of sigma_ref; s1 and s the side's log10 sds at t = 1 and at the section's
+    template weight t; a Gaussian section's share is t^2 and its variance 2 t^4, as cleaning counts it). Returns (sum of
+    means, sum of variances, number of sections, sum of t^2, sum of t^4)."""
+    rows = np.asarray(rows)
+    sec = np.asarray(P['section'])[rows]
+    rs = np.asarray(P['row_scale'], float)[rows]
+    d = np.asarray(P['d'], float)[rows]
+    s_lo, s_hi, _, tsc, s1_lo, s1_hi = slip_log_sds(P, rows)
+    L2 = np.asarray(P['split_lo2'], float)[rows] if P.get('split_lo2') is not None else np.ones(len(rows))
+    H2 = np.asarray(P['split_hi2'], float)[rows] if P.get('split_hi2') is not None else np.ones(len(rows))
+    key = np.where(sec >= 0, sec, -1 - np.arange(len(rows)))       # a row outside any section is its own
+    _, first = np.unique(key, return_index=True)
+    E = V = t2 = t4 = 0.0
+    for i in first:
+        D, t = d[i] / (rs[i] * float(P['sigma'])), tsc[i]
+        um = min(4.0, 12.0 * max(s1_lo[i], s1_hi[i]))              # log10(x / D), to 12 of the wider side's sds
+        u = np.linspace(-um, um, n)
+        x = D * 10.0 ** u
+        e = x - D
+        lo = e < 0
+        q = 0.5 * np.where(lo, L2[i], H2[i]) * e * e
+        m1 = q + 0.5 * (u / np.where(lo, s1_lo[i], s1_hi[i])) ** 2
+        m = t * t * q + 0.5 * (u / np.where(lo, s_lo[i], s_hi[i])) ** 2
+        w = np.exp(-0.5 * (m1 - m1.min())) * x                     # the density in x, on a grid in u (dx = x ln10 du)
+        w /= w.sum()
+        Em = float(w @ m)
+        E += Em
+        V += float(w @ (m - Em) ** 2)
+        t2 += t * t
+        t4 += t ** 4
+    return E, V, len(first), t2, t4
+
+
 def slip_sections(G, d, rows, keep_rows=None, spec='auto', rtol=1e-9, parents=None):
     """Group the slip-rate rows `rows` (cleaned indices, in order) into fault sections, each one measurement.
 
@@ -672,7 +742,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('SLIP_BAND', 'slip_band'), ('SLIP_BAND_SOFT', 'slip_band_soft'), ('PALEO_BAND', 'paleo_band'), ('PALEO_BAND_SOFT', 'paleo_band_soft'), ('PALEO_MISFIT', 'paleo_misfit'), ('MFD_MISFIT', 'mfd_misfit'), ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'), ('SLIP_MISFIT', 'slip_misfit'), ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'), ('BAND', 'band'), ('BAND_SOFT', 'band_soft'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR
 
 

@@ -127,7 +127,17 @@ on the kept columns, or paleo_misfit / mfd_misfit differ from the run's); no vis
 fitted reaches the posterior's ~1,100-1,250 within 8 sweeps from either start). SEED (2026-11-06, the user's request
 after two identical conservative runs, _1793870170 and _1793899188): None -> _T0, the start time in the run name;
 replicate_seed(r) = SeedSequence([SEED_USED, r]).generate_state(1)[0], or 101 + r with 'legacy' (run_quick_checks pins it);
-recorded as CONFIG['seed'].
+recorded as CONFIG['seed']. SLIP_MISFIT 'split+log10' (2026-11-09, the user's option 2; the log sd is not a setting: the user asked for the same effective sd
+as the linear half, as MFD_MISFIT log10): cru_common.slip_log_sds gives each row s_lo, s_hi = log10(1 + sd_side/(t target)), t the
+template weight, and 1/k = (row_scale/t)^2; gibbs.py --slip-misfit split+log10: slip rows (and d) scaled by 1/sqrt 2 beside the
+paleo/MFD scaling, swap pairs' inner products less half the slip rows' share, T.lw built as the soft band with SIDED weights
+(W above the target, WL below, each (1/k)/(4 (s ln10)^2); the kernel's LWL pointer, NULL otherwise so other runs are
+bit-identical; lw_coef's sided bounds; _lw_sq is the NumPy twin), LD = ln T.d, tau = ones (log_band_out counts rows 10x off),
+plus T.lw['SM'] (rows, s_lo, s_hi, d_data, E, V, t2, t4 from cru_common.slip_geo_moments); exclusive with every soft band;
+--slip-band positive set automatically; recorded predictions unscaled (y *= sqrt 2); misfit += log_band - 0.5 sum C_ over
+the slip rows; tr['slip_geo_s', 'slip_geo_expect']; selftest_slipgeo (grid integral, a lopsided row, both backends, misfit
+recorded); block_fit, best_fit_as_fitted (--slip-misfit; fitted file records it, and --init fitted checks it),
+plot_slip_rates (from the config) use cru_common.slip_geo_rows.
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
@@ -162,7 +172,7 @@ each split normal shifted, sds kept, so that its median is f x SR_pref (rebuild'
 a = s_lo/(s_lo+s_hi): median - mode = s_hi Phi^-1(0.5 + (0.5-a)/(2(1-a))) for a < 0.5, -s_lo Phi^-1(1 - 1/(4a)) for
 a > 0.5); faults whose mode would fall at or below 0 keep the mode (18 at 211k), listed in the cleaning report; recorded
 as the fourth entry of the problem's cfm_sliprates. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
-2 by default; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
+3 by default since 2026-11-09, 2 before, the user's choice after a colleague's new work; the scripts' own default without the option stays 2; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
 multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
 K x F x its uncertainty: the CFM's sides (rebuild's srf and factor) or, without --cfm-sliprates, the inputs' Gaussians
 (cfm_sliprates.rescale_inputs: sd K x F x SD; their own convention, checked, is target 0.8 x SlipRate, sd 2 x SD, the

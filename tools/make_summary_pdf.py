@@ -136,6 +136,7 @@ def main():
     ctmpl = cfg.get('cfm_template_rho')                # template groups' correlation, or None
     clinks = bool(cfg.get('cfm_rate_links'))           # with ctmpl, also the faults whose rate the CFM borrowed
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
+    smis = cfg.get('slip_misfit') or 'split'            # the slip rows' misfit: the split normal, or half it plus half log10
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
     if grp:
         isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -302,7 +303,7 @@ def main():
 
     sr = read(os.path.join(PR, 'fig_slip_rates.txt'))
     s_chi2, s_in1, s_in2, s_med = grab(sr, r'^' + re.escape(a.prior) + r' \(.*?chi2 over the slip-rate rows, as the '
-                                       r'likelihood weights them, ([\d.]+); (\d+)% of sections within one .*?(\d+)% within '
+                                       r'likelihood weights them(?: \([^)]*\))?, ([\d.]+); (\d+)% of sections within one .*?(\d+)% within '
                                        r'two.*?median ([\d.]+)', 'slip-rate fit', float, (1, 2, 3, 4))
     r_schi2, r_sin1 = grab(sr, r'^reference: .*?as the likelihood weights them, ([\d.]+); (\d+)% of sections within one',
                            'reference slip-rate fit', float, (1, 2)) if ref else (None, None)
@@ -483,6 +484,11 @@ def main():
                     'faults of quality codes 2\u20135 sharing an identical SR_pref / SR_min / SR_max treated as correlated, '
                     f'each one\u2019s rows weighted 1/\u221a(1 + (n \u2212 1) \u00d7 {float(ctmpl):g}) for a group of n' if ctmpl is not None
                     else 'every fault\u2019s slip rate an independent measurement'],
+                   ['SLIP_MISFIT', repr(smis), 'half the slip rates\u2019 split normal plus half a Gaussian in log10(prediction / '
+                    'target) with the same sd, log10(1 + sd / target) on each side (sd the side\u2019s effective sd, the template '
+                    'weights\u2019 included, as MFD_MISFIT \'log10\' has the bins\u2019): the geometric mean of the two, so an order '
+                    'of magnitude off is unlikely, two far more so'
+                    if smis != 'split' else 'the split normal (or the inputs\u2019 Gaussian) alone'],
                    ['CFM_RATE_LINKS', str(clinks), 'also the faults of any quality code whose rate the CFM borrowed from '
                     'another\u2019s (named in its comment as the source, or an identical triple on an adjacent trace or a fault '
                     'of the same name), each weighted 1/\u221a(1 + m \u00d7 \u03c1) for the m faults it is correlated with'
@@ -490,7 +496,7 @@ def main():
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
                    ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
-                    + ', before the slip-rate factor' + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the uncertainties as given)'
+                    + ', before the slip-rate factor' + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the default since November 9th, 2026)' if sdx == 3 else ' (the uncertainties as given)'
                        if sdx == 1 else ' (with 0.8, the inputs\u2019 slip rates exactly as given)' if sdx == 2.5 else '')]]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',

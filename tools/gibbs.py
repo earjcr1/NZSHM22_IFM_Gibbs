@@ -337,7 +337,8 @@ static double pm_f(const pmctx *pm, int32_t t, double v, double *fp)
    y + G_i d1 (y = r + DY, the current prediction): +INFINITY if a prediction would not be above 0 at d1, -INFINITY if
    one is not at d0 (that state impossible) */
 static double lw_change(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
-                        const double *DY, const double *LW, const double *LD, double d0, double d1, const pmctx *PM)
+                        const double *DY, const double *LW, const double *LWL, const double *LD, double d0, double d1,
+                        const pmctx *PM)
 {
     double acc = 0.0;
     int bad0 = 0;
@@ -351,7 +352,8 @@ static double lw_change(const double *data, const int32_t *indices, int64_t p0, 
         if (y0 <= 0.0) { bad0 = 1; continue; }
         if (w > 0.0) {
             const double l0 = log(y0) - LD[j], l1 = log(y1) - LD[j];
-            acc += w * (l1 * l1 - l0 * l0);
+            if (!LWL) acc += w * (l1 * l1 - l0 * l0);
+            else acc += (l1 < 0.0 ? LWL[j] : w) * l1 * l1 - (l0 < 0.0 ? LWL[j] : w) * l0 * l0;   /* sided weights */
         }
         if (t >= 0) acc += pm_f(PM, t, log(y1), NULL) - pm_f(PM, t, log(y0), NULL);
     }
@@ -419,10 +421,18 @@ static inline void pm_coef(double *e, const pmctx *pm, int32_t t, double y) {
     e[0] += fp * iy; e[1] += 0.5 * ((fp < 0.0 ? -fp : 0.0) + kap) * iy2; e[2] += 0.5 * ((fp > 0.0 ? fp : 0.0) + kap) * iy2;
 }
 
-/* --log-band: a row's bound coefficients (col_dots_lw), from its current prediction y > 0 */
-static inline void lw_coef(double *e, double w, double y, double ld) {
+/* --log-band: a row's bound coefficients (col_dots_lw), from its current prediction y > 0. With sided weights (wl below
+   the target, w above; --slip-misfit split+log10), f(q) = w(q) q^2 is convex with f' = 2 wc q continuous (wc the current
+   side's) and f'' at most 2 max(w, wl), so f(q + L) - f(q) lies in [f' L, f' L + max(w, wl) L^2], and with L in
+   [t - t^2/2, t]: a1 = 2 wc q / y, bhi = (wc max(-q, 0) + max(w, wl)) / y^2, blo = wc max(q, 0) / y^2 (w = wl: as above) */
+static inline void lw_coef(double *e, double w, double wl, double y, double ld) {
     const double q = log(y) - ld, iy = 1.0 / y, iy2 = iy * iy;
-    e[0] = 2.0 * w * q * iy; e[1] = w * (1.0 + (q < 0.0 ? -q : 0.0)) * iy2; e[2] = w * (q > 0.0 ? q : 0.0) * iy2; e[3] = 0.0;
+    if (wl == w) {
+        e[0] = 2.0 * w * q * iy; e[1] = w * (1.0 + (q < 0.0 ? -q : 0.0)) * iy2; e[2] = w * (q > 0.0 ? q : 0.0) * iy2; e[3] = 0.0;
+    } else {
+        const double wc = q < 0.0 ? wl : w, wm = wl > w ? wl : w;
+        e[0] = 2.0 * wc * q * iy; e[1] = (wc * (q < 0.0 ? -q : 0.0) + wm) * iy2; e[2] = wc * (q > 0.0 ? q : 0.0) * iy2; e[3] = 0.0;
+    }
 }
 
 /* --cfm slip rates: the change of the split misfit, sum w(e) e^2, between the residuals r + G_i d0 and r + G_i d1 */
@@ -661,8 +671,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *MUZ, const double *KZ, const double *ZLO, const double *KU, double *SM, const double *LOD,
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
                double gam, const double *MIX, const double *RLO, const double *RHI,
-               const double *LW, const double *LD, const double *DY, const pmctx *PM, const double *SL2, const double *SH2,
-               const int64_t *LWP, const int64_t *LWQ)
+               const double *LW, const double *LWL, const double *LD, const double *DY, const pmctx *PM, const double *SL2,
+               const double *SH2, const int64_t *LWP, const int64_t *LWQ)
 {
     const double s2 = sigma * sigma;
     double *WC = NULL;                             /* --cfm slip rates: each chain's rows' current split-misfit terms,
@@ -679,7 +689,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         ODD = (double *)malloc(sizeof(double) * (size_t)K * (size_t)SB);
         for (int64_t k = 0; k < K; k++) {
             for (int64_t j = 0; j < N; j++) {
-                if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], R[k * N + j] + DY[j], LD[j]);
+                if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], LWL ? LWL[j] : LW[j], R[k * N + j] + DY[j], LD[j]);
                 if (PM && PM->I[j] >= 0) pm_coef(AC + 4 * (k * N + j), PM, PM->I[j], R[k * N + j] + DY[j]);
             }
             for (int64_t b = 0; b < SB; b++) ODD[k * SB + b] = exp(LOD[k * SB + b]);
@@ -770,7 +780,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         /* --log-band: the slice step, reversible under the rest of the target, is a proposal that
                            the soft band's change accepts or not (Metropolis), so the update stays exact */
                         if (LW && !empty && m != xi) {
-                            const double dp = lw_change(data, indices, p0, p1, r, DY, LW, LD, 0.0, m - xi, PM);
+                            const double dp = lw_change(data, indices, p0, p1, r, DY, LW, LWL, LD, 0.0, m - xi, PM);
                             if (!(log(unif(s)) < -dp)) m = xi;
                         }
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
@@ -814,7 +824,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         }
                         if (on < 0) {
                             if (!have_g) g = lr - (log(uu) - log1p(-uu));
-                            on = lw_change(data, indices, p0, p1, r, DY, LW, LD, -xi, m - xi, PM) < g;
+                            on = lw_change(data, indices, p0, p1, r, DY, LW, LWL, LD, -xi, m - xi, PM) < g;
                         }
                         xn = on ? m : 0.0;
                     } else {
@@ -877,7 +887,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         for (int64_t t = LWP ? LWP[i] : p0; t < (LWP ? LWP[i + 1] : p1); t++) {
                             const int64_t p = LWP ? LWQ[t] : t;
                             const int32_t j = indices[p];
-                            if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], r[j] + DY[j], LD[j]);
+                            if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], LWL ? LWL[j] : LW[j], r[j] + DY[j], LD[j]);
                             if (PM && PM->I[j] >= 0) {
                                 double *e = AC + 4 * (k * N + j);
                                 if (!(LW[j] > 0.0)) e[0] = e[1] = e[2] = 0.0;
@@ -923,7 +933,8 @@ static int swap_in_band(const int64_t *indptr, const int32_t *indices, const dou
 /* --log-band: the soft band's change when m_i and m_j are exchanged (the two columns' rows merged); +INFINITY if a
    prediction would not be above 0 */
 static double lw_swap(const int64_t *indptr, const int32_t *indices, const double *data, int64_t i, int64_t j,
-                      double dl, const double *r, const double *DY, const double *LW, const double *LD, const pmctx *PM)
+                      double dl, const double *r, const double *DY, const double *LW, const double *LWL, const double *LD,
+                      const pmctx *PM)
 {
     int64_t p = indptr[i], q = indptr[j];
     const int64_t pe = indptr[i + 1], qe = indptr[j + 1];
@@ -940,7 +951,8 @@ static double lw_swap(const int64_t *indptr, const int32_t *indices, const doubl
         if (y1 <= 0.0) return INFINITY;
         if (w > 0.0) {
             const double l0 = log(y) - LD[row], l1 = log(y1) - LD[row];
-            acc += w * (l1 * l1 - l0 * l0);
+            if (!LWL) acc += w * (l1 * l1 - l0 * l0);
+            else acc += (l1 < 0.0 ? LWL[row] : w) * l1 * l1 - (l0 < 0.0 ? LWL[row] : w) * l0 * l0;   /* sided weights */
         }
         if (t >= 0) acc += pm_f(PM, t, log(y1), NULL) - pm_f(PM, t, log(y), NULL);
     }
@@ -966,8 +978,8 @@ static double sp_swap(const int64_t *indptr, const int32_t *indices, const doubl
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
               const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
-              const double *RLO, const double *RHI, const double *LW, const double *LD, const double *DY, const pmctx *PM,
-              const double *SL2, const double *SH2)
+              const double *RLO, const double *RHI, const double *LW, const double *LWL, const double *LD, const double *DY,
+              const pmctx *PM, const double *SL2, const double *SH2)
 {
     const double s2 = sigma * sigma;
     for (int64_t k = 0; k < K; k++) {
@@ -984,7 +996,7 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const double dl = mj - mi;
             const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
-            const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LD, PM) : 0.0);
+            const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
             if (log(unif(s)) < -0.5 * dchi / s2 + dlp && (!RLO || swap_in_band(indptr, indices, data, i, j, dl, r, RLO, RHI))) {
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
                 for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) r[indices[p]] -= data[p] * dl;
@@ -1118,11 +1130,11 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 3 + [P] + [P, P] + [P, P]
+    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 4 + [P] + [P, P] + [P, P]
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 3 + [P] + [P, P]
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -1336,10 +1348,20 @@ def _pm_f_np(pm, t, v):
 
 
 def _lw_ptrs(T):
-    """--log-band's arrays for the kernel (each row's weight, log target and target), or NULLs without it."""
+    """--log-band's arrays for the kernel (each row's weight, its weight below its target when the two differ (WL,
+    --slip-misfit split+log10; NULL otherwise), log target and target), or NULLs without it."""
     if T.lw is None:
-        return None, None, None
-    return _ptr(T.lw['W']), _ptr(T.lw['LD']), _ptr(T.lw['DY'])
+        return None, None, None, None
+    return (_ptr(T.lw['W']), None if T.lw.get('WL') is None else _ptr(T.lw['WL']), _ptr(T.lw['LD']), _ptr(T.lw['DY']))
+
+
+def _lw_sq(T, rows, q):
+    """The soft band's terms w q^2 of rows `rows` at q = ln(y / d), each with its own side's weight (WL below the target,
+    W above, with --slip-misfit split+log10; W alone otherwise). NumPy twin of the kernel's."""
+    w = T.lw['W'][rows]
+    if T.lw.get('WL') is None:
+        return w * q ** 2
+    return np.where(q < 0, T.lw['WL'][rows], w) * q ** 2
 
 
 def _lw_sub_ptrs(T):
@@ -1639,11 +1661,18 @@ def _lw_change_np(T, r, rows, vals, d0, d1):
     out = 0.0
     if tix is None:
         ld = T.lw['LD'][rows][sel]
+        if T.lw.get('WL') is not None:               # --slip-misfit split+log10: each side's own weight
+            rs_ = rows[sel]
+            return float(np.sum(_lw_sq(T, rs_, np.log(y1) - ld) - _lw_sq(T, rs_, np.log(y0) - ld)))
         return float(ws @ ((np.log(y1) - ld) ** 2 - (np.log(y0) - ld) ** 2))
     wk = ws > 0
     if wk.any():
         ld = T.lw['LD'][rows][sel][wk]
-        out += float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y0[wk]) - ld) ** 2))
+        if T.lw.get('WL') is not None:
+            rs_ = rows[sel][wk]
+            out += float(np.sum(_lw_sq(T, rs_, np.log(y1[wk]) - ld) - _lw_sq(T, rs_, np.log(y0[wk]) - ld)))
+        else:
+            out += float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y0[wk]) - ld) ** 2))
     tk = tix[sel]
     pk = tk >= 0
     if pk.any():                                     # --paleo-misfit: the paleo rows' half misfits
@@ -1752,7 +1781,12 @@ def swaps_numpy(T, X, R, g, nacc):
                     y = R[k, rows][sel] + T.lw['DY'][rows][sel]
                     y1 = y + dv[sel]
                     ld = T.lw['LD'][rows][sel]
-                    dlp -= np.inf if (y1 <= 0).any() else float(w[sel] @ ((np.log(y1) - ld) ** 2 - (np.log(y) - ld) ** 2))
+                    if (y1 <= 0).any():
+                        dlp = -np.inf
+                    elif T.lw.get('WL') is not None:     # --slip-misfit split+log10: each side's own weight
+                        dlp -= float(np.sum(_lw_sq(T, rows[sel], np.log(y1) - ld) - _lw_sq(T, rows[sel], np.log(y) - ld)))
+                    else:
+                        dlp -= float(w[sel] @ ((np.log(y1) - ld) ** 2 - (np.log(y) - ld) ** 2))
                 else:                                    # --paleo-misfit too
                     tix = pm['I'][rows]
                     sel = (w > 0) | (tix >= 0)
@@ -1764,7 +1798,11 @@ def swaps_numpy(T, X, R, g, nacc):
                         ws, tk = w[sel], tix[sel]
                         wk, pk = ws > 0, tk >= 0
                         ld = T.lw['LD'][rows][sel][wk]
-                        dlp -= float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y[wk]) - ld) ** 2))
+                        if T.lw.get('WL') is not None:
+                            rk_ = rows[sel][wk]
+                            dlp -= float(np.sum(_lw_sq(T, rk_, np.log(y1[wk]) - ld) - _lw_sq(T, rk_, np.log(y[wk]) - ld)))
+                        else:
+                            dlp -= float(ws[wk] @ ((np.log(y1[wk]) - ld) ** 2 - (np.log(y[wk]) - ld) ** 2))
                         dlp -= float(np.sum(_pm_f_np(pm, tk[pk], np.log(y1[pk])) - _pm_f_np(pm, tk[pk], np.log(y[pk]))))
             if np.log(_u01(g)) < -0.5 * dchi / s2 + dlp and (T.rlo is None or _swap_in_band(T, R[k], ri, vi, rj, vj, dl)):
                 R[k, ri] += vi * dl
@@ -1996,8 +2034,12 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     nd = T.n_data                                        # chi2 and predictions over the data rows only
     PMr = None if T.lw is None or T.lw.get('PM') is None else T.lw['PM']   # --paleo-misfit: its rows are scaled in G
     MFr = None if T.lw is None or T.lw.get('MF') is None else T.lw['MF']   # --mfd-misfit log10: the bins' rows too
-    Dd = (T.d[:nd] if PMr is None and MFr is None             # the data rows' targets, as the problem gives them
-          else (PMr if PMr is not None else MFr)['d_data'])
+    SMr = None if T.lw is None or T.lw.get('SM') is None else T.lw['SM']   # --slip-misfit split+log10: the slip rows halved
+    Dd = (T.d[:nd] if PMr is None and MFr is None and SMr is None   # the data rows' targets, as the problem gives them
+          else next(x_ for x_ in (PMr, MFr, SMr) if x_ is not None)['d_data'])
+    if SMr is not None:                                  # the slip curve's sd and each section's share of the fit check
+        tr['slip_geo_s'] = np.array([SMr['s_lo'], SMr['s_hi']])
+        tr['slip_geo_expect'] = np.array([SMr['E'], SMr['V']])
     if MFr is not None:
         tr['mfd_log_rows'], tr['mfd_log_s'] = np.asarray(MFr['rows']), np.asarray(MFr['s'])
     if PMr is not None and 'th' in PMr:                  # each paleo site's curve, for block_fit.py, and its misfit's moments
@@ -2006,7 +2048,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['paleo_rows'] = np.asarray(PMr['rows'])
     if getattr(T, 'fit_expect', None) is not None:       # the fit check as fitted (mean, sd), for the misfit below
         tr['misfit_expect'] = np.array(T.fit_expect, float)
-    fitted = PMr is not None or MFr is not None          # chi2 as fitted differs from the Gaussian chi2
+    fitted = PMr is not None or MFr is not None or SMr is not None   # chi2 as fitted differs from the Gaussian chi2
     dd = Dd @ Dd
     nbal = T.n_fit if T.n_bal is None else T.n_bal       # the balance term's rows, nd:nbal; --slip-sum's, nbal:n_fit
     if T.balance is not None and nd < nbal:              # the balance term's rows: recorded on their own
@@ -2097,6 +2139,10 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             y = y.copy()
             y[:, mr_] /= MFr['eps']
             Rd = y - Dd
+        if SMr is not None:                                  # --slip-misfit split+log10: the slip rows unscaled, as above
+            y = y.copy()
+            y[:, SMr['rows']] *= np.sqrt(2.0)
+            Rd = y - Dd
         if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
             C_ = _sp_w(T, np.arange(nd), Rd) * Rd ** 2
         else:
@@ -2121,8 +2167,10 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                 lq = np.log(np.maximum(R[:, lr_] + T.lw['DY'][lr_], 0.0)) - T.lw['LD'][lr_]
             # its chi2-equivalent, sum w' (log10(y / d) / tau)^2 (w' = 1/k for slip subsections), as chi2 and the balance and
             # summed-slip terms are recorded: twice its share of the negative log posterior
-            tr.setdefault('log_band', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(T.lw['W'][lr_] * lq ** 2, 1)
+            tr.setdefault('log_band', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(_lw_sq(T, lr_, lq), 1)
             tr.setdefault('log_band_out', np.zeros((K, n_rec)))[:, rec] = np.sum(np.abs(lq) > T.lw['tau'] * LN10, 1)
+            if SMr is not None:                              # chi2 as fitted: half the slip rows' Gaussian, plus the log10 half
+                tr['misfit'][:, rec] += tr['log_band'][:, rec] - 0.5 * np.sum(C_[:, SMr['rows']], 1) / T.sigma ** 2
         Xm = X if sc is None else X * sc
         tr['sum_m'][:, rec] = Xm.sum(1)
         tr['tscale'][:, rec] = y @ Dd / dd
@@ -2238,7 +2286,12 @@ def report(tr, burn, thin, names=None):
         print(f'summed slip rates (--slip-sum): {v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-'
               f'{np.quantile(v, .95):.1f}; near {float(tr["slip_sum_expect"]):.1f} if the model matched the truth), not '
               'counted in chi2 above')
-    if 'log_band' in tr:                             # --log-band: the soft band (not in chi2 above)
+    if 'log_band' in tr and 'slip_geo_s' in tr:      # --slip-misfit split+log10: the log10 half, in chi2 as fitted
+        v, o = tr['log_band'][:, nb:], tr['log_band_out'][:, nb:]
+        print(f'slip misfit (split+log10; its log10 half, sum (1/k) (log10(prediction / target) / s)^2 / 2, s each row\'s side\'s): '
+              f'{v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), in chi2 as fitted with half the '
+              f'slip rows\' Gaussian; slip-rate rows predicted 10x or more off their targets: {o.mean():.1f} per draw')
+    elif 'log_band' in tr:                           # --log-band: the soft band (not in chi2 above)
         v, o = tr['log_band'][:, nb:], tr['log_band_out'][:, nb:]
         print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
@@ -2805,6 +2858,85 @@ def selftest_split(backends=('c', 'numpy')):
             chi_ = np.sum(np.where(e_ < 0, L2v, H2v) * e_ ** 2, 1) / sig ** 2
             ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
     print('SELFTEST (split misfit)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_slipgeo(backends=('c', 'numpy')):
+    """--slip-misfit split+log10, built as main() builds it (the rows and targets scaled by 1/sqrt 2, the log10 half through
+    the soft band's arrays with sided weights, W = 1/(4 (s ln10)^2) above the target and WL below, s = log10(1 + sd / d) each
+    side's, the swap pair's inner product halved), on two spike-and-slab rates and two split-normal rows (one symmetric, one
+    lopsided, its log10 sds 0.48 below and 1.14 above), with swaps, against a grid integral of exp(-misfit / 2), misfit =
+    sum over rows of w e^2 / (2 sigma^2) + (log10(y / d) / s)^2 / 2: P(on) and E[log10 m | on] of each rate; and chi2 as
+    fitted, as recorded, against its direct computation."""
+    from scipy.special import betaln
+    print('slip misfit split+log10: spike-and-slab with swaps vs a grid integral')
+    ok = True
+    G2 = np.array([[1.0, 0.6], [0.4, 1.0]])
+    d2, sig, L2v, H2v = np.array([0.05, 0.004]), 0.02, np.array([1.0, 6.0]), np.array([1.0, 0.15])
+    lo10, su, a_, b_ = np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+    s_lo, s_hi = np.log10(1.0 + sig / np.sqrt(L2v) / d2), np.log10(1.0 + sig / np.sqrt(H2v) / d2)   # each side's sd, in log10
+
+    def mis(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        out = np.zeros(m1.shape)
+        for j in range(2):
+            y = G2[j, 0] * m1 + G2[j, 1] * m2
+            e = y - d2[j]
+            with np.errstate(divide='ignore'):
+                out += 0.5 * np.where(e < 0, L2v[j], H2v[j]) * e * e / sig ** 2 + np.where(
+                    y > 0, 0.5 * (np.log10(np.maximum(y, 1e-300) / d2[j]) / np.where(e < 0, s_lo[j], s_hi[j])) ** 2, np.inf)
+        return out
+    L1, L2_ = np.exp(-mis(10 ** u[0], 0.0) / 2), np.exp(-mis(0.0, 10 ** u[1]) / 2)
+    L12 = np.exp(-mis(M1, M2) / 2) * gw[0][:, None] * gw[1][None, :]
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2_), pg[2] * L12.sum()   # both off: infinite misfit
+    W_ = w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2_ + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    h = 1.0 / np.sqrt(2.0)
+    for be in backends:
+        T = Target(sp.csc_matrix(G2 * h), d2 * h, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([0.5 * G2[:, 0] @ G2[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.split = dict(L2=np.ascontiguousarray(L2v), H2=np.ascontiguousarray(H2v))
+        T.n_data = 2
+        T.set_groups(np.array([0, 1]), np.zeros(0, np.int64), np.zeros(0))
+        T.lw = dict(W=np.ascontiguousarray(1.0 / (4.0 * (s_hi * LN10) ** 2)), WL=np.ascontiguousarray(1.0 / (4.0 * (s_lo * LN10) ** 2)),
+                    LD=np.log(d2 * h), DY=np.ascontiguousarray(d2 * h), rows=np.array([0, 1]), tau=np.ones(2),
+                    SM=dict(rows=np.array([0, 1]), s_lo=s_lo, s_hi=s_hi, d_data=d2, E=0.0, V=0.0))
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 37, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        m_ = Mo.reshape(-1, 2)                                # chi2 as fitted, recorded, against its direct computation
+        ok_m = bool(np.allclose(np.sort(mis(m_[:, 0], m_[:, 1])), np.sort(tr['misfit'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
+        ok &= ok_m
+        print(f'   {be:5s} chi2 as fitted recorded as the misfit counts it: ' + ('yes' if ok_m else 'NO'))
+    print('SELFTEST (slip misfit split+log10)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -3472,6 +3604,13 @@ def main():
     ap.add_argument('--slip-log-band', type=float, default=None, metavar='TAU',
                     help='a soft band on the slip-rate rows (the notebook\'s SLIP_BAND_SOFT), as --log-band, with '
                          '--slip-band positive')
+    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10'],
+                    help="the slip-rate rows' misfit: 'split' (default), the Gaussian (a split normal with the CFM's slip "
+                         "rates); 'split+log10', half of it plus half a Gaussian in log10(prediction / target) with the same "
+                         "sd, s = log10(1 + sd / target) on each side (sd the side's effective sd, the template weights' "
+                         "included, as --mfd-misfit log10 has the bins'), the geometric mean of the two densities, so a "
+                         'prediction an order of magnitude off is unlikely and two orders far more so (each section still one '
+                         'measurement; spike-and-slab, with --slip-band positive, not with the soft bands)')
     ap.add_argument('--paleo-log-band', type=float, default=None, metavar='TAU',
                     help='a soft band on the paleo rows (the notebook\'s PALEO_BAND_SOFT), as --log-band, with --paleo-band '
                          'positive, and not with --paleo-misfit years or log')
@@ -3584,6 +3723,7 @@ def main():
         ok &= selftest_paleo()
         ok &= selftest_split()
         ok &= selftest_mfdlog()
+        ok &= selftest_slipgeo()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -3855,6 +3995,25 @@ def main():
         if pm_rows is None:
             d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
         G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
+    sm_rows = None                                 # --slip-misfit split+log10: the slip rows' Gaussian halved (scaled by 1/sqrt 2)
+    if a.slip_misfit != 'split':
+        if not spike_mode or a.transfers:
+            raise SystemExit('--slip-misfit split+log10 needs spike-and-slab, without --transfers')
+        if a.slip_log_band is not None or a.log_band is not None or a.paleo_log_band is not None:
+            raise SystemExit('--slip-misfit split+log10 with a soft band: its log10 half already scores each slip-rate prediction '
+                             'in log10 (the soft bands are left out)')
+        if a.slip_block not in P['block_names']:
+            raise SystemExit(f'--slip-misfit split+log10: no row block named {a.slip_block!r} (--slip-block)')
+        sm_rows = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
+        if not (np.asarray(P['d'], float)[sm_rows] > 0).all():
+            raise SystemExit('--slip-misfit split+log10: every slip-rate row needs a positive target')
+        rs_ = np.ones(G_fit.shape[0])
+        rs_[sm_rows] = 1.0 / np.sqrt(2.0)
+        if pm_rows is None and mf_rows is None:
+            d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
+        G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
+    if a.slip_band is None and a.slip_misfit != 'split':
+        a.slip_band = 'positive'                   # its log10 half is infinite at 0: each slip-rate prediction above zero
     fprelim = a.prelim or prelim_path(a.problem)
     pairs = None
     if a.swap_cos > 0:
@@ -3886,6 +4045,12 @@ def main():
             for c0 in range(0, len(pi), 100000):
                 c1 = min(c0 + 100000, len(pi))
                 ip[c0:c1] -= (1.0 - PALEO_EPS ** 2) * np.asarray(Gmc[:, pi[c0:c1]].multiply(Gmc[:, pj[c0:c1]]).sum(0)).ravel()
+            pairs = (pi, pj, ip)
+        if sm_rows is not None:                    # --slip-misfit split+log10: half the slip rows' share, scaled with them
+            Gsc, ip = sp.csc_matrix(sp.csr_matrix(P['G'])[sm_rows]), np.array(pairs[2])
+            for c0 in range(0, len(pi), 100000):
+                c1 = min(c0 + 100000, len(pi))
+                ip[c0:c1] -= 0.5 * np.asarray(Gsc[:, pi[c0:c1]].multiply(Gsc[:, pj[c0:c1]]).sum(0)).ravel()
             pairs = (pi, pj, ip)
         if scale is not None:                      # inner products of the scaled columns
             pairs = (pi, pj, pairs[2] * scale[pi] * scale[pj])
@@ -3964,6 +4129,8 @@ def main():
         if pa_b is None and a.paleo_misfit != 'gaussian':
             pa_b = 'positive'                      # --paleo-misfit: each paleo prediction above zero (its misfit is
                                                    # infinite at 0), unless --paleo-band gives a factor
+        if sm_rows is not None and sl_b != 'positive':
+            raise SystemExit('--slip-misfit split+log10 needs --slip-band positive (its log10 half is infinite at 0)')
         for tau_, b_, name in ((a.slip_log_band, sl_b, 'slip'), (a.paleo_log_band, pa_b, 'paleo')):
             if tau_ is not None and (b_ != 'positive' or not tau_ > 0):
                 raise SystemExit(f'--{name}-log-band {tau_:g}: give a width above 0, with --{name}-band positive')
@@ -4024,6 +4191,11 @@ def main():
         with np.load(fprelim) as pr0, np.load(f_fit) as zf:
             if 'nnls_key' not in zf.files or str(zf['nnls_key']) != nnls_key(pr0['m_nnls']):
                 raise SystemExit(f'--init fitted: {f_fit} was made from another NNLS fit (cleaned again since?); run '
+                                 'best_fit_as_fitted.py again, or use --init nnls')
+            sm_want = a.slip_misfit
+            sm_have = str(zf['slip_misfit']) if 'slip_misfit' in zf.files else 'split'
+            if sm_have != sm_want:
+                raise SystemExit(f'--init fitted: {f_fit} was fitted with the slip misfit {sm_have}, this run uses {sm_want}; run '
                                  'best_fit_as_fitted.py again, or use --init nnls')
             if (str(zf['paleo_misfit']), str(zf['mfd_misfit'])) != (a.paleo_misfit, a.mfd_misfit):
                 raise SystemExit(f'--init fitted: {f_fit} was fitted with --paleo-misfit {zf["paleo_misfit"]} and --mfd-misfit '
@@ -4140,6 +4312,27 @@ def main():
               + '), in the misfit beside the data, kept by a Metropolis step; the start\'s '
               f'{pen0:.1f} (on chi2\'s scale), {int(np.sum(np.abs(np.log10(np.maximum(y0, 1e-300) / T.d[rows_l])) > a.log_band))} rows beyond '
               f'{a.log_band:g} decades of their targets')
+    if sm_rows is not None:                        # --slip-misfit split+log10: the log10 half, through the soft band's machinery
+        from cru_common import slip_geo_moments, slip_log_sds
+        s_lo, s_hi, wk_ = slip_log_sds(P, sm_rows)[:3]   # each row's log10 sds, below and above: its effective sd's (1/k: a
+        W, WL = np.zeros(T.N), np.zeros(T.N)           # section's copies count once)
+        W[sm_rows] = wk_ / (4.0 * (s_hi * LN10) ** 2)    # 2 W (ln y - ln d)^2 = 1/2 (1/k) (log10(y / d) / s)^2, each side's s
+        WL[sm_rows] = wk_ / (4.0 * (s_lo * LN10) ** 2)
+        LD = np.zeros(T.N)
+        LD[sm_rows] = np.log(T.d[sm_rows])
+        T.lw = dict(W=np.ascontiguousarray(W), WL=np.ascontiguousarray(WL), LD=np.ascontiguousarray(LD),
+                    DY=np.ascontiguousarray(T.d, np.float64), rows=sm_rows, tau=np.ones(len(sm_rows)),   # tau: out counts 10x off
+                    SM=dict(rows=sm_rows, s_lo=s_lo, s_hi=s_hi, d_data=d_data))
+        T.lw['SM']['E'], T.lw['SM']['V'], n_s_, T.lw['SM']['t2'], T.lw['SM']['t4'] = slip_geo_moments(P, sm_rows)
+        y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, sm_rows]
+        f0 = 2.0 * float(np.sum(_lw_sq(T, sm_rows, np.log(np.maximum(y0, 1e-300) / T.d[sm_rows]))))
+        s_all = np.concatenate([s_lo, s_hi])
+        s_med = float(np.median(s_all))
+        print(f'slip misfit (split+log10): the {len(sm_rows)} slip-rate rows ({n_s_} sections) scored by half their split normal plus '
+              f'half a Gaussian in log10(prediction / target) with the same sd, s = log10(1 + sd / target) on each side (sd the '
+              f'side\'s effective sd, the template weights\' included, as the MFD bins\' in log10): {s_all.min():.3f}-{s_all.max():.3f} '
+              f'decades, median {s_med:.3f} (a row at the median: 10x off costs {0.5 / s_med ** 2:.0f} on chi2\'s scale from its log '
+              f'half), the log half kept by a Metropolis step; the start\'s log half {f0:.1f}')
     if pm_rows is not None:                        # --paleo-misfit: the paleo rows' tables, through the soft band's machinery
         if T.lw is None:                           # (its weights 0 without --log-band)
             T.lw = dict(W=np.zeros(T.N), LD=np.zeros(T.N), DY=np.ascontiguousarray(T.d, np.float64),
@@ -4173,6 +4366,9 @@ def main():
         T.lw['W'][mf_rows] = 1.0 / (2.0 * (mf_s * LN10) ** 2)   # 1/2 (ln(y / R) / (s ln 10))^2 = 1/2 (log10(y / R) / s)^2
         T.lw['LD'][mf_rows] = np.log(T.d[mf_rows])
         T.lw['W'], T.lw['LD'] = np.ascontiguousarray(T.lw['W']), np.ascontiguousarray(T.lw['LD'])
+        if T.lw.get('WL') is not None:             # with --slip-misfit split+log10's sided weights: the bins' the same both sides
+            T.lw['WL'] = np.array(T.lw['WL'], np.float64)
+            T.lw['WL'][mf_rows] = T.lw['W'][mf_rows]
         T.lw['MF'] = dict(rows=mf_rows, s=mf_s, eps=PALEO_EPS, d_data=d_data)
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, mf_rows]
         f0 = float(np.sum((np.log10(np.maximum(y0, 1e-300) / T.d[mf_rows]) / mf_s) ** 2))
@@ -4242,8 +4438,18 @@ def main():
         if pm_rows is not None:                    # each paleo row's misfit's own mean and variance, for the Gaussian's 1 and 2
             m_ += float(np.sum(T.lw['PM']['E'])) - len(pm_rows)
             v_ += float(np.sum(T.lw['PM']['V'])) - 2.0 * len(pm_rows)
+        if sm_rows is not None:                    # each slip section's curve: its own mean and variance for t^2 and 2 t^4
+            SM_ = T.lw['SM']
+            m_ += SM_['E'] - SM_['t2']
+            v_ += SM_['V'] - 2.0 * SM_['t4']
         T.fit_expect = (m_, float(np.sqrt(max(v_, 0.0))))   # the MFD bins in log10 keep 1 and 2 each: Gaussian in log10
-        if pm_rows is not None:
+        if sm_rows is not None:
+            print(f'fit check as fitted: a draw\'s chi2 as the likelihood scores it should be near {m_:.0f} +- {np.sqrt(v_):.0f} '
+                  f'(the slip sections\' curves {T.lw["SM"]["E"]:.1f} +- {np.sqrt(T.lw["SM"]["V"]):.1f} in place of the Gaussian\'s '
+                  f'{T.lw["SM"]["t2"]:.1f} +- {np.sqrt(2 * T.lw["SM"]["t4"]):.1f}' + (f'; the paleo sites\' {np.sum(T.lw["PM"]["E"]):.1f} '
+                  f'in place of {len(pm_rows)}' if pm_rows is not None else '') + f'; cleaning\'s, for the Gaussians: '
+                  f'{float(fe_[0]):.0f} +- {float(fe_[1]):.0f})')
+        elif pm_rows is not None:
             print(f'fit check as fitted: a draw\'s chi2 as the likelihood scores it should be near {m_:.0f} +- {np.sqrt(v_):.0f} if the '
                   f'uncertainties are right (the paleo sites\' misfits {np.sum(T.lw["PM"]["E"]):.1f} +- {np.sqrt(np.sum(T.lw["PM"]["V"])):.1f} '
                   f'in place of the Gaussian\'s {len(pm_rows)} +- {np.sqrt(2 * len(pm_rows)):.1f}; cleaning\'s, for the Gaussians: '

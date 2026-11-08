@@ -73,7 +73,7 @@ import numpy as np
 from cru_common import split_weights
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
-                        run_settings, settings_lines, slip_sections)
+                        run_config, run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 REF = INK                                        # the reference model's marks: black, apart from every series colour
@@ -166,6 +166,12 @@ def main():
     rep_row = rows[np.unique(sec, return_index=True)[1]] if (ks > 0).all() else None   # a row of each section (its copies
     sw = (lambda e: np.sqrt(split_weights(P, rep_row, e)) * e) if rep_row is not None else (lambda e: e)   # share its sds)
     chi_w = lambda yw_: float(np.sum(split_weights(P, rows, yw_ - dw) * (yw_ - dw) ** 2))   # chi2 as the likelihood counts it
+    cfg_ = run_config(a.config, a.problem) or {}
+    geo_tau = None                                       # SLIP_MISFIT 'split+log10': half the split normal, half the log10
+    if cfg_.get('slip_misfit') == 'split+log10':
+        from cru_common import slip_geo_rows
+        geo_tau = True
+        chi_w = lambda yw_: float(np.sum(slip_geo_rows(P, rows, yw_)))
     rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
@@ -248,7 +254,8 @@ def main():
                   else 'no runs found next to the rate vectors, so no posterior spread')
         if D['xs'] is not None:
             spread += f'; the x\'s: the {len(D["xs"])} kept draws\' section means (select_draws.py)'
-        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them, '
+        lines += ['', f'{D["label"]} ({D["path"]}): the {mm}\'s chi2 over the slip-rate rows, as the likelihood weights them'
+                  + (' (half the split normal plus half a log10 Gaussian with the same sds)' if geo_tau else '') + ', '
                   f'{D["chi2"]:.1f}; {100 * D["in1"]:.0f}% of sections within one measurement uncertainty of their targets, '
                   f'{100 * D["in2"]:.0f}% within two (subsections: {100 * D["in1r"]:.0f}% and {100 * D["in2r"]:.0f}%); section mean / '
                   f'target: median {q[1]:.2f} (5-95%: {q[0]:.2f} to {q[2]:.2f}); {spread}; furthest from their targets: '
@@ -388,7 +395,7 @@ def main():
             if j == 0:
                 ax.set_ylabel(f'{mm} prediction (mm/yr)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
-        sub = (f'{mm}: χ² {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted else ""}; '
+        sub = (f'{mm}: χ²{" as fitted" if geo_tau else ""} {D["chi2"]:.0f} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted and not geo_tau else ""}; '
                f'{100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
         above = 40 + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
         if tab:
