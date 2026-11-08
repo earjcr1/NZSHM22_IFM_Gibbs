@@ -193,15 +193,13 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['False'] and 'slip
       'default too), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
-check(re.findall(r'^SLIP_BAND_SOFT = (\S+)', cells[0][1], re.M) == ['None']
-      and 'slip_band_soft' in _cfg_keys
-      and any("args += ['--slip-log-band', SLIP_BAND_SOFT]" in c for _, c in cells)
+check(not re.findall(r'^SLIP_BAND_SOFT = ', cells[0][1], re.M) and 'slip_band_soft' not in _cfg_keys
+      and not any("'--slip-log-band'" in c for _, c in cells)
       and "'--slip-log-band'" in src['gibbs.py'] and "'--paleo-log-band'" in src['gibbs.py'] and "'--log-band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
       and 'static inline void col_dots_lw(' in src['gibbs.py'],
-      'notebook SLIP_BAND_SOFT = None (no soft band by default), recorded and passed to gibbs.py '
-      '--slip-log-band with MISFIT = \'linear\' only (--paleo-log-band a command-line option; with that group\'s positivity; kept by a Metropolis step in the kernel, its '
-      'exact test in the full self-test set)')
+      'notebook: no SLIP_BAND_SOFT since 2026-11-10 (MISFIT\'s log10 part does its job); the soft band stays in gibbs.py '
+      '(--slip-log-band, --paleo-log-band; kept by a Metropolis step in the kernel, its exact test in the full self-test set)')
 check(re.findall(r'^MISFIT = (\S+)', cells[0][1], re.M) == ["'half'"] and {'misfit', 'paleo_misfit', 'mfd_misfit', 'slip_misfit'} <= set(_cfg_keys)
       and 'SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT = MISFIT_MODES_[MISFIT]' in cells[0][1]
       and all(f"args += ['--{g_}-misfit', {g_.upper()}_MISFIT]" in ''.join(c for _, c in cells) for g_ in ('paleo', 'mfd', 'slip'))
@@ -353,7 +351,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE', 'SLIP_BAND_SOFT',
+MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
                   'MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
@@ -375,7 +373,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('SLIP_BAND_SOFT', 'MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

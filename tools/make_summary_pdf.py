@@ -469,7 +469,7 @@ def main():
                 + [[f'{nm}_BAND_SOFT', 'None' if not g_soft[k] else f'{float(g_soft[k]):g}',
                     f'each {k} prediction within {dec(float(g_soft[k]))} of its target at 1 sd (a soft band: a penalty on '
                     'the log ratio of prediction to target, beside the misfit)' if g_soft[k] else 'no soft band']
-                   for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo')) if nm == 'SLIP' or pband_set]
+                   for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo')) if (nm == 'SLIP' and 'slip_band_soft' in cfg) or (nm == 'PALEO' and pband_set)]
                 + ([['MISFIT', repr(amis), {'linear': 'every group scored linearly: the slip rates by their split normals, the '
                      'MFD bins and the paleo rows by the inputs\u2019 Gaussians in rate',
                      'log10': 'every group scored in log: the slip rates and the MFD bins by Gaussians in log10(prediction / '

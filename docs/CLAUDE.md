@@ -81,7 +81,7 @@ costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the n
 all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
 extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
-Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT, and until November 5th PALEO_BAND,
+Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT until 2026-11-10, and until November 5th PALEO_BAND,
 PALEO_BAND_SOFT, since then gibbs.py options only: --paleo-misfit years keeps the paleo rows above zero itself):
 --slip-band and --paleo-band (positive or a factor F) and --slip-log-band and --paleo-log-band (TAU, with that group's
 positive) act on the subsections' slip-rate rows and the paleo rows separately (Target.set_groups; the MFD bins get no
@@ -148,7 +148,8 @@ recording: paleo_misfit = 2 sum f / b (the whole curve), mfd_misfit, slip_log (w
 tr slip_geo_b, mfd_log_b, mfd_log_expect, paleo_b. Fit check: geo_moments(P, rows, b, kind) (density on a log10 grid
 exp(-m1/2) x^(1-b)), paleo_misfit.site_moments_mixed (b < 1). --all-positive (the notebook always): slip_band and
 paleo_band positive unless a factor, MFD bins positive (g_mfd in set_groups). SLIP_BAND removed from the notebook (2026-11-10, the user:
-'take out SLIP_BAND'; --slip-band/--paleo-band stay in gibbs.py); SLIP_BAND_SOFT with MISFIT != 'linear' raises in the notebook. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
+'take out SLIP_BAND'; --slip-band/--paleo-band stay in gibbs.py); SLIP_BAND_SOFT removed from the notebook too (the user: the log10 option does what it was
+trying to do; --slip-log-band stays in gibbs.py). Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
 in the full set. run_quick_checks pins MISFIT='linear' (positivity always) (TESTING.md's values predate positivity).
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
