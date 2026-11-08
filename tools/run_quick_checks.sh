@@ -13,7 +13,7 @@ DATA=$(cd "$1" && pwd)
 mkdir -p "$2" && RUNS=$(cd "$2" && pwd)
 L=$RUNS/logs; NB=$CODE/cru_workflow.ipynb; R=$CODE/tools/run_nb.py; PY=${PYTHON:-python3}
 PIN=("PRESET='quick'" "SLIP_SECTIONS='auto'" FLOOR=-10 BLOCKS=None DOWN_THE_MIDDLE=True
-     "MISFIT='linear'" CFM_SLIPRATES=False "CFM_PREF='mode'" CFM_ROUNDING=False CFM_TEMPLATE_RHO=None CFM_RATE_LINKS=True SEED="'legacy'" SLIP_RATE_FACTOR=0.8 SLIP_SD_MULTIPLIER=2.5 SLIP_SUM=False)                                             # the settings TESTING.md's reference values were measured under
+     "MISFIT='linear'" MFD_MONOTONIC=False PLATE_RATE=False CFM_SLIPRATES=False "CFM_PREF='mode'" CFM_ROUNDING=False CFM_TEMPLATE_RHO=None CFM_RATE_LINKS=True SEED="'legacy'" SLIP_RATE_FACTOR=0.8 SLIP_SD_MULTIPLIER=2.5 SLIP_SUM=False)                                             # the settings TESTING.md's reference values were measured under
 mkdir -p "$L"
 mark() { echo "$1 $(date +%T)" >> "$L/progress.txt"; }
 step() { local name=$1; shift; [ -f "$L/done_$name" ] && return; mark "$name start"; "$@" > "$L/$name.txt" 2>&1; local rc=$?

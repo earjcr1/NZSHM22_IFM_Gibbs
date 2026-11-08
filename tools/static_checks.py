@@ -155,25 +155,27 @@ check(not re.findall(r'^SLIP_BAND = ', cells[0][1], re.M) and 'slip_band' not in
       'notebook: no SLIP_BAND since 2026-11-10; every slip-rate, paleo and MFD prediction kept above zero (gibbs.py '
       '--all-positive, Target.set_groups; --slip-band and --paleo-band, with a factor, command-line options), with the band\'s '
       'exact test in both self-test sets and set_groups checked against set_positive and set_band')
-check(not re.findall(r'^MFD_MONOTONIC = ', cells[0][1], re.M) and 'mfd_monotonic' not in _cfg_keys
-      and not any('--mfd-monotonic' in c or 'MFD_RISE_SD' in c for _, c in cells)
+check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
+      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and not any('MFD_RISE_SD' in c for _, c in cells)
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'MFD_MONOTONIC out of the notebook since November 4th, 2026: gibbs.py --mfd-monotonic, command line only (a rising '
-      'target\'s rise capped at --mfd-rise-sd 0.89 sd), with its exact test in the band\'s self-test')
-check(not re.findall(r'^PLATE_RATE = ', cells[0][1], re.M) and 'plate_rate' not in _cfg_keys
-      and not any('--plate-rate' in c or 'PLATE_LIMITS' in c for _, c in cells)
+      'notebook MFD_MONOTONIC = True (back on November 10th, 2026, as before; out of the notebook from November 4th), '
+      'recorded and passed to gibbs.py --mfd-monotonic (a rising target\'s rise capped at --mfd-rise-sd 0.89 sd), with its '
+      'exact test in the band\'s self-test')
+check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
+      and "PLATE_LIMITS = f'{SLIP_RATE_FACTOR:g}' if PLATE_RATE else None" in cells[0][1]
+      and any("args += ['--plate-rate', PLATE_LIMITS]" in c for _, c in cells)
       and "'--plate-rate'" in src['gibbs.py']
       and 'from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows' in src['gibbs.py']
       and "'the plate rate')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0]
-      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "'--limits'" not in c for _, c in cells)
+      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "'--limits', PLATE_LIMITS" in c for _, c in cells)
       and "'--limits'" in src['plate_rate.py']
       and '\ndef check_problem(' in src['plate_rate.py'] and '\ndef plate_rows(' in src['plate_rate.py'],
-      'PLATE_RATE out of the notebook since November 4th, 2026: gibbs.py --plate-rate with --rupture-set, command line '
-      'only (rows from plate_rate.py on the --cross-sections strips), with its exact test in the band\'s self-test; '
-      'plate_rate.txt still reported for every run with a rupture set, without limits (plate_rate.py --limits counts them)')
+      'notebook PLATE_RATE = True (back on November 10th, 2026, as a hard upper bound at SLIP_RATE_FACTOR on each strip\'s '
+      'share of the plate rate), recorded and passed to gibbs.py --plate-rate with --rupture-set (rows from plate_rate.py on '
+      'the --cross-sections strips) and to plate_rate.py --limits, with its exact test in the band\'s self-test')
 check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
-      and any('if SLIP_SUM:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
+      and any('if SLIP_SUM or PLATE_RATE:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
       and '\ndef cross_sections(' in src['plate_rate.py'],
@@ -352,8 +354,8 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
-                  'MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
-                  'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PRESET', 'FLOOR']
+                  'MISFIT', 'MFD_MONOTONIC', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
+                  'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
 _figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])
@@ -373,7 +375,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('MISFIT', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT', 'MFD_MONOTONIC', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

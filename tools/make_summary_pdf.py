@@ -518,8 +518,7 @@ def main():
                   'prediction to target, beside the misfit)' if tau else 'no soft band']]) + [
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
                  'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
-                                          'difference' if rise_cap else '') + ' (a hard constraint; a notebook setting '
-                 'until November 4th, 2026, gibbs.py --mfd-monotonic since)']] if mono else []) + [
+                                          'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
             + ('and PLATE_RATE use' if plate else 'uses') + f', 8.5 km wide {xsec_txt}'],
            ['SLIP_SUM', str(bool(ssum)),
@@ -528,8 +527,8 @@ def main():
           + ([['SLIP_SUM_L0', f'{l0:g}', f'the summed slip rates\u2019 weight: each {l0:g} km of the plate boundary counts '
                'as one measurement']] if ssum else [])
           + ([['PLATE_RATE', f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
-               f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint; a notebook setting until '
-               'November 4th, 2026, gibbs.py --plate-rate since)']] if plate else [])
+               f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint, gibbs.py --plate-rate'
+               + ('; PLATE_RATE = True: at SLIP_RATE_FACTOR' if 'misfit' in cfg else '') + ')']] if plate else [])
           + [['DOWN_THE_MIDDLE', str(dtm), dtm_txt]]
           + [['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
            ['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
