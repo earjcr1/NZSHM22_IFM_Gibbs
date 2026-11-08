@@ -175,7 +175,7 @@ SR_min/SR_max at 2 sd and doubled, so each side's sd is f x its width and sigma_
 run: slip chi2 698 against 507); the same sds as the 1-sd reading with SLIP_SD_MULTIPLIER = 1 (the user's run
 _1793831887, _sdx1). Before that, 1 and 2 (the inputs' reading; sigma_ref 0.80 of theirs, 5-95% 0.75-0.90); f on the
 mode only was tried and dropped. The user is checking the
-reading with colleagues. --cfm-template-rho RHO (CFM_TEMPLATE_RHO, None by default; the user's choice when on: 1):
+reading with colleagues. --cfm-template-rho RHO (CFM_TEMPLATE_RHO, 1 by default since 2026-11-09, None before; the user's choice):
 faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max as written (cfm_sliprates.template_factors) weighted
 1/sqrt(1 + (n - 1) rho) for a group of n, multiplied into row_scale with the sections' 1/sqrt(k) (so plate_rate's sigma_i
 and the figures' units stay each fault's own), recorded as the problem's template_scale and cfm_template_rho; the fit check
@@ -190,7 +190,7 @@ links listed in cfm_rate_links.csv; recorded as cfm_rate_links. Since 2026-11-05
 section-level correlation with cross-fault sections) slip sections never span two parent faults (cru_common.slip_sections
 parents=, from --rupture-set or find_rupture_set beside --A; recorded as sections_by_fault): 211k 507 -> 551 sections,
 2e4 68 -> 75; template weights applied per section by cfm_sliprates.section_factors (equal to the faults' weights when
-sections are single faults; template_scale saves the weights as applied). --cfm-rounding (CFM_ROUNDING, False by default): each fault's three numbers known to half the
+sections are single faults; template_scale saves the weights as applied). --cfm-rounding (CFM_ROUNDING, True by default since 2026-11-09, False before): each fault's three numbers known to half the
 finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
 the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
 median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
@@ -258,14 +258,15 @@ within the limits, one constraint row per strip holding a rupture after the mono
 plate_rows: each crustal subsection weighted by the fraction of the strip's cross-sections crossing it, its slip
 vector projected on the local plate motion over the local rate; checked against the slip-rate rows; a start above HI
 scaled down to it, each chain by one factor); exact test in selftest_band (until November 3rd, 2026: 8 strips of
-76 km between the edges, --plate-strips, LO,HI only). --slip-sum --rupture-set DIR (SLIP_SUM, True by default from November 3rd, 2026, False since November 5th: the user wants
-to see whether every target can be well fitted without it, from the new constraints and positivity alone): a soft term
+76 km between the edges, --plate-strips, LO,HI only). --slip-sum --rupture-set DIR (SLIP_SUM, True by default from November 3rd, 2026, False from November 5th, when the user wanted
+to see whether every target can be well fitted without it, from the new constraints and positivity alone, True again since
+November 9th, the user's choice, with SLIP_SUM_L0 = 100): a soft term
 in the likelihood, rows after the balance term's (T.n_bal) and before n_fit, recorded apart as tr['slip_sum']
 (plate_rate.py's slip_sum_rows: per strip, (width / L0) ((sum_i w_ki c_i (model_i - target_i)) / sigma_k)^2, w_ki the
 fraction of subsection i's extent along the plate motion in strip k, so each subsection's weights add to 1; c_i its
 slip vector per unit slip projected on the local plate motion, signed (since November 3rd, 2026; before, c_i = 1); sigma_k
 with each parent section's subsections fully correlated; on the --cross-sections strips; L0 =
---slip-sum-l0 (SLIP_SUM_L0, 8.5 km by default, the strips' width: one extra observation per strip; 120 km would be the
+--slip-sum-l0 (SLIP_SUM_L0, 100 km in the notebook since 2026-11-09, the user's choice; 8.5 km, the scripts' default and the notebook's before, the strips' width: one extra observation per strip; 120 km would be the
 unprojected target sums' decorrelation length between the edges, about the span over its 5 Alpine-Wairau sections, 122 km); no whitening between strips, so the
 strip count only sets the integral's accuracy; the swap pairs' inner products include its rows, checked on a sample at
 start). Its bookkeeping test is in selftest_balance. plate_rate.py reports both (plate_rate.txt, a notebook cell for
