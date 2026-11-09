@@ -826,14 +826,14 @@ def reference_rates(spec, P):
 
 FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT', 'misfit'), ('MFD_MONOTONIC', 'mfd_monotonic'),
-                   ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'),
+                   ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'),
                    ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'),
                    ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 7                                          # the table's columns per line: 'model' and these 19 in 3 lines
+SETTINGS_PER_LINE = 7                                          # the table's columns per line: 'model' and these 20 in 3 lines
 
 
 def run_config(config, problem):

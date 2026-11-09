@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -155,11 +155,11 @@ check(not re.findall(r'^SLIP_BAND = ', cells[0][1], re.M) and 'slip_band' not in
       'notebook: no SLIP_BAND since 2026-11-10; every slip-rate, paleo and MFD prediction kept above zero (gibbs.py '
       '--all-positive, Target.set_groups; --slip-band and --paleo-band, with a factor, command-line options), with the band\'s '
       'exact test in both self-test sets and set_groups checked against set_positive and set_band')
-check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
+check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 'mfd_monotonic' in _cfg_keys
       and any("args += ['--mfd-monotonic']" in c for _, c in cells) and not any('MFD_RISE_SD' in c for _, c in cells)
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = True (back on November 10th, 2026, as before; out of the notebook from November 4th), '
+      'notebook MFD_MONOTONIC = False (off by default since 2026-11-09; True from November 10th, out of the notebook from November 4th), '
       'recorded and passed to gibbs.py --mfd-monotonic (a rising target\'s rise capped at --mfd-rise-sd 0.89 sd), with its '
       'exact test in the band\'s self-test')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
@@ -228,6 +228,9 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['True'] and '
       and re.findall(r'^CFM_PREF = (\S+)', cells[0][1], re.M) == ["'mode'"] and 'cfm_pref' in _cfg_keys
       and "'--cfm-pref', default='mode', choices=['mode', 'median']" in src['preliminaries.py']
       and re.findall(r'^CFM_ROUNDING = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_rounding' in _cfg_keys
+      and re.findall(r'^CFM_TIMEFRAME = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_timeframe' in _cfg_keys
+      and "'--cfm-timeframe', default=None" in src['preliminaries.py'] and '\ndef load_timeframe(' in src['cfm_sliprates.py']
+      and 'timeframe_sliprates.py' in src and os.path.exists(f'{ROOT}/data/cfm_timeframe_sliprates.csv')
       and "'--cfm-rounding', action='store_true'" in src['preliminaries.py'] and '\ndef load_cfm_steps(' in src['cfm_sliprates.py']
       and re.findall(r'^CFM_TEMPLATE_RHO = (\S+)', cells[0][1], re.M) == ['1'] and 'cfm_template_rho' in _cfg_keys
       and "'--cfm-template-rho', type=float, default=None" in src['preliminaries.py'] and '\ndef template_factors(' in src['cfm_sliprates.py']
@@ -356,7 +359,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['SLIP_SECTIONS', 'MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
-                  'MISFIT', 'MFD_MONOTONIC', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
+                  'MISFIT', 'MFD_MONOTONIC', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER',
                   'CROSS_SECTIONS', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
 _cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
 _runname = cfg[cfg.index('RUN_NAME = ('):cfg.index('RUN_DIR = ')]
@@ -377,7 +380,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('MISFIT', 'MFD_MONOTONIC', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT', 'MFD_MONOTONIC', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_PREF', 'CFM_ROUNDING', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SD_MULTIPLIER', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

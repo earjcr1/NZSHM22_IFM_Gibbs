@@ -220,6 +220,27 @@ flag preliminaries.py leaves the inputs as given. A zero-width side takes the ot
 min = pref = max gives sd = the mode (as the inputs: sigma = 0.8 x SlipRate there);
 the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
 split_hi2 = (sigma_ref/sigma_hi)^2 saved per cleaned row (load_problem; None without it; cru_common.split_weights).
+--cfm-timeframe CSV (CFM_TIMEFRAME, True by default since 2026-11-09, the user's choice; with --cfm-sliprates): each
+fault's SR_pref, SR_min and SR_max replaced by the mode, 2.5% and 97.5% points of its slip rate corrected for its timeframe
+(Coffey et al., accepted BSSA, papers in Inversions/Papers/GC_sliprates), the rest unchanged (split normal, ends at 2 sd,
+SLIP_RATE_FACTOR on the whole, template/link weights from the CFM's numbers as written, kept in place of the paper's source
+correction, its Table S3, by the user's choice); the notebook then sets SLIP_SD_MULTIPLIER 1 and CFM_ROUNDING False (and
+needs CFM_PREF 'mode'); recorded as the sixth entry of the problem's cfm_sliprates. The table, data/cfm_timeframe_sliprates.csv,
+is tools/timeframe_sliprates.py's (--cfm, --s4 the paper's Table S4, --rupture-set): S4 reports bounds never narrower than
+the CFM's (lower min(q, SR_min), upper max(q, SR_max): its 25/75% columns mostly the CFM's bounds, 2.5% pinned in 194 rows),
+so each fault's distribution is rebuilt exactly (quadrature over the factor's quantile function, no sampling; class
+Corrected): the paper's Gaussian on the CFM bounds (centre their midpoint, sd width / 3.92, negative part at 0) times the
+timeframe factor from its Tables 1-2 (interpolated in log t; across probability against the normal score, both linearly and
+by PCHIP, two schemes for redundancy), the fault's effective scaled timeframe t = timeframe x 1000 / RI solved per scheme
+so its 97.5% point matches S4's (483 solved, 74 at the tables' 100,000 years; faults not in S4, 3 of the 211k rupture set's:
+Ararata, St Stephens, Takapu, and 320 other CFM faults, their kind's median t); checks not in the fit: S4's medians matched
+to 0.986-1.013, unpinned 2.5% points 1.000 (5-95% 0.97-1.39); the mode (the density's maximum, the maximum-likelihood slip
+rate after the correction) and the quantiles the two schemes' geometric means (their modes differ by a median 0.12%; over 2%
+for Wairau 9.3%, Wellington: Pahiatua, Otaheke North, Clarence: Northeast, Jordan, Awatere: Southwest; both kept as
+mode_linear, mode_pchip). A kernel-density mode from draws, tried first, was off by up to 25% (smoothing a skewed density).
+The paleo sites' recurrence intervals reproduce S4 for the faults where the paper
+used them (Alpine, Hope: Conway, Awatere) but not for a third of the 42, so t is fitted, not taken from them. The paper's
+2.9 (abstract) is the mean of S4's 95% width / the CFM's over SR_pref < 1 mm/yr (2.86 here); the median is 1.6.
 plate_rate.cross_sections reads each subsection's target and sigma from its row, so --slip-sum sums the modes with
 sigma_ref unchanged in code. gibbs.py reads the weights from the problem (T.split; spike-and-slab only, no transfers):
 the misfit sum w(e) e^2, w = split_lo2 below the target and split_hi2 above, concave in m, so the on-chain slice uses
@@ -249,7 +270,8 @@ the full set; NULL arrays without it, so runs are bit-identical. --positive (BAN
 spike-and-slab only: every such row only kept above zero (Target.set_positive: a lower limit of half the smallest
 one-rupture amount, no upper limit, through the same rlo/rhi; positive_start switches on, at twice the slab floor, a
 rupture in each row the start predicts at 0; its exact test is in selftest_band). --mfd-monotonic (the notebook's MFD_MONOTONIC, on by default from early November 2026; command line
-only from November 4th; back in the notebook as before, True by default, since 2026-11-10 at the user's request): no bin's total above its lower neighbour's where the target is not (and,
+only from November 4th; back in the notebook as before, True by default, from 2026-11-10 at the user's request; False by default since 2026-11-09, the user: it held
+the bins against their limits and spoiled the MFD fit in the conservative run _1794181008): no bin's total above its lower neighbour's where the target is not (and,
 since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
 times the lower total; --mfd-rise-sd, 0.89 by default, command line only), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in

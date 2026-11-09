@@ -135,6 +135,7 @@ def main():
     cfm = bool(cfg.get('cfm_sliprates'))               # the slip rates as split normals from the CFM's SR_pref/min/max
     cpref = cfg.get('cfm_pref') or 'mode'              # SR_pref as each split normal's mode or its median
     cround = bool(cfg.get('cfm_rounding'))             # each side's sd widened by the CFM numbers' rounding
+    ctf = bool(cfg.get('cfm_timeframe'))               # each fault's slip rate corrected for its timeframe (Coffey et al.)
     ctmpl = cfg.get('cfm_template_rho')                # template groups' correlation, or None
     clinks = bool(cfg.get('cfm_rate_links'))           # with ctmpl, also the faults whose rate the CFM borrowed
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
@@ -495,6 +496,9 @@ def main():
                     if cpref == 'median' else 'mode, the most likely slip rate')],
                    ['CFM_ROUNDING', str(cround), 'each side\u2019s sd widened in quadrature by the rounding of the fault\u2019s '
                     'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written'],
+                   ['CFM_TIMEFRAME', str(ctf), 'each fault\u2019s slip rate corrected for its timeframe (Coffey et al.): the '
+                    'corrected distribution\u2019s mode and 2.5% and 97.5% points in place of SR_pref, SR_min and SR_max, '
+                    'no further multiplier' if ctf else 'the CFM\u2019s SR_pref, SR_min and SR_max'],
                    ['CFM_TEMPLATE_RHO', 'None' if ctmpl is None else f'{float(ctmpl):g}',
                     'faults of quality codes 2\u20135 sharing an identical SR_pref / SR_min / SR_max treated as correlated, '
                     f'each one\u2019s rows weighted 1/\u221a(1 + (n \u2212 1) \u00d7 {float(ctmpl):g}) for a group of n' if ctmpl is not None

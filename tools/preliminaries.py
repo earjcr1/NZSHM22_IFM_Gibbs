@@ -398,6 +398,11 @@ def main():
     ap.add_argument('--cfm-rounding', action='store_true',
                     help='--cfm-sliprates: each fault\'s SR_pref, SR_min and SR_max known to half the finest step among them '
                          'as written (1, 0.1, 0.01 mm/yr, ...), uniform, its variance added in quadrature to each side\'s sd')
+    ap.add_argument('--cfm-timeframe', default=None, metavar='CSV',
+                    help='--cfm-sliprates: each fault\'s slip rate corrected for its timeframe (Coffey et al.; the table '
+                         'timeframe_sliprates.py writes, data/cfm_timeframe_sliprates.csv): its mode, 2.5%% and 97.5%% points '
+                         'in place of SR_pref, SR_min and SR_max, with no multiplier (--slip-sd-multiplier 1, the default with '
+                         'it), no --cfm-rounding and the mode as the mode')
     ap.add_argument('--cfm-template-rho', type=float, default=None, metavar='RHO',
                     help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
                          'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
@@ -445,11 +450,19 @@ def main():
             raise SystemExit('--slip-rate-factor must be positive')
         if args.slip_sd_multiplier is not None and not args.slip_sd_multiplier > 0:
             raise SystemExit('--slip-sd-multiplier must be positive')
+        if args.cfm_timeframe:
+            if not args.cfm_sliprates:
+                raise SystemExit('--cfm-timeframe needs --cfm-sliprates (the CFM\'s faults, quality codes and templates)')
+            if args.slip_sd_multiplier not in (None, 1.0) or args.cfm_rounding or args.cfm_pref != 'mode':
+                raise SystemExit('--cfm-timeframe carries its own widths and centres: give it with --slip-sd-multiplier 1 '
+                                 '(or none), without --cfm-rounding and with --cfm-pref mode')
+            args.slip_sd_multiplier = 1.0
         try:
             if args.cfm_sliprates:
                 A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
                                                                2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier,
-                                                               args.slip_rate_factor, args.cfm_pref, args.cfm_rounding)
+                                                               args.slip_rate_factor, args.cfm_pref, args.cfm_rounding,
+                                                               timeframe=args.cfm_timeframe)
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
                     t_sub, lines_t, links_t, corr_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
@@ -697,7 +710,8 @@ def main():
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',
                                                                     f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
-                                                                    args.cfm_pref, 'rounding' if args.cfm_rounding else '']),
+                                                                    args.cfm_pref, 'rounding' if args.cfm_rounding else '',
+                                                                    os.path.basename(args.cfm_timeframe) if args.cfm_timeframe else '']),
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
                  template_scale=t_keep, cfm_template_rho=args.cfm_template_rho,
                  cfm_rate_links=True if args.cfm_rate_links else None,

@@ -367,9 +367,22 @@ def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
     return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
-def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False):
+def load_timeframe(path):
+    """--cfm-timeframe: timeframe_sliprates.py's table, by fault name -> (mode, 2.5%, 97.5%) of each fault's slip rate
+    corrected for its timeframe (Coffey et al.), mm/yr."""
+    out = {}
+    with open(path, encoding='utf-8-sig', newline='') as f:
+        for row in csv.DictReader(f):
+            out[row['Name'].strip()] = (float(row['mode']), float(row['q025']), float(row['q975']))
+    return out
+
+
+def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False,
+            timeframe=None):
     """The inputs' slip-rate rows (raw rows 0 .. subsections - 1) rebuilt from the CFM, each split normal scaled as a whole
-    by srf (default: the inputs' own factor, 0.8). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
+    by srf (default: the inputs' own factor, 0.8). timeframe (--cfm-timeframe): timeframe_sliprates.py's table, whose
+    mode, 2.5% and 97.5% points of each fault's timeframe-corrected slip rate take the places of SR_pref, SR_min and SR_max
+    (with factor 1, no rounding, the mode as the mode). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
     if not (nsig > 0 and factor > 0):
         raise ValueError('--cfm-sigmas and --slip-sd-multiplier must be positive')
@@ -382,6 +395,15 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     if miss:
         raise ValueError(f'{len(miss)} parent faults of the rupture set are not in {cfm_csv} by name: '
                          + ', '.join(miss[:10]) + (' ...' if len(miss) > 10 else ''))
+    if timeframe is not None:
+        if rounding or pref_as != 'mode':
+            raise ValueError('--cfm-timeframe takes its own modes and 95% points: give it without --cfm-rounding and '
+                             '--cfm-pref median')
+        tf = load_timeframe(timeframe)
+        miss = sorted({p for p in sub['parent'] if p not in tf})
+        if miss:
+            raise ValueError(f'{len(miss)} parent faults of the rupture set are not in {timeframe}: ' + ', '.join(miss[:10]))
+        cfm = tf
     pref, smin, smax = (np.array([cfm[p][t] for p in sub['parent']]) for t in range(3))
     if (smin > pref).any() or (smax < pref).any() or (smin < 0).any():
         bad = sorted({sub['parent'][j] for j in np.flatnonzero((smin > pref) | (smax < pref) | (smin < 0))})
@@ -429,7 +451,7 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     L2[:ns], H2[:ns] = (s_ref / s_lo) ** 2, (s_ref / s_hi) ** 2
     tab = dict(parent=sub['parent'], pref=pref, smin=smin, smax=smax, mode=mode, s_lo=s_lo, s_hi=s_hi, s_ref=s_ref,
                sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float), pref_as=pref_as,
-               fallback=fallback, rounding=rounding, widen=widen, qstep=qstep)
+               fallback=fallback, rounding=rounding, widen=widen, qstep=qstep, timeframe=timeframe)
     return A2, d2, L2, H2, tab, report_lines(tab, nsig, factor, cfm_csv)
 
 
@@ -442,14 +464,25 @@ def report_lines(tab, nsig, factor, cfm_csv):
     ok = np.isfinite(tab['sig_old'])
     ratio = tab['s_ref'][ok] / tab['sig_old'][ok]
     skew = np.log10(tab['s_hi'] / tab['s_lo'])[first]
-    L = [f'== slip rates from the CFM ({os.path.basename(cfm_csv)}): {len(tab["parent"])} subsection rows of {len(first)} parent '
-         f'faults, each a split normal in mm/yr, the CFM\'s scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the '
-         f'inputs\' {tab["f_in"]:g}): mode '
-         f'{tab["f"][0]:g} x SR_pref, sd below {factor:g} x {tab["f"][0]:g} x (SR_pref - SR_min) / {nsig:g}, above {factor:g} x '
-         f'{tab["f"][0]:g} x (SR_max - SR_pref) / {nsig:g} (SR_min and SR_max at {nsig:g} sigma, times {factor:g}); rows '
-         f'rescaled to the mean of the two sides',
-         f'   SR_pref against the rupture set\'s SlipRate: {int(np.sum(pd_ == 0))} faults the same, {int(np.sum(pd_ != 0))} '
-         f'different (largest {np.abs(pd_).max():.3g} mm/yr)',
+    tfn = tab.get('timeframe')
+    L = ([f'== slip rates from the CFM corrected for their timeframe (Coffey et al.; {os.path.basename(tfn)}, from '
+          f'timeframe_sliprates.py): {len(tab["parent"])} subsection rows of {len(first)} parent faults, each a split normal '
+          f'in mm/yr scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the inputs\' {tab["f_in"]:g}): mode '
+          f'{tab["f"][0]:g} x the corrected distribution\'s mode, sd below {tab["f"][0]:g} x (mode - its 2.5% point) / '
+          f'{nsig:g}, above {tab["f"][0]:g} x (its 97.5% point - mode) / {nsig:g} (no further multiplier); rows rescaled to '
+          'the mean of the two sides',
+          f'   the modes against the rupture set\'s SlipRate: {int(np.sum(pd_ == 0))} faults the same, {int(np.sum(pd_ != 0))} '
+          f'different (median ratio {np.median(tab["pref"][first] / np.where(tab["rate_old"][first] > 0, tab["rate_old"][first], np.nan)):.3f}; '
+          f'the paper centres each fault at the midpoint of its CFM bounds)'] if tfn else
+         [f'== slip rates from the CFM ({os.path.basename(cfm_csv)}): {len(tab["parent"])} subsection rows of {len(first)} parent '
+          f'faults, each a split normal in mm/yr, the CFM\'s scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the '
+          f'inputs\' {tab["f_in"]:g}): mode '
+          f'{tab["f"][0]:g} x SR_pref, sd below {factor:g} x {tab["f"][0]:g} x (SR_pref - SR_min) / {nsig:g}, above {factor:g} x '
+          f'{tab["f"][0]:g} x (SR_max - SR_pref) / {nsig:g} (SR_min and SR_max at {nsig:g} sigma, times {factor:g}); rows '
+          f'rescaled to the mean of the two sides',
+          f'   SR_pref against the rupture set\'s SlipRate: {int(np.sum(pd_ == 0))} faults the same, {int(np.sum(pd_ != 0))} '
+          f'different (largest {np.abs(pd_).max():.3g} mm/yr)'])
+    L += [
          f'   lopsided: sd above / below the mode, median {10 ** np.median(skew):.2f} (5-95% {10 ** np.percentile(skew, 5):.2f}-'
          f'{10 ** np.percentile(skew, 95):.2f}); {int(np.sum(np.abs(skew) > np.log10(1.5)))} faults beyond a factor 1.5 either way',
          f'   {z1} faults with one side of zero width (it takes the other side\'s), {z2} with none (sd = the mode)',
