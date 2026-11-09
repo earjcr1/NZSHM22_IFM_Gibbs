@@ -162,7 +162,14 @@ tr slip_geo_b, mfd_log_b, mfd_log_expect, paleo_b. Fit check: geo_moments(P, row
 exp(-m1/2) x^(1-b)), paleo_misfit.site_moments_mixed (b < 1). --all-positive (the notebook always): slip_band and
 paleo_band positive unless a factor, MFD bins positive (g_mfd in set_groups). SLIP_BAND removed from the notebook (2026-11-10, the user:
 'take out SLIP_BAND'; --slip-band/--paleo-band stay in gibbs.py); SLIP_BAND_SOFT removed from the notebook too (the user: the log10 option does what it was
-trying to do; --slip-log-band stays in gibbs.py). Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
+trying to do; --slip-log-band stays in gibbs.py). Column passes (2026-11-09, the user's request, speed only): gibbs.column_passes(T, B) sets T.pass_end (the kernel's PF: each
+column's likelihood passes end before the constraint rows, n_fit on; band_bounds and the residual updates still use the whole
+column) and T.ss_fold (the --slip-sum rows, n_bal..n_fit, folded: B G must equal them to 1e-12 of their largest entry, else
+not folded; the kernel keeps U = B^T r_ss per chain (K x N, recomputed at each gibbs_run call), sums G_i.U in col_split's pass
+(fused when the bound sums share it) or col_udots, adds 2 m G_i.U + m^2 NSS_i to DQ, dt, sp_change and sp_lik, and updates U on
+changes); main builds B from slip_sum_rows' info (scale x W x proj x sig_i / (row_scale x lin_sc)). The NumPy backend reads
+whole columns. Bit-identical in fixed-seed tests at 211k (192 and 1,600 sweeps), 20-25% less time per sweep; selftest_fold
+(C skip, C fold, NumPy) in both sets. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
 in the full set. run_quick_checks pins MISFIT='linear' (positivity always) (TESTING.md's values predate positivity).
 preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a

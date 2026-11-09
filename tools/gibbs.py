@@ -117,7 +117,10 @@ typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0
                  /* --cfm slip rates (sp = 1): the likelihood exactly, -sum w(e) e^2 sk over the rupture's column, e = sr_j +
                     G_ji (m - sxi), w = SL2_j below its target (e < 0) and SH2_j above; sL0 its value at m0 */
                  int sp; const double *sg; const int32_t *si; int64_t sp0, sp1; const double *sr, *SL2, *SH2;
-                 double sxi, sk, sL0; } lbctx;
+                 double sxi, sk, sL0;
+                 /* --slip-sum folded into the slip-rate rows (gibbs_run's U): the column's dot product with the summed slip
+                    rates' residuals, sud, and its squared norm on those rows, snss (0 and 0 otherwise) */
+                 double sud, snss; } lbctx;
 /* w(e) e^2 with w = l below 0 and h above, without a branch (the sign of a residual is unpredictable):
    ((h + l) e^2 + (h - l) e |e|) / 2 */
 static inline double sp_w2(double e, double l, double h) { return 0.5 * ((h + l) * e * e + (h - l) * e * fabs(e)); }
@@ -130,7 +133,7 @@ static double sp_lik(const lbctx *c, double m) {
         const double e = c->sr[j] + c->sg[p] * dm;
         acc += sp_w2(e, c->SL2[j], c->SH2[j]);
     }
-    return -acc * c->sk;
+    return -(acc + dm * (2.0 * c->sud + dm * c->snss)) * c->sk;   /* the folded summed slip rates' rows: Gaussian */
 }
 static inline double lb_prior(const lbctx *c, double z) {
     if (c->pk == 2) return -(z - c->muz) * (z - c->muz) * c->kz;      /* hierarchical: log m ~ Normal(muz, 1/(2 kz)) */
@@ -437,23 +440,63 @@ static inline void lw_coef(double *e, double w, double wl, double y, double ld) 
 
 /* --cfm slip rates: the change of the split misfit, sum w(e) e^2, between the residuals r + G_i d0 and r + G_i d1 */
 static double sp_change(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
-                        const double *SL2, const double *SH2, double d0, double d1) {
+                        const double *SL2, const double *SH2, double d0, double d1, double ud, double nss) {
     double acc = 0.0;
     for (int64_t p = p0; p < p1; p++) {
         const int32_t j = indices[p];
         const double e0 = r[j] + data[p] * d0, e1 = r[j] + data[p] * d1;
         acc += sp_w2(e1, SL2[j], SH2[j]) - sp_w2(e0, SL2[j], SH2[j]);
     }
-    return acc;
+    /* --slip-sum folded (ud, nss: the column's dot product with those rows' residuals and its squared norm there; 0 and
+       0 otherwise): their Gaussian terms' change, 2 (d1 - d0) ud + (d1^2 - d0^2) nss */
+    return acc + (d1 - d0) * (2.0 * ud + (d1 + d0) * nss);
+}
+/* --slip-sum folded into the slip-rate rows: for up to four chains, the sum over the column's (likelihood) entries of
+   G_ji U_j, U = B^T r_ss each chain's slip-rate rows' share of the summed slip rates' residuals (0 on other rows), which
+   is the column's dot product with those rows, sum_s A_si r_s, since A = B G_slip */
+static inline void col_udots(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1,
+                             double *const *u, double *uq) {
+    double d0 = 0.0, d1 = 0.0, d2 = 0.0, d3 = 0.0;
+    const double *u0 = u[0], *u1 = u[1], *u2 = u[2], *u3 = u[3];
+    if (kg >= 4)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * u0[j]; d1 += g * u1[j]; d2 += g * u2[j]; d3 += g * u3[j];
+        }
+    else if (kg == 3)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * u0[j]; d1 += g * u1[j]; d2 += g * u2[j];
+        }
+    else if (kg == 2)
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            d0 += g * u0[j]; d1 += g * u1[j];
+        }
+    else
+        for (int64_t p = p0; p < p1; p++) d0 += data[p] * u0[indices[p]];
+    uq[0] = d0; uq[1] = d1; uq[2] = d2; uq[3] = d3;
 }
 /* --cfm slip rates: for each off chain q (pre[q]) of a group, the split misfit's change if it switched on at mq[q], DQ[q],
    in one pass over the column; with the soft band (A), also its bound sums s1, s2, s3 (col_dots_lw's). One function per
    group size, with the sums in registers (chains not off are given m = 0, so they add nothing to DQ). */
 static void col_split1(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3, double *const *W0) {
+                       double *s1, double *s2, double *s3, double *const *W0,
+                       double *const *u, double *uq) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
-    if (A) {
+    if (A && u) {         /* --slip-sum folded: each chain's G_i.U in the same pass */
+        const double *A0 = A[0];
+        const double *u0 = u[0]; double v0 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            v0 += g * u0[j];
+        }
+        uq[0] = v0;
+    } else if (A) {
         const double *A0 = A[0];
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p], gg = g * g; const int32_t j = indices[p];
@@ -471,10 +514,28 @@ static void col_split1(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split2(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3, double *const *W0) {
+                       double *s1, double *s2, double *s3, double *const *W0,
+                       double *const *u, double *uq) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
-    if (A) {
+    if (A && u) {         /* --slip-sum folded: each chain's G_i.U in the same pass */
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
+    } else if (A) {
         const double *A0 = A[0];
         const double *A1 = A[1];
         for (int64_t p = p0; p < p1; p++) {
@@ -497,11 +558,35 @@ static void col_split2(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split3(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3, double *const *W0) {
+                       double *s1, double *s2, double *s3, double *const *W0,
+                       double *const *u, double *uq) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
     const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
-    if (A) {
+    if (A && u) {         /* --slip-sum folded: each chain's G_i.U in the same pass */
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        const double *A2 = A[2];
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        const double *u2 = u[2]; double v2 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
+            { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+            v2 += g * u2[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
+        uq[2] = v2;
+    } else if (A) {
         const double *A0 = A[0];
         const double *A1 = A[1];
         const double *A2 = A[2];
@@ -529,12 +614,42 @@ static void col_split3(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split4(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                        double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                       double *s1, double *s2, double *s3, double *const *W0) {
+                       double *s1, double *s2, double *s3, double *const *W0,
+                       double *const *u, double *uq) {
     const double *r0 = r[0], m0 = pre[0] ? mq[0] : 0.0; double d0 = 0.0, a0 = 0.0, b0 = 0.0, c0 = 0.0;
     const double *r1 = r[1], m1 = pre[1] ? mq[1] : 0.0; double d1 = 0.0, a1 = 0.0, b1 = 0.0, c1 = 0.0;
     const double *r2 = r[2], m2 = pre[2] ? mq[2] : 0.0; double d2 = 0.0, a2 = 0.0, b2 = 0.0, c2 = 0.0;
     const double *r3 = r[3], m3 = pre[3] ? mq[3] : 0.0; double d3 = 0.0, a3 = 0.0, b3 = 0.0, c3 = 0.0;
-    if (A) {
+    if (A && u) {         /* --slip-sum folded: each chain's G_i.U in the same pass */
+        const double *A0 = A[0];
+        const double *A1 = A[1];
+        const double *A2 = A[2];
+        const double *A3 = A[3];
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        const double *u2 = u[2]; double v2 = 0.0;
+        const double *u3 = u[3]; double v3 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p], gg = g * g; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
+            { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
+            { const double e1 = r3[j] + g * m3; d3 += sp_w2(e1, l2, h2) - W0[3][j]; }
+            { const double *e = A3 + 4 * j; a3 += g * e[0]; b3 += gg * e[1]; c3 += gg * e[2]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+            v2 += g * u2[j];
+            v3 += g * u3[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
+        uq[2] = v2;
+        uq[3] = v3;
+    } else if (A) {
         const double *A0 = A[0];
         const double *A1 = A[1];
         const double *A2 = A[2];
@@ -567,12 +682,13 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
 }
 static void col_split(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
-                      double *s1, double *s2, double *s3, double *const *W0) {
+                      double *s1, double *s2, double *s3, double *const *W0, double *const *u, double *uq) {
+    /* u (with A; or NULL): --slip-sum folded, each chain's G_i.U summed in the same pass into uq (col_udots's sums) */
     for (int64_t q = 0; q < 4; q++) DQ[q] = s1[q] = s2[q] = s3[q] = 0.0;
-    if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
-    else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
-    else if (kg == 2) col_split2(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
-    else              col_split1(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0);
+    if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
+    else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
+    else if (kg == 2) col_split2(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
+    else              col_split1(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
 }
 
 /* --log-band and --paleo-misfit: col_dots_lw's bound sums s1, s2, s3 over only the column's entries in weighted rows
@@ -672,9 +788,25 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const int64_t *SBIN, int64_t SB, const double *LLO, const double *LHI, const double *SC, int64_t *CNT,
                double gam, const double *MIX, const double *RLO, const double *RHI,
                const double *LW, const double *LWL, const double *LD, const double *DY, const pmctx *PM, const double *SL2,
-               const double *SH2, const int64_t *LWP, const int64_t *LWQ)
+               const double *SH2, const int64_t *LWP, const int64_t *LWQ,
+               const int64_t *PF, const int64_t *PC, int64_t NB, int64_t NSR, const int64_t *SSP, const int32_t *SSJ,
+               const double *SSV, const double *NSS)
 {
+    /* PF (or NULL: each column's end): where each column's passes for the likelihood end, the entries after it in rows the
+       passes need not read: the constraint rows (eps coefficients, held within their limits by band_bounds, which reads the
+       whole column), and with SSP the summed slip rates' rows (rows NB .. NB + NSR - 1, entries PF[i] .. PC[i] - 1), folded
+       into the slip-rate rows: A = B G_slip (B: SSP, SSJ, SSV, row by row; SSJ the slip-rate rows), so A_i.r_ss =
+       G_i.U with U = B^T r_ss kept per chain (computed here from R, then updated as rates change), and NSS[i] = ||A_i||^2 */
     const double s2 = sigma * sigma;
+    double *U = NULL;
+    if (SSP) {
+        U = (double *)calloc((size_t)K * (size_t)N, sizeof(double));
+        for (int64_t k = 0; k < K; k++)
+            for (int64_t sr = 0; sr < NSR; sr++) {
+                const double rs = R[k * N + NB + sr];
+                for (int64_t t = SSP[sr]; t < SSP[sr + 1]; t++) U[k * N + SSJ[t]] += SSV[t] * rs;
+            }
+    }
     double *WC = NULL;                             /* --cfm slip rates: each chain's rows' current split-misfit terms,
                                                       sp_w2 of their residuals, so a column pass computes only the new ones */
     if (SL2) {
@@ -697,13 +829,13 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
     }
     for (int64_t sw = 0; sw < nsweeps; sw++) {
       for (int64_t i = 0; i < n; i++) {
-        const int64_t p0 = indptr[i], p1 = indptr[i + 1];
+        const int64_t p0 = indptr[i], p1 = indptr[i + 1], pe = PF ? PF[i] : p1;   /* pe: the likelihood passes' end */
         const int empty = (p1 == p0 || inv_csq[i] <= 0.0);
         const double aa = empty ? 0.0 : 1.0 / inv_csq[i];
         for (int64_t k0 = 0; k0 < K; k0 += 4) {
             const int64_t kg = K - k0 < 4 ? K - k0 : 4;
             double dt[4] = {0.0, 0.0, 0.0, 0.0}, S1[4] = {0.0}, S2[4] = {0.0}, S3[4] = {0.0};
-            double mpre[4] = {0.0}, DQ[4] = {0.0};
+            double mpre[4] = {0.0}, DQ[4] = {0.0}, uq[4] = {0.0, 0.0, 0.0, 0.0};
             int pre[4] = {0, 0, 0, 0};
             if (SL2 && pkind == 3 && !empty) {        /* --cfm slip rates: each off chain's slab draw first (its draws in
                                                          the same order as below), then its exact change in one pass */
@@ -726,11 +858,20 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     ag[q] = AC ? AC + 4 * (k0 + (q < kg ? q : 0)) * N : NULL;
                     wg[q] = WC + (k0 + (q < kg ? q : 0)) * N;
                 }
+                double *ug[4];                /* --slip-sum folded: each chain's U */
+                for (int64_t q = 0; q < 4; q++) ug[q] = U ? U + (k0 + (q < kg ? q : 0)) * N : NULL;
+                const int fused = U && AC && !LWP;   /* G_i.U summed in the split pass itself */
                 if (AC && LWP) {              /* the bound sums over the weighted rows only (col_lwsums) */
-                    col_split(kg, data, indices, p0, p1, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg);
+                    col_split(kg, data, indices, p0, pe, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg, NULL, uq);
                     col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                 } else
-                    col_split(kg, data, indices, p0, p1, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg);
+                    col_split(kg, data, indices, p0, pe, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg,
+                              fused ? ug : NULL, uq);
+                if (U) {                      /* the folded summed slip rates' rows: each off chain's Gaussian change */
+                    if (!fused) col_udots(kg, data, indices, p0, pe, ug, uq);
+                    for (int64_t q = 0; q < kg; q++)
+                        if (pre[q]) DQ[q] += mpre[q] * (2.0 * uq[q] + mpre[q] * NSS[i]);
+                }
             } else if (!empty) {
                 double *rg[4];
                 for (int64_t q = 0; q < 4; q++) rg[q] = R + (k0 + (q < kg ? q : 0)) * N;
@@ -738,12 +879,18 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     double *ag[4];
                     for (int64_t q = 0; q < 4; q++) ag[q] = AC + 4 * (k0 + (q < kg ? q : 0)) * N;
                     if (LWP) {                /* or, with few weighted rows, the sums over those alone */
-                        col_dots(kg, data, indices, p0, p1, rg, dt);
+                        col_dots(kg, data, indices, p0, pe, rg, dt);
                         col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                     } else
-                        col_dots_lw(kg, data, indices, p0, p1, rg, ag, dt, S1, S2, S3);
+                        col_dots_lw(kg, data, indices, p0, pe, rg, ag, dt, S1, S2, S3);
                 } else
-                    col_dots(kg, data, indices, p0, p1, rg, dt);
+                    col_dots(kg, data, indices, p0, pe, rg, dt);
+                if (U) {                      /* the folded summed slip rates' rows: their share of the dot products */
+                    double *ug[4];
+                    for (int64_t q = 0; q < 4; q++) ug[q] = U + (k0 + (q < kg ? q : 0)) * N;
+                    col_udots(kg, data, indices, p0, pe, ug, uq);
+                    for (int64_t q = 0; q < kg; q++) dt[q] += uq[q];
+                }
             }
             for (int64_t q = 0; q < kg; q++) {
                 const int64_t k = k0 + q;
@@ -769,7 +916,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         const double z0 = log(xi);
                         c.m0 = xi; c.lp0 = lb_prior(&c, z0);
                         if (!empty && SL2) {      /* --cfm slip rates: the likelihood evaluated exactly */
-                            c.sp = 1; c.sg = data; c.si = indices; c.sp0 = p0; c.sp1 = p1; c.sr = r; c.SL2 = SL2; c.SH2 = SH2;
+                            c.sp = 1; c.sg = data; c.si = indices; c.sp0 = p0; c.sp1 = pe; c.sr = r; c.SL2 = SL2; c.SH2 = SH2;
+                            c.sud = U ? uq[q] : 0.0; c.snss = U ? NSS[i] : 0.0;
                             c.sxi = xi; c.sk = 0.5 / s2; c.sL0 = sp_lik(&c, xi);
                         } else if (!empty) { c.mu = xi - dot / aa; c.inv2s2 = 0.5 * aa / s2; }
                         if (RLO) {            /* the band: the slice within the rates it allows (z0 always among them) */
@@ -780,7 +928,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         /* --log-band: the slice step, reversible under the rest of the target, is a proposal that
                            the soft band's change accepts or not (Metropolis), so the update stays exact */
                         if (LW && !empty && m != xi) {
-                            const double dp = lw_change(data, indices, p0, p1, r, DY, LW, LWL, LD, 0.0, m - xi, PM);
+                            const double dp = lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, 0.0, m - xi, PM);
                             if (!(log(unif(s)) < -dp)) m = xi;
                         }
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
@@ -791,7 +939,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's group */
                     double xl = 0.0;          /* the likelihood's part of the log odds, lr - LOD */
                     if (!empty && SL2) {      /* --cfm slip rates: the split misfit's change, exactly */
-                        xl = (pre[q] ? DQ[q] : sp_change(data, indices, p0, p1, r, SL2, SH2, -xi, m - xi)) / (2.0 * s2);
+                        xl = (pre[q] ? DQ[q] : sp_change(data, indices, p0, pe, r, SL2, SH2, -xi, m - xi,
+                                                         U ? uq[q] : 0.0, U ? NSS[i] : 0.0)) / (2.0 * s2);
                         lr -= xl;
                     } else if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
                     if (LW && !empty) {
@@ -824,7 +973,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         }
                         if (on < 0) {
                             if (!have_g) g = lr - (log(uu) - log1p(-uu));
-                            on = lw_change(data, indices, p0, p1, r, DY, LW, LWL, LD, -xi, m - xi, PM) < g;
+                            on = lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) < g;
                         }
                         xn = on ? m : 0.0;
                     } else {
@@ -877,14 +1026,20 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 const double dl = xn - xi;
                 if (dl != 0.0 && !empty) {
                     for (int64_t p = p0; p < p1; p++) r[indices[p]] += data[p] * dl;
-                    if (WC)                   /* --cfm slip rates: the changed rows' cached terms */
-                        for (int64_t p = p0; p < p1; p++) {
+                    if (U)                    /* the folded summed slip rates' rows: U = B^T r_ss, kept current */
+                        for (int64_t p = pe; p < PC[i]; p++) {
+                            const int64_t sr = indices[p] - NB;
+                            const double drs = data[p] * dl;
+                            for (int64_t t = SSP[sr]; t < SSP[sr + 1]; t++) U[k * N + SSJ[t]] += SSV[t] * drs;
+                        }
+                    if (WC)                   /* --cfm slip rates: the changed rows' cached terms (those the passes read) */
+                        for (int64_t p = p0; p < pe; p++) {
                             const int32_t j = indices[p];
                             WC[k * N + j] = sp_w2(r[j], SL2[j], SH2[j]);
                         }
                     if (AC)                   /* --log-band: the changed rows' bound coefficients (with LWP, the
                                                  weighted rows', the only ones with any) */
-                        for (int64_t t = LWP ? LWP[i] : p0; t < (LWP ? LWP[i + 1] : p1); t++) {
+                        for (int64_t t = LWP ? LWP[i] : p0; t < (LWP ? LWP[i + 1] : pe); t++) {
                             const int64_t p = LWP ? LWQ[t] : t;
                             const int32_t j = indices[p];
                             if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], LWL ? LWL[j] : LW[j], r[j] + DY[j], LD[j]);
@@ -902,6 +1057,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
     }
     if (AC) { free(AC); free(ODD); }
     free(WC);
+    free(U);
     if (pkind == 3 && CNT)                         /* each chain's ruptures switched on, per bin, for the fractions on */
         for (int64_t k = 0; k < K; k++) {
             int64_t *cn = CNT + k * SB;
@@ -1130,7 +1286,8 @@ def build_kernel():
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
-    L.gibbs_run.argtypes = [I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P] + [P] * 4 + [P] + [P, P] + [P, P]
+    L.gibbs_run.argtypes = ([I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P]
+                            + [P] * 4 + [P] + [P, P] + [P, P] + [P, P, I, I, P, P, P, P])
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
@@ -1176,6 +1333,8 @@ class Target:
         self.split = None                          # --cfm-sliprates (in the problem): dict(L2, H2), each row's weight
                                                    # below and above its target (1 on rows without a split normal)
         self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
+        self.pass_end = None                       # column_passes: where each column's likelihood passes end (None: its end)
+        self.ss_fold = None                        # column_passes: the summed slip rates' rows folded into the slip-rate rows
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
             self.pkind = 1
@@ -1370,14 +1529,16 @@ def _lw_sub_ptrs(T):
     NULLs otherwise, or without the soft band's machinery. Built once per T.lw."""
     if T.lw is None:
         return None, None
-    key = (id(T.lw['W']), id(T.lw.get('PM')))
+    key = (id(T.lw['W']), id(T.lw.get('PM')), id(getattr(T, 'pass_end', None)))
     if getattr(T, '_lw_sub_key', None) != key:
         w = np.asarray(T.lw['W']) > 0
         if T.lw.get('PM') is not None:
             w = w | (np.asarray(T.lw['PM']['I']) >= 0)
         hit = w[T.indices]
         sub = None
-        if hit.mean() < 0.5:
+        pf = getattr(T, 'pass_end', None)              # the share among the entries the passes read
+        share = hit.mean() if pf is None else hit.sum() / max(1, int((pf - T.indptr[:-1]).sum()))
+        if share < 0.5:
             pos = np.ascontiguousarray(np.flatnonzero(hit), np.int64)
             sub = (np.ascontiguousarray(np.searchsorted(pos, T.indptr), np.int64), pos)
         T._lw_sub, T._lw_sub_key = sub, key
@@ -1422,13 +1583,72 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
-                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T))
+                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T),
+                      *_pass_ptrs(T))
     if len(groups) == 1:
         work(groups[0])
     else:
         th = [threading.Thread(target=work, args=(g,)) for g in groups]
         [t.start() for t in th]
         [t.join() for t in th]
+
+
+def _pass_ptrs(T):
+    """column_passes' arrays for the kernel (PF, PC, NB, NSR, SSP, SSJ, SSV, NSS), NULLs and zeros without them."""
+    pf = getattr(T, 'pass_end', None)
+    f = getattr(T, 'ss_fold', None)
+    if f is None:
+        return (None if pf is None else _ptr(pf)), None, 0, 0, None, None, None, None
+    return (_ptr(pf), _ptr(f['PC']), int(f['NB']), int(f['NSR']), _ptr(f['SSP']), _ptr(f['SSJ']), _ptr(f['SSV']),
+            _ptr(f['NSS']))
+
+
+def column_passes(T, B=None, tol=1e-12):
+    """The C kernel's passes over each column for the likelihood (the dot products, the split misfit's change, the soft
+    band's bound sums) need not read every row (gibbs_run's PF): the constraint rows (rows n_fit on: --mfd-monotonic's and
+    --plate-rate's, with coefficients of 1e-9, contributing about 1e-18 to each term; band_bounds still reads them), and,
+    given B (a sparse matrix, the summed slip rates' rows x all rows, nonzero only in data rows) with those rows (n_bal to
+    n_fit) equal to B G, the summed slip rates' rows, folded into the rows B reads (gibbs_run's U = B^T r_ss, per chain):
+    their share of a column's dot product is G_i.U and of its squared norm NSS[i]. B G is checked against the rows
+    themselves (to tol, relative to their largest entry); if it does not match, they are left in the passes. Sets
+    T.pass_end and T.ss_fold; returns a line saying what the passes skip (or None if nothing)"""
+    T.pass_end, T.ss_fold = None, None
+    nbal = T.n_fit if T.n_bal is None else T.n_bal
+    col = np.repeat(np.arange(T.n), np.diff(T.indptr))
+
+    def ends(cut):
+        return np.ascontiguousarray(T.indptr[:-1] + np.bincount(col[T.indices < cut], minlength=T.n), np.int64)
+    PC = ends(T.n_fit)
+    fold, note = None, None
+    if B is not None and nbal < T.n_fit:
+        B = sp.csr_matrix(B, dtype=np.float64)
+        Gr = sp.csr_matrix(T.G)
+        Gss = Gr[nbal:T.n_fit]
+        ok = B.shape == (T.n_fit - nbal, T.N) and (B.nnz == 0 or B.indices.max() < nbal)
+        if ok:
+            D = (B @ Gr - Gss).tocsr()
+            scale_ = abs(Gss).max() if Gss.nnz else 1.0
+            err = abs(D).max() / scale_ if D.nnz else 0.0
+            ok = err <= tol
+            note = (f'the summed slip rates\' {T.n_fit - nbal} rows ({Gss.nnz:,} entries) folded into the slip-rate rows '
+                    f'(B G matches them to {err:.1e} of their largest entry)' if ok else
+                    f'the summed slip rates\' rows not folded: B G differs from them by {err:.1e} of their largest entry')
+        else:
+            note = 'the summed slip rates\' rows not folded: B does not map the data rows onto them'
+        if ok:
+            B.sort_indices()
+            fold = dict(PC=PC, NB=nbal, NSR=T.n_fit - nbal, SSP=np.ascontiguousarray(B.indptr, np.int64),
+                        SSJ=np.ascontiguousarray(B.indices, np.int32), SSV=np.ascontiguousarray(B.data, np.float64),
+                        NSS=np.ascontiguousarray(np.asarray(Gss.multiply(Gss).sum(0)).ravel(), np.float64))
+    PF = ends(nbal) if fold is not None else PC
+    if fold is None and (PF == T.indptr[1:]).all():
+        return note
+    T.pass_end, T.ss_fold = PF, fold
+    skipped = int((T.indptr[1:] - PF).sum())
+    parts = ([f'the constraint rows ({int((T.indptr[1:] - PC).sum()):,} entries)'] if (PC < T.indptr[1:]).any() else []) \
+        + ([note] if fold is not None else [])
+    return (f'column passes: {skipped:,} of {T.indptr[-1]:,} entries ({skipped / max(T.indptr[-1], 1):.0%}) left out of the '
+            'likelihood\'s passes: ' + '; '.join(parts) + ('' if fold is not None or note is None else f'; {note}'))
 
 
 def swaps_c(lib, T, X, R, rng, nacc, threads=1):
@@ -2964,6 +3184,110 @@ def selftest_slipgeo(backends=('c', 'numpy'), b=0.5):
     return ok
 
 
+def selftest_fold(backends=('c', 'numpy')):
+    """column_passes: the likelihood's column passes without the constraint rows, and with --slip-sum's rows folded into
+    the slip-rate rows (U = B^T r_ss), built as main() builds them: two spike-and-slab rates, two slip-rate rows scored by
+    --slip-misfit split+log10 (scaled by 1/sqrt 2, sided log10 weights, positivity), a summed-slip row equal to B times
+    them (Gaussian, in the likelihood), and a constraint row (1e-9 x m1 + m2, kept at most 1e-9 x cap, a cap that binds),
+    with swaps, against a grid integral: P(on) and E[log10 m | on] of each rate; and the recorded misfit and summed-slip
+    term against their direct computation. The C kernel is run with the constraint row left out of its passes, then with
+    the fold as well; the NumPy backend reads every row."""
+    from scipy.special import betaln
+    from paleo_misfit import PALEO_EPS
+    print('column passes (constraint rows skipped; --slip-sum folded): spike-and-slab with swaps vs a grid integral')
+    ok, b = True, 0.5
+    G2 = np.array([[1.0, 0.6], [0.4, 1.0]])
+    d2, sig, L2v, H2v = np.array([0.05, 0.004]), 0.02, np.array([1.0, 6.0]), np.array([1.0, 0.15])
+    lo10, su, a_, b_ = np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    h = 1.0 / np.sqrt(2.0)
+    Bv, d_ss, eps, cap = np.array([0.7, 1.3]), 0.06, 1e-9, 0.062
+    A_ss = Bv @ (h * G2)                                   # the summed-slip row: B times the (scaled) slip-rate rows
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+    s_lo, s_hi = np.log10(1.0 + sig / np.sqrt(L2v) / d2), np.log10(1.0 + sig / np.sqrt(H2v) / d2)
+
+    def mis(m1, m2):                                       # the data rows' misfit as fitted (chi2's scale)
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        out = np.zeros(m1.shape)
+        for j in range(2):
+            y = G2[j, 0] * m1 + G2[j, 1] * m2
+            e = y - d2[j]
+            with np.errstate(divide='ignore'):
+                out += (1.0 - b) * np.where(e < 0, L2v[j], H2v[j]) * e * e / sig ** 2 + np.where(
+                    y > 0, b * (np.log10(np.maximum(y, 1e-300) / d2[j]) / np.where(e < 0, s_lo[j], s_hi[j])) ** 2, np.inf)
+        return out
+
+    def ssum(m1, m2):                                      # the summed-slip term
+        return (A_ss[0] * m1 + A_ss[1] * m2 - d_ss) ** 2 / sig ** 2
+
+    def post(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        return np.exp(-(mis(m1, m2) + ssum(m1, m2)) / 2) * (m1 + m2 <= cap)
+    L1, L2_ = post(10 ** u[0], 0.0), post(0.0, 10 ** u[1])
+    L12 = post(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2_), pg[2] * L12.sum()
+    W_ = w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2_ + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    Gt = np.vstack([h * G2, A_ss[None, :], eps * np.ones((1, 2))])   # rows: slip, slip, summed slip, constraint
+    dt_ = np.r_[h * d2, d_ss, 0.0]
+    for be, mode in [('c', 'skip'), ('c', 'fold'), ('numpy', 'skip')] if 'numpy' in backends else [('c', 'skip'), ('c', 'fold')]:
+        T = Target(sp.csc_matrix(Gt), dt_, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([Gt[:, 0] @ Gt[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.split = dict(L2=np.ascontiguousarray(np.r_[L2v, 1.0, 1.0]), H2=np.ascontiguousarray(np.r_[H2v, 1.0, 1.0]))
+        T.n_data, T.n_bal, T.n_fit = 2, 2, 3
+        T.slip_sum = dict(expect=1.0)
+        T.set_groups(np.array([0, 1]), np.zeros(0, np.int64), np.zeros(0))
+        T.add_limits([3], -np.inf, eps * cap, eps * 1e-9, 'a cap')
+        T.lw = dict(W=np.ascontiguousarray(np.r_[b / (2.0 * (s_hi * LN10) ** 2), 0.0, 0.0]),
+                    WL=np.ascontiguousarray(np.r_[b / (2.0 * (s_lo * LN10) ** 2), 0.0, 0.0]),
+                    LD=np.ascontiguousarray(np.r_[np.log(d2 * h), 0.0, 0.0]), DY=np.ascontiguousarray(np.r_[d2 * h, 1.0, 1.0]),
+                    rows=np.array([], np.int64), tau=None,
+                    SM=dict(rows=np.array([0, 1]), s_lo=s_lo, s_hi=s_hi, wk=np.ones(2), b=b, eps=h, d_data=d2, E=0.0, V=0.0))
+        note = column_passes(T, sp.csr_matrix((Bv, ([0, 0], [0, 1])), shape=(1, 4)) if mode == 'fold' else None)
+        okp = T.pass_end is not None and (T.ss_fold is not None) == (mode == 'fold')
+        ok &= okp
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 41, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        tag = f'{be:5s} {mode:4s}'
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {tag} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        m_ = Mo.reshape(-1, 2)
+        ok_m = bool(np.allclose(np.sort(mis(m_[:, 0], m_[:, 1])), np.sort(tr['misfit'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9)
+                    and np.allclose(np.sort(ssum(m_[:, 0], m_[:, 1])), np.sort(tr['slip_sum'][:, sw // 10:].ravel()),
+                                    rtol=1e-6, atol=1e-9))
+        ok_c = bool((m_.sum(1) <= cap * (1 + 1e-9)).all())
+        ok &= ok_m and ok_c
+        print(f'   {tag} misfit and summed-slip term recorded as computed: {"yes" if ok_m else "NO"}; every draw within '
+              f'the cap: {"yes" if ok_c else "NO"}; passes set: {"yes" if okp else "NO"}' + (f' ({note})' if be == 'c' and note else ''))
+    print('SELFTEST (column passes)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
 def selftest_paleo(backends=('c', 'numpy'), b=1.0):
     """The paleo misfit (--paleo-misfit years; with b = 1/2, gaussian+years) on two spike-and-slab rates: a weak Gaussian row
     and a paleo row, scaled out of the Gaussian (b = 1/2: scaled by 1/sqrt 2) and scored by b x a site's tabulated half
@@ -3737,9 +4061,9 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twelve verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, nineteen verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
-                         "term, swap moves and the band), six verdicts")
+                         "term, swap moves, the band, and the column passes with the summed slip rates folded), seven verdicts")
     a = ap.parse_args()
     if a.selftest == 'current':
         ok = selftest_zlo()
@@ -3748,6 +4072,7 @@ def main():
         ok &= selftest_balance()
         ok &= selftest_swaps()
         ok &= selftest_band()
+        ok &= selftest_fold(backends=('c',))
         sys.exit(0 if ok else 1)
     if a.selftest:
         ok = selftest()
@@ -3768,6 +4093,7 @@ def main():
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_slipgeo()
         ok &= selftest_slipgeo(b=1.0)
+        ok &= selftest_fold()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -4124,6 +4450,17 @@ def main():
     T.n_fit = n_fit                                # and then --mfd-monotonic's and --plate-rate's constraint rows
     if ss_info is not None:
         T.slip_sum = dict(expect=ss_info['weight'] * len(ss_info['k']))
+    B_ss = None                                    # the summed slip rates' rows as B times the slip-rate rows (column_passes):
+    if ss_info is not None:                        # each strip's c_k w_ki c_i over the slip-rate row's coefficient per mm/yr
+        rows_s = np.asarray(cs['rows'])            # of slip (sigma_i / row scale, and the row's own rescaling, lin_sc)
+        rs_s = lin_sc(b_s) if sm_rows is not None else 1.0
+        vals = (ss_info['scale'][:, None] * ss_info['W'] * ss_info['proj'][None, :]
+                * (ss_info['sig_i'] / (np.asarray(P['row_scale'], float)[rows_s] * rs_s))[None, :])
+        kk, jj = np.nonzero(vals)
+        B_ss = sp.csr_matrix((vals[kk, jj], (kk, rows_s[jj])), shape=(vals.shape[0], T.N))
+    note_ = column_passes(T, B_ss)
+    if note_:
+        print(note_)
     if T.pairs is not None:                        # each swap pair's inner product: every row of G, checked on a sample
         q = np.random.default_rng(0).choice(len(T.pairs[0]), min(2000, len(T.pairs[0])), replace=False)
         Gc = sp.csc_matrix(T.G)
