@@ -206,7 +206,9 @@ factor on the targets only, an implementation error upstream in the NZSHM22 code
 8 subsections with an SD of 0 keep sd = the target). So since 2026-11-05 the default runs' slip sds are 0.8 of the
 inputs' (coefficients and targets x 1.25 in sd units); K = 2.5 with F = 0.8 reproduces the inputs bit for bit (every run
 before then; run_quick_checks.sh pins it, for TESTING.md's values). K = 1 switches the doubling off, for slip-rate
-uncertainties estimated from the data. Recorded as the problem's slip_rate_factor and slip_sd_multiplier. Without either
+uncertainties estimated from the data. Recorded as the problem's slip_rate_factor and slip_sd_multiplier. Why 0.8 (REPORT.md, "Why 0.8"): f = 1/(1 + u), u = afterslip (Churchill et al. 2022: median 18%, IQR 9-32%,
+lognormal) + smaller earthquakes (GR, Mmax 8.6, b uniform 0.5-1: 1.6-14.4%, median 4.7%); f median 0.81, 5/50/95% 0.52/0.81/0.93;
+planned: a three-branch logic tree at those values, weights 0.185/0.63/0.185 (not built; sampling f set aside). Without either
 flag preliminaries.py leaves the inputs as given. A zero-width side takes the other's and
 min = pref = max gives sd = the mode (as the inputs: sigma = 0.8 x SlipRate there);
 the row rescaled to sigma_ref = the mean of the two sides, and the weights split_lo2 = (sigma_ref/sigma_lo)^2 and
