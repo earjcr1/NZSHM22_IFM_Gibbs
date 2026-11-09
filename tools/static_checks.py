@@ -241,6 +241,8 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['True'] and '
       and re.findall(r'^CFM_TIMEFRAME = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_timeframe' in _cfg_keys
       and "'--cfm-timeframe', default=None" in src['preliminaries.py'] and '\ndef load_timeframe(' in src['cfm_sliprates.py']
       and 'timeframe_sliprates.py' in src and os.path.exists(f'{ROOT}/data/cfm_timeframe_sliprates.csv')
+      and "'--cfm-timeframe-shape', default='fit'" in src['preliminaries.py'] and '\ndef fit_split_normal(' in src['timeframe_sliprates.py']
+      and 'sn_centre' in open(f'{ROOT}/data/cfm_timeframe_sliprates.csv').readline() and 'cfm_timeframe_shape' in _cfg_keys
       and "'--cfm-rounding', action='store_true'" in src['preliminaries.py'] and '\ndef load_cfm_steps(' in src['cfm_sliprates.py']
       and re.findall(r'^CFM_TEMPLATE_RHO = (\S+)', cells[0][1], re.M) == ['1'] and 'cfm_template_rho' in _cfg_keys
       and "'--cfm-template-rho', type=float, default=None" in src['preliminaries.py'] and '\ndef template_factors(' in src['cfm_sliprates.py']
@@ -250,7 +252,7 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', cells[0][1], re.M) == ['True'] and '
       and "P.get('split_lo2') is not None" in src['gibbs.py'] and 'split_weights(' in src['block_fit.py'],
       'notebook CFM_SLIPRATES = True (by default since 2026-11-05, not a setting since 2026-11-09: below the settings, False '
       'only for sensitivity tests through run_nb.py; each slip rate a split normal from the CFM, data/NZ_CFM_v1_0.csv '
-      '(cru_common.CFM_CSV, no CFM_FILE); False: the inputs\', cfm_sliprates.py), SLIP_RATE_FACTOR = 0.8; no CFM_PREF, CFM_ROUNDING or SLIP_SD_MULTIPLIER since 2026-11-09 (SR_pref the '
+      '(cru_common.CFM_CSV, no CFM_FILE); False: the inputs\', cfm_sliprates.py), CFM_TIMEFRAME\'s split normals fitted to each corrected distribution\'s 16/50/84% points (--cfm-timeframe-shape fit, since 2026-11-09), SLIP_RATE_FACTOR = 0.8; no CFM_PREF, CFM_ROUNDING or SLIP_SD_MULTIPLIER since 2026-11-09 (SR_pref the '
       'mode, no rounding, the sds as given: multiplier 1 with the CFM, 2.5 for the inputs; recorded, preliminaries.py keeps '
       'the options), recorded and passed to preliminaries.py --cfm-sliprates, --slip-rate-factor and --slip-sd-multiplier; gibbs.py evaluates the split misfit '
       'exactly (its test in the full self-test set) and block_fit.py weighs it')

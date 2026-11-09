@@ -24,11 +24,25 @@ slip rate after the correction), and its quantiles are the two schemes' geometri
 faults where they differ by more than 2% reported. The checks against S4 that do not enter the fit (its medians, its 2.5%
 points where not pinned) are reported.
 
+The likelihood scores each slip rate by a split normal (two half-Gaussians joined at its mode). Since 2026-11-09 each
+fault's is fitted to its corrected distribution (fit_split_normal): the mode and two sds whose 16%, 50% and 84% points
+are the corrected distribution's, so the split normal reproduces its median and body exactly and its mean closely.
+Before, the split normal had its mode at the corrected mode and its 2.5% and 97.5% points read as 2 sd from it ('ends'),
+which, for these right-skewed distributions with long tails both ways, put its median and mean a median 7% above the
+corrected distribution's (up to about 2x). The fitted centre can lie below the corrected mode, and its 2 sd below can lie
+below 0. No split normal in slip rate has the most right-skewed faults' 16/50/84 points (its (q84 - q50) / (q50 - q16) is
+at most about 1.55); those, mostly slow aperiodic faults (188 of the 211k rupture set's 557), take a split normal fitted in
+log10 of the slip rate and converted (split_normal_for: 'log 16/50/84', else 'log 2.5/50/97.5'), automatically, each
+fault's fit named in sn_fit and counted in the report; 'ends' (the old split normal) only where a 16% or 2.5% point is 0.
+
 Writes OUT (one row per fault of the CFM: Name, mode, q025, q16, q50, q84, q975 in mm/yr, t_eff in
 years (the schemes' geometric mean), fit: 'S4' (t solved), 'S4 long' (S4's 97.5% at or inside the tables' longest
-timeframe's, t held there), or 'assigned'; periodic; SR_pref, SR_min, SR_max; mode_linear, mode_pchip), OUT's _report.txt and a figure (OUT's .png) comparing each fault's new uncertainty with the CFM's
-times --multiplier (3, the notebook's SLIP_SD_MULTIPLIER before CFM_TIMEFRAME). preliminaries.py --cfm-timeframe OUT
-uses mode, q025 and q975 in place of SR_pref, SR_min and SR_max.
+timeframe's, t held there), or 'assigned'; periodic; SR_pref, SR_min, SR_max; mode_linear, mode_pchip; sn_centre,
+sn_sd_lo, sn_sd_hi, the fitted split normal's mode and sds in mm/yr, and sn_fit, which fit gave it), OUT's
+_report.txt and a figure (OUT's .png) comparing each fault's new uncertainty with the CFM's times --multiplier (3, the
+notebook's SLIP_SD_MULTIPLIER before CFM_TIMEFRAME). preliminaries.py --cfm-timeframe OUT uses the fitted split normals
+(--cfm-timeframe-shape fit, the default) or, with --cfm-timeframe-shape ends, mode, q025 and q975 in place of SR_pref,
+SR_min and SR_max (as before 2026-11-09).
 """
 import argparse
 import csv
@@ -37,7 +51,7 @@ import os
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
-from scipy.optimize import brentq, minimize_scalar
+from scipy.optimize import brentq, least_squares, minimize_scalar
 from scipy.stats import norm
 
 from cru_common import CFM_CSV, report_to
@@ -128,6 +142,85 @@ class Corrected:
 
     def p0(self):
         return float(norm.cdf(-self.mu / self.sd)) if self.sd > 0 else float(self.mu <= 0)
+
+
+def sn_quantile(c, s_lo, s_hi, p):
+    """The p-quantile of a split normal with mode c and sds s_lo below it and s_hi above (its mass below c is
+    a = s_lo / (s_lo + s_hi))."""
+    a = s_lo / (s_lo + s_hi)
+    p = np.asarray(p, float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return np.where(p < a, c + s_lo * norm.ppf(np.clip(p / (2 * a), 1e-300, 1.0)),
+                        c + s_hi * norm.ppf(np.clip(0.5 + (p - a) / (2 * (1 - a)), 0.0, 1 - 1e-16)))
+
+
+def sn_mean(c, s_lo, s_hi):
+    return c + np.sqrt(2 / np.pi) * (s_hi - s_lo)
+
+
+def fit_quantiles(q, p):
+    """The split normal (mode, s_lo, s_hi) whose p[0], p[1], p[2] points are q[0] < q[1] < q[2] (any real values; least
+    squares in the mode and the logs of the sds, scaled by q[2] - q[0]), or None if no split normal has them: a split
+    normal's (q84 - q50) / (q50 - q16) is at most about 1.55, its half-normal limit, so the most skewed shapes have none."""
+    q, p = np.asarray(q, float), np.asarray(p, float)
+    if not (q[0] < q[1] < q[2]):
+        return None
+    w = q[2] - q[0]
+
+    def res(x):
+        return (sn_quantile(q[1] + w * x[0], w * np.exp(x[1]), w * np.exp(x[2]), p) - q) / w
+    r = least_squares(res, [0.0, np.log((q[1] - q[0]) / w), np.log((q[2] - q[1]) / w)], xtol=1e-14, ftol=1e-14, gtol=1e-14)
+    if np.max(np.abs(r.fun)) > 1e-8:
+        return None
+    return float(q[1] + w * r.x[0]), float(w * np.exp(r.x[1])), float(w * np.exp(r.x[2]))
+
+
+def fit_split_normal(q16, q50, q84):
+    """The split normal in slip rate whose 16%, 50% and 84% points are q16, q50 and q84, or None (q16 <= 0, or none has
+    them)."""
+    return fit_quantiles([q16, q50, q84], [0.16, 0.5, 0.84]) if q16 > 0 else None
+
+
+def fit_split_normal_log(q, p):
+    """A split normal in log10 of the slip rate fitted to quantiles q (> 0) at probabilities p, converted to one in slip
+    rate: mode 10^c, each sd reaching the log fit's 1-sd point on its side (10^c - 10^(c - s_lo), 10^(c + s_hi) - 10^c).
+    Returns ((mode, s_lo, s_hi) in slip rate, (c, s_lo, s_hi) in log10), or None."""
+    q = np.asarray(q, float)
+    if not (q > 0).all():
+        return None
+    f = fit_quantiles(np.log10(q), p)
+    if f is None:
+        return None
+    c, lo, hi = f
+    return (10 ** c, 10 ** c - 10 ** (c - lo), 10 ** (c + hi) - 10 ** c), f
+
+
+SN_FITS = ('16/50/84', 'log 16/50/84', 'log 2.5/50/97.5', 'ends')   # the split normal each fault gets, in order of trial
+
+
+def split_normal_for(r):
+    """The likelihood's split normal for a fault (row r of the table: its quantiles and mode), and which fit gave it:
+    '16/50/84', fitted to the corrected distribution's 16%, 50% and 84% points (its median and body exactly); where no
+    split normal in slip rate has those (the most right-skewed, mostly slow faults), 'log 16/50/84', fitted to them in
+    log10 of the slip rate and converted; where none does even in log10, 'log 2.5/50/97.5', likewise to the 2.5%, 50% and
+    97.5% points; else (a 16% or 2.5% point of 0) 'ends', the mode with the 2.5% and 97.5% points at 2 sd, as before
+    2026-11-09. The fallbacks are taken automatically, so a new table needs no checking by hand: the report counts each."""
+    sn = fit_split_normal(r['q16'], r['q50'], r['q84'])
+    if sn is not None:
+        return sn, SN_FITS[0]
+    for q, p, how in (([r['q16'], r['q50'], r['q84']], [0.16, 0.5, 0.84], SN_FITS[1]),
+                      ([r['q025'], r['q50'], r['q975']], [0.025, 0.5, 0.975], SN_FITS[2])):
+        f = fit_split_normal_log(q, p)
+        if f is not None and f[0][1] > 0 and f[0][2] > 0:
+            return f[0], how
+    return (r['mode'], 0.5 * (r['mode'] - r['q025']), 0.5 * (r['q975'] - r['mode'])), SN_FITS[3]
+
+
+def exact_mean(pref, smin, smax, t, scheme):
+    """The corrected slip rate's mean, E[max(X, 0)] E[F] (X and F independent)."""
+    mu, sd = 0.5 * (smin + smax), (smax - smin) / 3.92
+    ex = mu * norm.cdf(mu / sd) + sd * norm.pdf(mu / sd) if sd > 0 else max(mu, 0.0)
+    return float(ex * np.exp(log_factor(pref >= 1.0, t, scheme)).mean())
 
 
 def s4_q975(pref, smin, smax, t, scheme):
@@ -258,6 +351,8 @@ def main():
         r['mode_sc'] = {sc: per_sc[sc]['mode'] for sc in SCHEMES}
         r['t_eff'] = gm([r['t'][sc] for sc in SCHEMES])
         r['p0'] = per_sc[SCHEMES[0]]['p0']
+        r['sn'], r['sn_fit'] = split_normal_for(r)                 # the split normal the likelihood uses
+        r['mean'] = gm([exact_mean(r['pref'], r['smin'], r['smax'], r['t'][sc], sc) for sc in SCHEMES])
         if r['name'] in S4 and r['smax'] > r['smin']:
             s = S4[r['name']]
             lo, med, hi = min(r['q025'], r['smin']), r['q50'], max(r['q975'], r['smax'])
@@ -265,11 +360,11 @@ def main():
     with open(out, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['Name', 'mode', 'q025', 'q16', 'q50', 'q84', 'q975', 't_eff', 'fit', 'periodic', 'SR_pref', 'SR_min', 'SR_max']
-                   + [f'mode_{sc}' for sc in SCHEMES])
+                   + [f'mode_{sc}' for sc in SCHEMES] + ['sn_centre', 'sn_sd_lo', 'sn_sd_hi', 'sn_fit'])
         for r in rows:
             w.writerow([r['name']] + [f'{r[k]:.6g}' for k in ('mode', 'q025', 'q16', 'q50', 'q84', 'q975', 't_eff')]
                        + [r['fit'] or '', int(r['periodic']), r['pref'], r['smin'], r['smax']]
-                       + [f'{r["mode_sc"][sc]:.6g}' for sc in SCHEMES])
+                       + [f'{r["mode_sc"][sc]:.6g}' for sc in SCHEMES] + [f'{v:.6g}' for v in r['sn']] + [r['sn_fit']])
     figure(rows, a.multiplier, stem + '.png')
     # report
     fits = np.array([c[0] for c in chk]); med_r = np.array([c[1] for c in chk]); hi_r = np.array([c[2] for c in chk])
@@ -307,6 +402,26 @@ def main():
     print(f'   95% width / the CFM\'s: median {np.median(w95n[ok] / w95c[ok]):.2f}, mean {np.mean(w95n[ok] / w95c[ok]):.2f} (the '
           f'paper\'s averages, from its pinned bounds: 2.5 periodic, 2.9 aperiodic); against the CFM\'s x {a.multiplier:g} (the '
           f'notebook\'s SLIP_SD_MULTIPLIER until CFM_TIMEFRAME): median {np.median(w95n[ok] / (a.multiplier * w95c[ok])):.2f}')
+    pct = lambda v: f'median {np.median(v):.3f} (5-95% {np.percentile(v, 5):.2f}-{np.percentile(v, 95):.2f})'
+    rs_set = set(rs_par or [])
+    print(f'   the likelihood\'s split normals (split_normal_for), by fit: ' + '; '.join(
+        f'{k} {sum(r["sn_fit"] == k for r in rows)} of the {len(rows)} faults'
+        + (f' ({sum(r["sn_fit"] == k for r in rows if r["name"] in rs_set)} of the rupture set\'s {len(rs_set)})' if rs_set else '')
+        for k in SN_FITS) + ' (16/50/84: the corrected distribution\'s 16%, 50% and 84% points exactly; log: fitted in log10 '
+          'and converted, where no split normal in slip rate has those points; ends: the mode with the 2.5% and 97.5% points '
+          'at 2 sd, as before 2026-11-09, where a 16% or 2.5% point is 0)')
+    for k in SN_FITS:
+        ff = [r for r in pos if r['sn_fit'] == k]
+        if not ff:
+            continue
+        c_, lo_, hi_ = (np.array([r['sn'][j] for r in ff]) for j in range(3))
+        md_, q50_, mean_ = (np.array([r[j] for r in ff]) for j in ('mode', 'q50', 'mean'))
+        med_ = np.array([float(sn_quantile(*r['sn'], 0.5)) for r in ff])
+        old_mean = np.array([sn_mean(r['mode'], 0.5 * (r['mode'] - r['q025']), 0.5 * (r['q975'] - r['mode'])) for r in ff]) / mean_
+        print(f'      {k} ({len(ff)} of the {len(pos)} faults above): centre / corrected mode {pct(c_ / md_)}; lower sd / centre '
+              f'{pct(lo_ / c_)}, upper / lower {pct(hi_ / lo_)}; the split normal\'s median / the corrected median {pct(med_ / q50_)}, '
+              f'its mean / the corrected mean {pct(sn_mean(c_, lo_, hi_) / mean_)} (the mode with the 2.5%/97.5% points at 2 sd, '
+              f'as before: {pct(old_mean)}); 2 sd below the centre under 0: {int(np.sum(c_ - 2 * lo_ < 0))}')
     print(f'   wrote {out}, {stem}.png and {stem}_report.txt')
 
 

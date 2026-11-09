@@ -244,7 +244,10 @@ fault's SR_pref, SR_min and SR_max replaced by the mode, 2.5% and 97.5% points o
 SLIP_RATE_FACTOR on the whole, template/link weights from the CFM's numbers as written, kept in place of the paper's source
 correction, its Table S3, by the user's choice); the notebook then sets SLIP_SD_MULTIPLIER 1 and CFM_ROUNDING False (and
 needs CFM_PREF 'mode'); recorded as the sixth entry of the problem's cfm_sliprates. The table, data/cfm_timeframe_sliprates.csv,
-is tools/timeframe_sliprates.py's (--cfm, --s4 the paper's Table S4, --rupture-set): S4 reports bounds never narrower than
+is tools/timeframe_sliprates.py's (--cfm, --s4 the paper's Table S4, --rupture-set; since 2026-11-09 its sn_centre, sn_sd_lo,
+sn_sd_hi, sn_fit columns hold each fault's split normal, split_normal_for: exact 16/50/84 in slip rate, else in log10 converted,
+else log10 2.5/50/97.5 converted, else the old mode/2.5/97.5 'ends'; preliminaries.py --cfm-timeframe-shape fit (default) | ends;
+recorded as the seventh entry of the problem's cfm_sliprates and CONFIG cfm_timeframe_shape; REPORT.md 'Split normals fitted'): S4 reports bounds never narrower than
 the CFM's (lower min(q, SR_min), upper max(q, SR_max): its 25/75% columns mostly the CFM's bounds, 2.5% pinned in 194 rows),
 so each fault's distribution is rebuilt exactly (quadrature over the factor's quantile function, no sampling; class
 Corrected): the paper's Gaussian on the CFM bounds (centre their midpoint, sd width / 3.92, negative part at 0) times the

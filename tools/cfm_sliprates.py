@@ -367,22 +367,35 @@ def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
     return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
 
 
-def load_timeframe(path):
-    """--cfm-timeframe: timeframe_sliprates.py's table, by fault name -> (mode, 2.5%, 97.5%) of each fault's slip rate
-    corrected for its timeframe (Coffey et al.), mm/yr."""
+def load_timeframe(path, shape='fit', nsig=NSIG_DEFAULT):
+    """--cfm-timeframe: timeframe_sliprates.py's table, by fault name -> (centre, lower end, upper end) in mm/yr, which
+    rebuild takes as SR_pref, SR_min and SR_max (the ends nsig sds from the centre). shape 'fit' (--cfm-timeframe-shape,
+    the default since 2026-11-09): the split normal fitted to each corrected distribution's 16%, 50% and 84% points
+    (sn_centre, centre - nsig sn_sd_lo, centre + nsig sn_sd_hi; the lower end may be below 0); 'ends' (before): the
+    corrected distribution's mode, 2.5% and 97.5% points."""
+    if shape not in ('fit', 'ends'):
+        raise ValueError(f'--cfm-timeframe-shape {shape}: use fit or ends')
     out = {}
     with open(path, encoding='utf-8-sig', newline='') as f:
         for row in csv.DictReader(f):
-            out[row['Name'].strip()] = (float(row['mode']), float(row['q025']), float(row['q975']))
+            if shape == 'ends':
+                out[row['Name'].strip()] = (float(row['mode']), float(row['q025']), float(row['q975']))
+            elif 'sn_centre' not in row:
+                raise ValueError(f'{path} has no fitted split normals (sn_centre ...): rerun timeframe_sliprates.py, or '
+                                 'give --cfm-timeframe-shape ends')
+            else:
+                c, lo, hi = float(row['sn_centre']), float(row['sn_sd_lo']), float(row['sn_sd_hi'])
+                out[row['Name'].strip()] = (c, c - nsig * lo, c + nsig * hi)
     return out
 
 
 def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False,
-            timeframe=None):
+            timeframe=None, timeframe_shape='fit'):
     """The inputs' slip-rate rows (raw rows 0 .. subsections - 1) rebuilt from the CFM, each split normal scaled as a whole
     by srf (default: the inputs' own factor, 0.8). timeframe (--cfm-timeframe): timeframe_sliprates.py's table, whose
     mode, 2.5% and 97.5% points of each fault's timeframe-corrected slip rate take the places of SR_pref, SR_min and SR_max
-    (with factor 1, no rounding, the mode as the mode). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
+    (with factor 1, no rounding, the mode as the mode); with timeframe_shape 'fit' (the default), each fault's split
+    normal fitted to the corrected distribution's 16%, 50% and 84% points instead (load_timeframe). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
     if not (nsig > 0 and factor > 0):
         raise ValueError('--cfm-sigmas and --slip-sd-multiplier must be positive')
@@ -399,14 +412,15 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
         if rounding or pref_as != 'mode':
             raise ValueError('--cfm-timeframe takes its own modes and 95% points: give it without --cfm-rounding and '
                              '--cfm-pref median')
-        tf = load_timeframe(timeframe)
+        tf = load_timeframe(timeframe, timeframe_shape, nsig)
         miss = sorted({p for p in sub['parent'] if p not in tf})
         if miss:
             raise ValueError(f'{len(miss)} parent faults of the rupture set are not in {timeframe}: ' + ', '.join(miss[:10]))
         cfm = tf
     pref, smin, smax = (np.array([cfm[p][t] for p in sub['parent']]) for t in range(3))
-    if (smin > pref).any() or (smax < pref).any() or (smin < 0).any():
-        bad = sorted({sub['parent'][j] for j in np.flatnonzero((smin > pref) | (smax < pref) | (smin < 0))})
+    neg = (smin < 0) & (timeframe is None or timeframe_shape != 'fit')      # a fitted split normal's lower end may be < 0
+    if (smin > pref).any() or (smax < pref).any() or neg.any():
+        bad = sorted({sub['parent'][j] for j in np.flatnonzero((smin > pref) | (smax < pref) | neg)})
         raise ValueError(f'{cfm_csv}: SR_min <= SR_pref <= SR_max (and SR_min >= 0) fails for ' + ', '.join(bad))
     f = np.full(ns, I['f'] if srf is None else float(srf))                # the slip-rate factor, on the whole distribution
     mode = f * pref * 1e-3                                               # m/yr
@@ -451,7 +465,8 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     L2[:ns], H2[:ns] = (s_ref / s_lo) ** 2, (s_ref / s_hi) ** 2
     tab = dict(parent=sub['parent'], pref=pref, smin=smin, smax=smax, mode=mode, s_lo=s_lo, s_hi=s_hi, s_ref=s_ref,
                sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float), pref_as=pref_as,
-               fallback=fallback, rounding=rounding, widen=widen, qstep=qstep, timeframe=timeframe)
+               fallback=fallback, rounding=rounding, widen=widen, qstep=qstep, timeframe=timeframe,
+               timeframe_shape=timeframe_shape if timeframe else None)
     return A2, d2, L2, H2, tab, report_lines(tab, nsig, factor, cfm_csv)
 
 
@@ -467,10 +482,12 @@ def report_lines(tab, nsig, factor, cfm_csv):
     tfn = tab.get('timeframe')
     L = ([f'== slip rates from the CFM corrected for their timeframe (Coffey et al.; {os.path.basename(tfn)}, from '
           f'timeframe_sliprates.py): {len(tab["parent"])} subsection rows of {len(first)} parent faults, each a split normal '
-          f'in mm/yr scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the inputs\' {tab["f_in"]:g}): mode '
-          f'{tab["f"][0]:g} x the corrected distribution\'s mode, sd below {tab["f"][0]:g} x (mode - its 2.5% point) / '
-          f'{nsig:g}, above {tab["f"][0]:g} x (its 97.5% point - mode) / {nsig:g} (no further multiplier); rows rescaled to '
-          'the mean of the two sides',
+          f'in mm/yr scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the inputs\' {tab["f_in"]:g}): '
+          + (f'the split normal fitted to the corrected distribution\'s 16%, 50% and 84% points (its median and body '
+             f'exactly; --cfm-timeframe-shape fit), times {tab["f"][0]:g}' if tab.get('timeframe_shape') == 'fit' else
+             f'mode {tab["f"][0]:g} x the corrected distribution\'s mode, sd below {tab["f"][0]:g} x (mode - its 2.5% point) / '
+             f'{nsig:g}, above {tab["f"][0]:g} x (its 97.5% point - mode) / {nsig:g} (--cfm-timeframe-shape ends)')
+          + ' (no further multiplier); rows rescaled to the mean of the two sides',
           f'   the modes against the rupture set\'s SlipRate: {int(np.sum(pd_ == 0))} faults the same, {int(np.sum(pd_ != 0))} '
           f'different (median ratio {np.median(tab["pref"][first] / np.where(tab["rate_old"][first] > 0, tab["rate_old"][first], np.nan)):.3f}; '
           f'the paper centres each fault at the midpoint of its CFM bounds)'] if tfn else

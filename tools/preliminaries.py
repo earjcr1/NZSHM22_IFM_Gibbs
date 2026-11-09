@@ -403,6 +403,10 @@ def main():
                          'timeframe_sliprates.py writes, data/cfm_timeframe_sliprates.csv): its mode, 2.5%% and 97.5%% points '
                          'in place of SR_pref, SR_min and SR_max, with no multiplier (--slip-sd-multiplier 1, the default with '
                          'it), no --cfm-rounding and the mode as the mode')
+    ap.add_argument('--cfm-timeframe-shape', default='fit', choices=['fit', 'ends'],
+                    help='--cfm-timeframe: each fault\'s split normal fitted to its corrected distribution\'s 16%%, 50%% and 84%% '
+                         'points (fit, the default since 2026-11-09: its median and body exactly, its mean closely), or its mode '
+                         'with the 2.5%% and 97.5%% points at 2 sd (ends, before; its median and mean a median 7%% high)')
     ap.add_argument('--cfm-template-rho', type=float, default=None, metavar='RHO',
                     help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
                          'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
@@ -462,7 +466,8 @@ def main():
                 A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
                                                                2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier,
                                                                args.slip_rate_factor, args.cfm_pref, args.cfm_rounding,
-                                                               timeframe=args.cfm_timeframe)
+                                                               timeframe=args.cfm_timeframe,
+                                                               timeframe_shape=args.cfm_timeframe_shape)
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
                     t_sub, lines_t, links_t, corr_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
@@ -711,7 +716,8 @@ def main():
                                                                     f'{args.cfm_sigmas:g}',
                                                                     f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
                                                                     args.cfm_pref, 'rounding' if args.cfm_rounding else '',
-                                                                    os.path.basename(args.cfm_timeframe) if args.cfm_timeframe else '']),
+                                                                    os.path.basename(args.cfm_timeframe) if args.cfm_timeframe else '',
+                                                                    args.cfm_timeframe_shape if args.cfm_timeframe else '']),
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
                  template_scale=t_keep, cfm_template_rho=args.cfm_template_rho,
                  cfm_rate_links=True if args.cfm_rate_links else None,

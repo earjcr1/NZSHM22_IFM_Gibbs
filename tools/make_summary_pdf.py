@@ -518,9 +518,11 @@ def main():
                       ['CFM_ROUNDING', str(cround), 'each side\u2019s sd widened in quadrature by the rounding of the fault\u2019s '
                        'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written']]
                      if old_cfm else []),
-                   ['CFM_TIMEFRAME', str(ctf), 'each fault\u2019s slip rate corrected for its timeframe (Coffey et al.): the '
-                    'corrected distribution\u2019s mode and 2.5% and 97.5% points in place of SR_pref, SR_min and SR_max, '
-                    'no further multiplier' if ctf else 'the CFM\u2019s SR_pref, SR_min and SR_max'],
+                   ['CFM_TIMEFRAME', str(ctf), 'each fault\u2019s slip rate corrected for its timeframe (Coffey et al.): '
+                    + ('a split normal fitted to the corrected distribution\u2019s 16%, 50% and 84% points (its median and body '
+                       'exactly), no further multiplier' if cfg.get('cfm_timeframe_shape') == 'fit' else
+                       'the corrected distribution\u2019s mode and 2.5% and 97.5% points in place of SR_pref, SR_min and SR_max, '
+                       'no further multiplier') if ctf else 'the CFM\u2019s SR_pref, SR_min and SR_max'],
                    ['CFM_TEMPLATE_RHO', 'None' if ctmpl is None else f'{float(ctmpl):g}',
                     'faults of quality codes 2\u20135 sharing an identical SR_pref / SR_min / SR_max treated as correlated, '
                     f'each one\u2019s rows weighted 1/\u221a(1 + (n \u2212 1) \u00d7 {float(ctmpl):g}) for a group of n' if ctmpl is not None
