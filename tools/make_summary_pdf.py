@@ -141,8 +141,15 @@ def main():
     srf = float(cfg.get('slip_rate_factor') or 0.8)    # the fraction of each fault's slip rate the ruptures take up
     smis = cfg.get('slip_misfit') or 'split'            # the slip rows' misfit: the split normal, or half it plus half log10
     amis = cfg.get('misfit')                            # MISFIT (since 2026-11-10): every group's misfit, 'linear', 'log10' or 'half'
+    gmis = {g_: cfg.get(k_) for g_, k_ in (('slip', 'misfit_slip'), ('mfd', 'misfit_mfd'), ('paleo', 'misfit_paleo'))}
+    mixed = amis == 'mixed'                             # since 2026-11-09 one setting per group, MISFIT_SLIP, _MFD, _PALEO:
+    gnames = {'slip': ('linear', 'log10', 'half'), 'mfd': ('linear', 'log10', 'half'), 'paleo': ('rate', 'years', 'half')}
+    if mixed:                                           # MISFIT then their common setting, or 'mixed'
+        amis = None
     whole_ = lambda m_: m_ not in ('gaussian', 'split') and '+' not in m_   # a group scored by its log misfit alone
     sdx = float(cfg.get('slip_sd_multiplier') or 2)     # each slip-rate sd this many times its uncertainty (2: doubled)
+    old_cfm = cpref != 'mode' or cround or sdx != (1 if cfm else 2.5)   # CFM_PREF, CFM_ROUNDING, SLIP_SD_MULTIPLIER: settings until
+                                                        # 2026-11-09, since fixed (mode, no rounding, sds as given); listed if they differ
     if grp:
         isf = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
         positive = any(v == 'positive' for v in g_band.values())
@@ -480,22 +487,37 @@ def main():
                      'paleo rows: half the Gaussian in rate, half the PDF in years), the geometric mean of the two densities, '
                      'with the same sds; an order of magnitude off is unlikely, two far more so'}.get(amis, str(amis))
                      + '; every prediction kept above zero']] if amis else [])
+                + [[f'MISFIT_{g_.upper()}', repr(gmis[g_]), dict(zip(gnames[g_], (lin_, log_, 'half linear, half log: '
+                    + half_ + ', the geometric mean of the two densities, with the same sds'))).get(gmis[g_], str(gmis[g_]))
+                    + '; every prediction kept above zero']
+                   for g_, lin_, log_, half_ in (
+                       ('slip', 'the slip rates scored linearly, by their split normals',
+                        'the slip rates scored in log, by Gaussians in log10(prediction / target) with sd log10(1 + sd / '
+                        'target) on each side (sd the effective one, the template weights\u2019 included)',
+                        'half their split normals plus half the Gaussian in log10'),
+                       ('mfd', 'the MFD bins scored linearly, by the inputs\u2019 Gaussians in rate',
+                        'the MFD bins scored in log, by Gaussians in log10(total / target) with sd log10(1 + sd / target)',
+                        'half their Gaussians plus half the Gaussian in log10'),
+                       ('paleo', 'the paleo rows scored linearly, by the inputs\u2019 Gaussians in rate',
+                        'the paleo rows scored by each site\u2019s recurrence-interval PDF in years',
+                        'half their Gaussians in rate plus half the PDF in years')) if mixed]
                 + ([['PALEO_MISFIT', repr(pmis), 'the paleo rows scored by each site\u2019s recurrence-interval PDF in years '
                     '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate'
                     + ('' if pband_set else '; each paleo prediction kept above zero') + '), in place of '
                     'the Gaussian' if pmis == 'years' else 'the paleo rows\u2019 Gaussian, as the inputs give it'
-                    if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate']] if not amis else [])
+                    if pmis == 'gaussian' else 'the paleo rows scored by their curves\u2019 density in log rate']] if not amis and not mixed else [])
                 + ([['MFD_MISFIT', repr(mmis), 'each MFD bin\u2019s total scored in log10, ((log10 total \u2212 log10 R<sub>j</sub>) / '
                     's<sub>j</sub>)\u00b2 with s<sub>j</sub> = log10(1 + \u03c3<sub>j</sub>/R<sub>j</sub>), each bin kept above zero, in '
-                    'place of the Gaussian' if mmis == 'log10' else 'the bins\u2019 Gaussian in rate, as the inputs give it']] if not amis else [])
+                    'place of the Gaussian' if mmis == 'log10' else 'the bins\u2019 Gaussian in rate, as the inputs give it']] if not amis and not mixed else [])
                 + [
                    ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
                     f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
-                   ['CFM_PREF', repr(cpref), 'SR_pref as each split normal\u2019s ' + ('median (each shifted, its sds kept)'
-                    if cpref == 'median' else 'mode, the most likely slip rate')],
-                   ['CFM_ROUNDING', str(cround), 'each side\u2019s sd widened in quadrature by the rounding of the fault\u2019s '
-                    'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written'],
+                   *([['CFM_PREF', repr(cpref), 'SR_pref as each split normal\u2019s ' + ('median (each shifted, its sds kept)'
+                       if cpref == 'median' else 'mode, the most likely slip rate')],
+                      ['CFM_ROUNDING', str(cround), 'each side\u2019s sd widened in quadrature by the rounding of the fault\u2019s '
+                       'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written']]
+                     if old_cfm else []),
                    ['CFM_TIMEFRAME', str(ctf), 'each fault\u2019s slip rate corrected for its timeframe (Coffey et al.): the '
                     'corrected distribution\u2019s mode and 2.5% and 97.5% points in place of SR_pref, SR_min and SR_max, '
                     'no further multiplier' if ctf else 'the CFM\u2019s SR_pref, SR_min and SR_max'],
@@ -509,9 +531,9 @@ def main():
                     if clinks else ('the templates alone' if ctmpl is not None else 'off (with CFM_TEMPLATE_RHO only)')],
                    ['SLIP_RATE_FACTOR', f'{srf:g}', 'the assumed fraction of each fault\u2019s slip rate the ruptures take up, '
                     'scaling each slip-rate distribution as a whole, target and sd' + (' (the inputs\u2019 own)' if srf == 0.8 else '')],
-                   ['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
-                    + ', before the slip-rate factor' + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the default since November 9th, 2026)' if sdx == 3 else ' (the uncertainties as given)'
-                       if sdx == 1 else ' (with 0.8, the inputs\u2019 slip rates exactly as given)' if sdx == 2.5 else '')]]
+                   *([['SLIP_SD_MULTIPLIER', f'{sdx:g}', 'each slip-rate sd this many times its uncertainty'
+                       + ', before the slip-rate factor' + (' (the inputs\u2019 doubling)' if sdx == 2 else ' (the uncertainties as given)'
+                          if sdx == 1 else ' (with 0.8, the inputs\u2019 slip rates exactly as given)' if sdx == 2.5 else '')]] if old_cfm else [])]
                 if grp else
                 [['BAND', repr('positive') if positive else f'{band:g}' if band else 'None',
                   'every prediction kept above zero (a hard constraint)' if positive else
@@ -651,6 +673,23 @@ def main():
             'decades off, so a prediction an order of magnitude off is unlikely, two far more so, and every prediction is kept '
             'above zero. Each log half is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts both halves.'
             if amis == 'half' else '')
+         + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
+            f'{gmis["paleo"]!r}). '
+            + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], str(gmis[g_]))
+                        for g_, lin_, log_, half_ in (
+                            ('slip', 'The slip rates are scored by their split normals',
+                             'The slip rates are scored by Gaussians in log10(prediction / target) with sd log10(1 + sd / target) '
+                             'on each side, sd the effective one',
+                             'The slip rates are scored by half their split normals and half a Gaussian in log10(prediction / '
+                             'target) with the same sds'),
+                            ('mfd', 'the MFD bins by their Gaussians in rate', 'the MFD bins by Gaussians in log10',
+                             'the MFD bins by half their Gaussians and half a Gaussian in log10 with the same sds'),
+                            ('paleo', 'the paleo rows by their Gaussians in rate',
+                             'the paleo rows by their recurrence-interval PDFs in years',
+                             'the paleo rows by half their Gaussians in rate and half their recurrence-interval PDFs in years')))
+            + '. A half-and-half group\u2019s score is the geometric mean of its two densities, so each measurement still '
+            'counts once; away from a target a log part grows with the decades off. Every prediction is kept above zero, '
+            'each log part is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts every part.' if mixed else '')
          + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
             f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): its '
@@ -761,7 +800,8 @@ def main():
                if z_all < -2 else ' A χ² above the fit check means some data are fitted worse than their uncertainties '
                'allow, or the uncertainties are too small.' if z_all > 2 else '')
         fc_txt = (f'the fit check as fitted, {fc_fit[0]:.1f} ± {fc_fit[1]:.1f} (χ² as the likelihood scores the data: '
-                  + (f'each group as MISFIT {amis!r} scores it, with its own expected share' if amis else 'the '
+                  + (f'each group as MISFIT {amis!r} scores it, with its own expected share' if amis else
+                     'each group as MISFIT_SLIP, MISFIT_MFD and MISFIT_PALEO score it, with its own expected share' if mixed else 'the '
                   + ' and '.join(w_ for w_, on_ in (('paleo sites by −2 ln of their recurrence-interval PDFs, each with its own '
                                                      'expected share', (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian'),
                                                     ('MFD bins in log10', (cfg.get('mfd_misfit') or 'gaussian') != 'gaussian')) if on_))

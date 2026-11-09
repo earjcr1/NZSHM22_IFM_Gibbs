@@ -40,7 +40,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.optimize import brentq, minimize_scalar
 from scipy.stats import norm
 
-from cru_common import report_to
+from cru_common import CFM_CSV, report_to
 
 TQ = np.array([0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975])      # the tables' quantiles
 TT = np.array([500, 1000, 2000, 5000, 10000, 20000, 50000, 100000], float)   # their timeframes, years
@@ -212,7 +212,7 @@ def figure(rows, mult, out_png):
 
 def main():
     ap = argparse.ArgumentParser(description='Slip rates corrected for their timeframe, rebuilt from Coffey et al.\'s S4.')
-    ap.add_argument('--cfm', required=True, help='NZ_CFM_v1_0.csv')
+    ap.add_argument('--cfm', default=CFM_CSV, help='the CFM as CSV (default: data/NZ_CFM_v1_0.csv, cru_common.CFM_CSV)')
     ap.add_argument('--s4', required=True, help='the paper\'s Table S4 (SuppTS4_IFM_SR_updated_Jul2026.csv)')
     ap.add_argument('--rupture-set', default=None, help='an OpenSHA rupture set, to report how many of its parent faults S4 covers')
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data',

@@ -170,8 +170,14 @@ not folded; the kernel keeps U = B^T r_ss per chain (K x N, recomputed at each g
 changes); main builds B from slip_sum_rows' info (scale x W x proj x sig_i / (row_scale x lin_sc)). The NumPy backend reads
 whole columns. Bit-identical in fixed-seed tests at 211k (192 and 1,600 sweeps), 20-25% less time per sweep; selftest_fold
 (C skip, C fold, NumPy) in both sets. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
-in the full set. run_quick_checks pins MISFIT='linear' (positivity always) (TESTING.md's values predate positivity).
-preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before; the notebook passes CFM_FILE):
+in the full set. run_quick_checks pins MISFIT_SLIP, MISFIT_MFD = 'linear', MISFIT_PALEO = 'rate' (positivity always) (TESTING.md's values predate positivity).
+MISFIT_SLIP, MISFIT_MFD, MISFIT_PALEO (the user's request after run _1794201333): MISFIT split into one setting per group,
+slip and MFD 'linear' | 'log10' | 'half' (default), paleo 'rate' | 'years' | 'half' (the user's names), each group's mode
+from cru_common.GROUP_MISFIT_MODES (the notebook's copy _MISFIT_GROUP_MODES); MISFIT kept as their common setting as one
+MISFIT had it ('half'; 'linear' = linear/linear/rate; 'log10' = log10/log10/years) or 'mixed' (CONFIG misfit, misfit_slip, misfit_mfd, misfit_paleo; cru_common.misfit_settings, also inferring them
+from older runs' modes); FIGURE_SETTINGS lists the three (22 settings, SETTINGS_PER_LINE = 8, still 3 lines); summary PDF:
+three rows and a per-group paragraph when mixed; RUN_NAME _misfit{MISFIT}, or _misfit_slip{S}_mfd{M}_paleo{P} when mixed.
+preliminaries.py --cfm-sliprates CSV --rupture-set DIR (CFM_SLIPRATES, True by default since 2026-11-05, False before, always since 2026-11-09; the notebook passes cru_common.CFM_CSV):
 each raw slip-rate row (row j = FaultID j) rebuilt from its parent fault's CFM line (by name; all 557 match at 211k) as a
 split normal in mm/yr (cfm_sliprates.rebuild): mode f SR_pref with f the inputs' own factor (0.8, target x sigma /
 SlipRate, checked constant; sigma from the row's coefficients against average_slips.csv), side sds --cfm-factor x f x
@@ -197,7 +203,19 @@ links listed in cfm_rate_links.csv; recorded as cfm_rate_links. Since 2026-11-05
 section-level correlation with cross-fault sections) slip sections never span two parent faults (cru_common.slip_sections
 parents=, from --rupture-set or find_rupture_set beside --A; recorded as sections_by_fault): 211k 507 -> 551 sections,
 2e4 68 -> 75; template weights applied per section by cfm_sliprates.section_factors (equal to the faults' weights when
-sections are single faults; template_scale saves the weights as applied). --cfm-rounding (CFM_ROUNDING, True by default since 2026-11-09, False before): each fault's three numbers known to half the
+sections are single faults; template_scale saves the weights as applied). CFM_PREF, CFM_ROUNDING and SLIP_SD_MULTIPLIER are out of the notebook since 2026-11-09 (the user's request): SR_pref the
+mode (also without CFM_TIMEFRAME), no rounding, notebook SD_MULTIPLIER_ = 1 with CFM_SLIPRATES and 2.5 without (the inputs'
+convention; SLIP_AS_GIVEN = no CFM and factor 0.8); CONFIG still records cfm_pref, cfm_rounding, slip_sd_multiplier; not in
+FIGURE_SETTINGS (19, SETTINGS_PER_LINE 7); the summary PDF lists them only if an older run's differ; preliminaries.py keeps the
+options. CFM_SLIPRATES and CFM_FILE are out of the settings too (2026-11-09, the user's request): CFM_SLIPRATES = True below
+the settings (False only for sensitivity tests, run_nb.py CFM_SLIPRATES=False, as run_quick_checks pins it), the CSV in
+the repository, data/NZ_CFM_v1_0.csv = cru_common.CFM_CSV (timeframe_sliprates.py --cfm's default); not in FIGURE_SETTINGS
+(18; 'no CFM' under the CFM columns for a run without it). Also fixed below the settings since 2026-11-09 (the user's request):
+BLOCKS None, SLIP_SECTIONS 'auto' (RUN_NAME starts SLIP_SECTIONS... only when not auto), RUPTURE_SET 'auto', CROSS_SECTIONS
+'all', CFM_RATE_LINKS = CFM_TEMPLATE_RHO is not None; FIGURE_SETTINGS 14 (SETTINGS_PER_LINE 5), a non-default SLIP_SECTIONS or
+CROSS_SECTIONS shown beside PRESET. DOWN_THE_MIDDLE and MFD_MONOTONIC stay settings. Misfit defaults (2026-11-09, the user's
+choice, each group in the space its uncertainties are worked out in): MISFIT_SLIP 'linear', MISFIT_MFD 'half', MISFIT_PALEO
+'years' (MISFIT 'mixed'). --cfm-rounding (formerly CFM_ROUNDING, True by default 2026-11-09, False before): each fault's three numbers known to half the
 finest step among them as written (cfm_sliprates.load_cfm_steps, the shortest form of each, since neither the CSV nor
 the spreadsheet keeps trailing zeros), variance q^2 (f^2 + 2 c^2)/12 added to each side's sd in quadrature, before the
 median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-pref mode|median (CFM_PREF, 'mode' by default; passed only when not mode): with median,
@@ -205,7 +223,7 @@ each split normal shifted, sds kept, so that its median is f x SR_pref (rebuild'
 a = s_lo/(s_lo+s_hi): median - mode = s_hi Phi^-1(0.5 + (0.5-a)/(2(1-a))) for a < 0.5, -s_lo Phi^-1(1 - 1/(4a)) for
 a > 0.5); faults whose mode would fall at or below 0 keep the mode (18 at 211k), listed in the cleaning report; recorded
 as the fourth entry of the problem's cfm_sliprates. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
-3 by default since 2026-11-09, 2 before, the user's choice after a colleague's new work; the scripts' own default without the option stays 2; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
+1 by default since 2026-11-09 with CFM_TIMEFRAME (3 earlier that day, the mean widening of Coffey et al.; 2 before); the scripts' own default without the option stays 2; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
 multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
 K x F x its uncertainty: the CFM's sides (rebuild's srf and factor) or, without --cfm-sliprates, the inputs' Gaussians
 (cfm_sliprates.rescale_inputs: sd K x F x SD; their own convention, checked, is target 0.8 x SlipRate, sd 2 x SD, the

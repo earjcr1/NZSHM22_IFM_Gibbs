@@ -99,7 +99,8 @@ def split_weights(P, rows, res):
     return np.where(res < 0, P['split_lo2'][rows], P['split_hi2'][rows])
 
 
-MISFIT_MODES = {'linear': ('split', 'gaussian', 'gaussian'),            # the notebook's MISFIT -> each group's mode
+MISFIT_MODES = {'linear': ('split', 'gaussian', 'gaussian'),            # the one MISFIT (until 2026-11-09; now the three's common
+                                                                        # setting) -> the slip, MFD and paleo modes
                 'log10': ('log10', 'log10', 'years'),                   # (gibbs.py --slip-misfit, --mfd-misfit,
                 'half': ('split+log10', 'gaussian+log10', 'gaussian+years')}   # --paleo-misfit)
 
@@ -111,6 +112,32 @@ def misfit_log_weight(mode):
     if mode in (None, 'split', 'gaussian'):
         return 0.0
     return 0.5 if '+' in str(mode) else 1.0
+
+
+GROUP_MISFIT_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'},      # the notebook's MISFIT_SLIP,
+                      'mfd': {'linear': 'gaussian', 'log10': 'log10', 'half': 'gaussian+log10'},   # MISFIT_MFD, MISFIT_PALEO ->
+                      'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}  # each group's mode (gibbs.py)
+
+
+CFM_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'NZ_CFM_v1_0.csv')
+# the NZ Community Fault Model v1.0 as CSV (Name, SR_pref, SR_min, SR_max, ...; the user's conversion of NZ_CFM_v1_0.xlsx),
+# kept in the repository since 2026-11-09 in place of the notebook's CFM_FILE: preliminaries.py --cfm-sliprates, timeframe_sliprates.py
+
+
+def misfit_settings(cfg):
+    """A run's misfit setting per data group, {'slip': ..., 'mfd': ..., 'paleo': ...}: 'linear', 'log10' or 'half' for the
+    slip rates and the MFD bins, 'rate', 'years' or 'half' for the paleo rows (the notebook's MISFIT_SLIP, MISFIT_MFD,
+    MISFIT_PALEO since 2026-11-09; one MISFIT for all three before): from its configuration's misfit_slip/... keys, or else
+    from each group's recorded mode (its log weight b 0, 1/2 or 1); None for a group the configuration records neither for."""
+    out = {}
+    for g in ('slip', 'mfd', 'paleo'):
+        v = cfg.get('misfit_' + g)
+        if v is None and (cfg.get(g + '_misfit') is not None or cfg.get('misfit') in MISFIT_MODES):
+            mode = cfg.get(g + '_misfit') or ('split' if g == 'slip' else 'gaussian')
+            v = {0.0: 'rate' if g == 'paleo' else 'linear', 0.5: 'half',
+                 1.0: 'years' if g == 'paleo' else 'log10'}[misfit_log_weight(mode)]
+        out[g] = v
+    return out
 
 
 def slip_log_sds(P, rows):
@@ -824,16 +851,16 @@ def reference_rates(spec, P):
                 n_removed=n_removed, note=note)
 
 
-FIGURE_SETTINGS = (('SLIP_SECTIONS', 'slip_sections'), ('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT', 'misfit'), ('MFD_MONOTONIC', 'mfd_monotonic'),
-                   ('CFM_SLIPRATES', 'cfm_sliprates'), ('CFM_PREF', 'cfm_pref'), ('CFM_ROUNDING', 'cfm_rounding'), ('CFM_TIMEFRAME', 'cfm_timeframe'),
-                   ('CFM_TEMPLATE_RHO', 'cfm_template_rho'), ('CFM_RATE_LINKS', 'cfm_rate_links'),
-                   ('SLIP_RATE_FACTOR', 'slip_rate_factor'), ('SLIP_SD_MULTIPLIER', 'slip_sd_multiplier'),
-                   ('CROSS_SECTIONS', 'cross_sections'), ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'),
-                   ('PLATE_RATE', 'plate_rate'), ('RUPTURE_SET', 'rupture_set'),
-                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from SLIP_SECTIONS to FLOOR, every
+FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
+                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'),
+                   ('CFM_TIMEFRAME', 'cfm_timeframe'),
+                   ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
+                   ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
+                   ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
+                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 7                                          # the table's columns per line: 'model' and these 20 in 3 lines
+SETTINGS_PER_LINE = 5                                          # the table's columns per line: 'model' and these 14 in 3 lines
 
 
 def run_config(config, problem):
@@ -851,20 +878,27 @@ def run_config(config, problem):
 
 
 def run_settings(config, problem):
-    """The settings that tell runs apart (the notebook's, SLIP_SECTIONS to FLOOR), as (name, value) pairs for the fit
+    """The settings that tell runs apart (the notebook's, MFD_UNCERTAINTY to FLOOR; SLIP_SECTIONS and CROSS_SECTIONS, fixed since
+    2026-11-09, beside PRESET when not 'auto' and 'all'), as (name, value) pairs for the fit
     figures' settings table: every one of FIGURE_SETTINGS, whatever its value, so that every figure's table has the same
-    size ('—' for one the configuration does not record; MISFIT, for a run before it, from its groups' modes): from
+    size ('—' for one the configuration does not record; MISFIT_SLIP, _MFD, _PALEO, for a run before them, from its groups'
+    modes, misfit_settings): from
     config, a workflow_config.json (default: the one next to problem, as the notebook writes it; 'none': no table), or
     None if there is none."""
     cfg = run_config(config, problem)
     if cfg is None:
         return None
     cfg = dict(cfg)
-    if 'misfit' not in cfg:                              # before MISFIT: the one its groups' modes match, if any
-        modes = tuple(cfg.get(k) for k in ('slip_misfit', 'mfd_misfit', 'paleo_misfit'))
-        cfg['misfit'] = next((k for k, v in MISFIT_MODES.items() if v == modes), None)
-        if cfg['misfit'] is None:
-            del cfg['misfit']
+    for g_, v_ in misfit_settings(cfg).items():          # before MISFIT_SLIP, ...: from the groups' recorded modes
+        if v_ is not None:
+            cfg['misfit_' + g_] = v_
+    if cfg.get('cfm_sliprates') is False:                # CFM_SLIPRATES (not a setting since 2026-11-09) off: a sensitivity
+        for k_ in ('cfm_timeframe', 'cfm_template_rho'):     # test with the inputs' slip rates
+            cfg[k_] = 'no CFM'
+    fixed_ = [f'{n_} {cfg[k_]}' for n_, k_, v_ in (('SLIP_SECTIONS', 'slip_sections', 'auto'), ('CROSS_SECTIONS', 'cross_sections', 'all'))
+              if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
+    if fixed_ and 'preset' in cfg:
+        cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
         name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))
         cfg['rupture_set'] = name if len(name) <= 20 else name[:19] + '…'
