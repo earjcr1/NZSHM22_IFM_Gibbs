@@ -25,15 +25,15 @@ faults where they differ by more than 2% reported. The checks against S4 that do
 points where not pinned) are reported.
 
 The likelihood scores each slip rate by a split normal (two half-Gaussians joined at its mode). Since 2026-11-09 each
-fault's is fitted to its corrected distribution (fit_split_normal): the mode and two sds whose 16%, 50% and 84% points
-are the corrected distribution's, so the split normal reproduces its median and body exactly and its mean closely.
-Before, the split normal had its mode at the corrected mode and its 2.5% and 97.5% points read as 2 sd from it ('ends'),
-which, for these right-skewed distributions with long tails both ways, put its median and mean a median 7% above the
-corrected distribution's (up to about 2x). The fitted centre can lie below the corrected mode, and its 2 sd below can lie
-below 0. No split normal in slip rate has the most right-skewed faults' 16/50/84 points (its (q84 - q50) / (q50 - q16) is
-at most about 1.55); those, mostly slow aperiodic faults (188 of the 211k rupture set's 557), take a split normal fitted in
-log10 of the slip rate and converted (split_normal_for: 'log 16/50/84', else 'log 2.5/50/97.5'), automatically, each
-fault's fit named in sn_fit and counted in the report; 'ends' (the old split normal) only where a 16% or 2.5% point is 0.
+fault's is fitted to its corrected distribution (split_normal_for). The candidates each go exactly through three of its
+quantiles: 16/50/84% in slip rate, and, fitted in log10 of the slip rate and converted, 16/50/84% and 2.5/50/97.5%; of
+those that exist, the one closest to the corrected distribution in Kullback-Leibler divergence is taken (cross_entropy,
+exact by quadrature). A split normal in slip rate has no exact 16/50/84 fit for the most right-skewed faults (its
+(q84 - q50) / (q50 - q16) is at most about 1.55), and near that limit its exact fit is a near half-normal with almost no
+lower side (Kairakau South: lower sd 1% of its centre), which the KL choice rejects. Before, the split normal had its
+mode at the corrected mode and its 2.5% and 97.5% points read as 2 sd from it ('ends'), which put its median and mean a
+median 7% and 4% above the corrected distribution's (up to about 2x); 'ends' remains only where no candidate exists
+(a 16% or 2.5% point of 0). Each fault's choice is in sn_fit and counted in the report.
 
 Writes OUT (one row per fault of the CFM: Name, mode, q025, q16, q50, q84, q975 in mm/yr, t_eff in
 years (the schemes' geometric mean), fit: 'S4' (t solved), 'S4 long' (S4's 97.5% at or inside the tables' longest
@@ -195,25 +195,54 @@ def fit_split_normal_log(q, p):
     return (10 ** c, 10 ** c - 10 ** (c - lo), 10 ** (c + hi) - 10 ** c), f
 
 
-SN_FITS = ('16/50/84', 'log 16/50/84', 'log 2.5/50/97.5', 'ends')   # the split normal each fault gets, in order of trial
+SN_FITS = ('16/50/84', 'log 16/50/84', 'log 2.5/50/97.5', 'ends')   # the split normals a fault can get
+GH_Z, GH_W = np.polynomial.hermite_e.hermegauss(80)               # Gauss-Hermite nodes for the paper's Gaussian
+GH_W = GH_W / GH_W.sum()
+
+
+def cross_entropy(pref, smin, smax, ts, sn):
+    """E[ln f_sn(Y)] under the corrected distribution (Y = max(X, 0) F, the paper's Gaussian X on the CFM bounds times
+    the timeframe factor F), exactly by quadrature (Gauss-Hermite in X, the factor's quantile points in F), averaged over
+    the interpolation schemes (ts: each scheme's t). Its negative is the Kullback-Leibler divergence of the split
+    normal sn = (mode, s_lo, s_hi) from the corrected distribution, less the latter's entropy, the same for every
+    candidate: so the candidate with the largest cross entropy is the closest in KL."""
+    c, lo, hi = sn
+    mu, sd = 0.5 * (smin + smax), (smax - smin) / 3.92
+    x = np.maximum(mu + sd * GH_Z, 0.0) if sd > 0 else np.array([max(mu, 0.0)])
+    wx = GH_W if sd > 0 else np.array([1.0])
+    out = []
+    for sc, t in ts.items():
+        y = x[:, None] * np.exp(log_factor(pref >= 1.0, t, sc))[None, :]
+        s_ = np.where(y < c, lo, hi)
+        lf = np.log(2.0) - 0.5 * np.log(2 * np.pi) - np.log(lo + hi) - 0.5 * ((y - c) / s_) ** 2
+        out.append(float(wx @ lf.mean(1)))
+    return float(np.mean(out))
 
 
 def split_normal_for(r):
-    """The likelihood's split normal for a fault (row r of the table: its quantiles and mode), and which fit gave it:
-    '16/50/84', fitted to the corrected distribution's 16%, 50% and 84% points (its median and body exactly); where no
-    split normal in slip rate has those (the most right-skewed, mostly slow faults), 'log 16/50/84', fitted to them in
-    log10 of the slip rate and converted; where none does even in log10, 'log 2.5/50/97.5', likewise to the 2.5%, 50% and
-    97.5% points; else (a 16% or 2.5% point of 0) 'ends', the mode with the 2.5% and 97.5% points at 2 sd, as before
-    2026-11-09. The fallbacks are taken automatically, so a new table needs no checking by hand: the report counts each."""
+    """The likelihood's split normal for a fault (row r of the table: its quantiles, mode, CFM numbers and each scheme's
+    t), and which fit gave it. The candidates go exactly through three of the corrected distribution's quantiles:
+    '16/50/84' in slip rate (its median and body exactly), and, fitted in log10 of the slip rate and converted,
+    'log 16/50/84' and 'log 2.5/50/97.5'; a split normal in slip rate has no exact fit for the most right-skewed faults
+    (its (q84 - q50) / (q50 - q16) is at most about 1.55), and near that limit its exact fit is a near half-normal with
+    almost no lower side (Kairakau South's lower sd 1% of its centre, 44 sd off in a best fit). Of the candidates that
+    exist, the one closest to the corrected distribution in Kullback-Leibler divergence (cross_entropy) is taken; with
+    none (a 16% or 2.5% point of 0), 'ends', the mode with the 2.5% and 97.5% points at 2 sd, as before 2026-11-09. All
+    automatic, so a new table needs no checking by hand: the report counts each fit and the KL margins."""
+    cands = []
     sn = fit_split_normal(r['q16'], r['q50'], r['q84'])
     if sn is not None:
-        return sn, SN_FITS[0]
+        cands.append((sn, SN_FITS[0]))
     for q, p, how in (([r['q16'], r['q50'], r['q84']], [0.16, 0.5, 0.84], SN_FITS[1]),
                       ([r['q025'], r['q50'], r['q975']], [0.025, 0.5, 0.975], SN_FITS[2])):
         f = fit_split_normal_log(q, p)
         if f is not None and f[0][1] > 0 and f[0][2] > 0:
-            return f[0], how
-    return (r['mode'], 0.5 * (r['mode'] - r['q025']), 0.5 * (r['q975'] - r['mode'])), SN_FITS[3]
+            cands.append((f[0], how))
+    if not cands:
+        return (r['mode'], 0.5 * (r['mode'] - r['q025']), 0.5 * (r['q975'] - r['mode'])), SN_FITS[3], {}
+    ce = {how: cross_entropy(r['pref'], r['smin'], r['smax'], r['t'], sn_) for sn_, how in cands}
+    sn_, how = max(cands, key=lambda c_: ce[c_[1]])
+    return sn_, how, ce
 
 
 def exact_mean(pref, smin, smax, t, scheme):
@@ -351,7 +380,7 @@ def main():
         r['mode_sc'] = {sc: per_sc[sc]['mode'] for sc in SCHEMES}
         r['t_eff'] = gm([r['t'][sc] for sc in SCHEMES])
         r['p0'] = per_sc[SCHEMES[0]]['p0']
-        r['sn'], r['sn_fit'] = split_normal_for(r)                 # the split normal the likelihood uses
+        r['sn'], r['sn_fit'], r['sn_ce'] = split_normal_for(r)     # the split normal the likelihood uses
         r['mean'] = gm([exact_mean(r['pref'], r['smin'], r['smax'], r['t'][sc], sc) for sc in SCHEMES])
         if r['name'] in S4 and r['smax'] > r['smin']:
             s = S4[r['name']]
@@ -409,7 +438,13 @@ def main():
         + (f' ({sum(r["sn_fit"] == k for r in rows if r["name"] in rs_set)} of the rupture set\'s {len(rs_set)})' if rs_set else '')
         for k in SN_FITS) + ' (16/50/84: the corrected distribution\'s 16%, 50% and 84% points exactly; log: fitted in log10 '
           'and converted, where no split normal in slip rate has those points; ends: the mode with the 2.5% and 97.5% points '
-          'at 2 sd, as before 2026-11-09, where a 16% or 2.5% point is 0)')
+          'at 2 sd, as before 2026-11-09, where no candidate exists; of the candidates, the closest in Kullback-Leibler '
+          'divergence to the corrected distribution)')
+    sw = [(r['sn_ce'][r['sn_fit']] - r['sn_ce']['16/50/84'], r['name']) for r in rows
+          if r['name'] in rs_set and '16/50/84' in r['sn_ce'] and r['sn_fit'] != '16/50/84']
+    print(f'   faults of the rupture set with an exact fit in slip rate that a log10 fit beats in KL: {len(sw)} ('
+          + ', '.join(f'{n} by {d:.2f} nats' for d, n in sorted(sw, reverse=True)) + '): near the feasibility limit the '
+          'exact fit is a near half-normal')
     for k in SN_FITS:
         ff = [r for r in pos if r['sn_fit'] == k]
         if not ff:
