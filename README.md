@@ -9,7 +9,6 @@ posterior means and spreads of every rupture rate, of every predicted datum and 
 fault event rates, together with weighted representative models for hazard calculations.
 
 Output figures from a run on a setup with 211,000 ruptures, very similar to the NZSHM rupture set, are below.
-Configs of the inversion setup that produced the A matrix and D vector are at https://docs.google.com/document/d/13QdPHv5wpl3SfnFK5gyZggNQ66btGH1k4b4tntspJzY/
 
 <img width="2669" height="1488" alt="fig_slip_sections_ruptures_by_magnitude_1" src="https://github.com/user-attachments/assets/dafd3763-5b6d-4b97-b275-067a74fece72" />
 <img width="2250" height="1488" alt="fig_slip_sections_ruptures_by_magnitude_2" src="https://github.com/user-attachments/assets/7592aab1-9dfe-45c1-900f-69990dd31b2e" />
