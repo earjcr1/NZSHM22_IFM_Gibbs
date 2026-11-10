@@ -1,8 +1,8 @@
 magnitude bins: 18 bin rows (original rows 8845-8862), counted up from 6.80-6.90 in steps of 0.1; 204,538 ruptures, each drawn at a random magnitude within its bin
 order check: the median number of subsections per rupture goes from 12 (6.80-6.90) to 112 (8.50-8.60), rank correlation with magnitude +0.98
-settings: SLIP_SECTIONS auto, MFD_UNCERTAINTY as-given, DOWN_THE_MIDDLE False, BAND positive, BAND_SOFT 1, MFD_MONOTONIC True, CROSS_SECTIONS all, SLIP_SUM True, SLIP_SUM_L0 8.5, PLATE_RATE 0.8, RUPTURE_SET auto, PRESET very_conservative, FLOOR -10
+settings: model posterior mean, MFD_UNCERTAINTY as-given, DOWN_THE_MIDDLE False, MISFIT_SLIP linear, MISFIT_MFD half, MISFIT_PALEO years, MFD_MONOTONIC False, CFM_TIMEFRAME True, CFM_TEMPLATE_RHO 1, SLIP_RATE_FACTOR 0.8, SLIP_SUM True, SLIP_SUM_L0 100, PLATE_RATE 0.8, PRESET very_conservative, FLOOR -10
 
-reference: NZSHM22_InversionSolution-211k (/Users/rollins/inversions/NZSHM22_Matrices-211k/NZSHM22_InversionSolution-211k/solution/rates.csv): its chi2 over the 18 magnitude-bin rows 27.1; bin totals; total rate 0.04187 against targets totalling 0.03721; its rates on the 298 ruptures cleaning removed (5.95e-05 per year, 0.14% of its total) are not in these predictions
+reference: NZSHM22_InversionSolution-211k (/Users/rollins/inversions/NZSHM22_Matrices-211k/NZSHM22_InversionSolution-211k/solution/rates.csv): its misfit over the 18 magnitude-bin rows (gaussian+log10), chi2 as fitted 26.6 (half linear, half log10); linear alone 27.1, log10 alone 26.1; bin totals; total rate 0.04187 against targets totalling 0.03721; its rates on the 298 ruptures cleaning removed (5.95e-05 per year, 0.14% of its total) are not in these predictions
 bin          target R_j       total  ratio
 6.80-6.90     3.551e-03   3.740e-03  1.053
 6.90-7.00     4.545e-03   4.865e-03  1.070
@@ -23,46 +23,46 @@ bin          target R_j       total  ratio
 8.40-8.50     4.264e-04   5.337e-04  1.252
 8.50-8.60     3.419e-04   4.100e-04  1.199
 
-spikeslab (spikeslab/rate_vectors.npz): the mean model's chi2 over the 18 magnitude-bin rows, as the likelihood weights them, 29.2; 6,504 penalised ruptures (rate 0 by construction) not shown; posterior spread of each bin total from the 110016 draws recorded by main_rep0, main_rep1; the x's: the 2000 kept draws' bin totals (select_draws.py)
+spikeslab (spikeslab/rate_vectors.npz): the mean model's misfit over the 18 magnitude-bin rows, as the likelihood weights them (gaussian+log10), chi2 as fitted 55.5 (half linear, half log10); linear alone 58.9, log10 alone 52.2; 6,504 penalised ruptures (rate 0 by construction) not shown; posterior spread of each bin total from the 147504 draws recorded by main_rep0, main_rep1; the x's: the 2000 kept draws' bin totals (select_draws.py)
 bin         ruptures  target R_j total of means  ratio  total: 16%        50%        84%  log10 mean: 10%     50%     90%     max  below 1e-10
-6.80-6.90       2696   3.551e-03      3.795e-03  1.069   3.520e-03  3.775e-03  4.073e-03            -6.66   -6.48   -5.61   -3.97            0
-6.90-7.00       3459   4.545e-03      4.870e-03  1.071   4.591e-03  4.859e-03  5.151e-03            -6.75   -6.49   -5.68   -3.36            0
-7.00-7.10       3604   4.358e-03      4.546e-03  1.043   4.298e-03  4.540e-03  4.795e-03            -6.90   -6.49   -5.73   -3.84            0
-7.10-7.20       4467   3.970e-03      4.255e-03  1.072   4.019e-03  4.252e-03  4.492e-03            -6.88   -6.45   -5.94   -3.81            0
-7.20-7.30       5435   3.481e-03      3.913e-03  1.124   3.681e-03  3.911e-03  4.144e-03            -6.88   -6.53   -6.03   -4.05            0
-7.30-7.40       6018   2.972e-03      3.538e-03  1.191   3.308e-03  3.537e-03  3.769e-03            -6.95   -6.61   -6.14   -4.17            0
-7.40-7.50       8870   2.532e-03      3.056e-03  1.207   2.840e-03  3.053e-03  3.272e-03            -7.26   -6.89   -6.41   -3.95            0
-7.50-7.60      10652   2.158e-03      2.655e-03  1.230   2.457e-03  2.654e-03  2.852e-03            -7.30   -6.95   -6.50   -4.27            0
-7.60-7.70      12208   1.839e-03      2.224e-03  1.209   2.042e-03  2.222e-03  2.408e-03            -7.50   -7.11   -6.60   -4.05            0
-7.70-7.80      14933   1.568e-03      1.842e-03  1.175   1.687e-03  1.838e-03  1.998e-03            -7.71   -7.28   -6.76   -4.26            0
-7.80-7.90      17728   1.336e-03      1.564e-03  1.170   1.432e-03  1.560e-03  1.694e-03            -7.92   -7.45   -6.91   -4.61            0
-7.90-8.00      19534   1.139e-03      1.336e-03  1.173   1.224e-03  1.334e-03  1.449e-03            -8.11   -7.61   -7.01   -5.03            0
-8.00-8.10      21389   9.704e-04      1.137e-03  1.172   1.038e-03  1.135e-03  1.236e-03            -8.32   -7.84   -7.20   -4.59            0
-8.10-8.20      22687   8.270e-04      9.592e-04  1.160   8.718e-04  9.574e-04  1.047e-03            -8.67   -8.16   -7.53   -4.38            0
-8.20-8.30      17395   6.631e-04      7.863e-04  1.186   7.120e-04  7.844e-04  8.606e-04            -8.56   -7.90   -7.32   -4.71            0
-8.30-8.40      22090   5.317e-04      6.548e-04  1.231   5.961e-04  6.531e-04  7.134e-04            -8.90   -8.48   -7.90   -4.65            0
-8.40-8.50      11202   4.264e-04      5.293e-04  1.241   4.766e-04  5.285e-04  5.822e-04            -8.30   -7.93   -7.31   -4.83            0
-8.50-8.60        171   3.419e-04      4.028e-04  1.178   3.505e-04  4.044e-04  4.546e-04            -6.44   -5.84   -5.27   -4.80            0
-all           204538   3.721e-02      4.206e-02  1.130   4.106e-02  4.207e-02  4.307e-02            -8.46   -7.56   -6.54   -3.36            0
+6.80-6.90       2696   3.551e-03      3.714e-03  1.046   3.347e-03  3.704e-03  4.081e-03            -6.90   -6.66   -5.81   -3.24            0
+6.90-7.00       3459   4.545e-03      4.826e-03  1.062   4.387e-03  4.816e-03  5.265e-03            -6.91   -6.64   -5.79   -3.31            0
+7.00-7.10       3604   4.358e-03      4.714e-03  1.082   4.281e-03  4.705e-03  5.148e-03            -7.08   -6.73   -5.97   -3.20            0
+7.10-7.20       4467   3.970e-03      4.616e-03  1.163   4.198e-03  4.609e-03  5.034e-03            -7.06   -6.63   -6.06   -3.50            0
+7.20-7.30       5435   3.481e-03      4.210e-03  1.209   3.821e-03  4.203e-03  4.599e-03            -7.09   -6.65   -6.12   -3.42            0
+7.30-7.40       6018   2.972e-03      3.909e-03  1.315   3.551e-03  3.903e-03  4.267e-03            -7.16   -6.71   -6.17   -3.70            0
+7.40-7.50       8870   2.532e-03      3.245e-03  1.282   2.927e-03  3.240e-03  3.563e-03            -7.48   -6.98   -6.34   -3.77            0
+7.50-7.60      10652   2.158e-03      2.883e-03  1.336   2.598e-03  2.879e-03  3.166e-03            -7.49   -7.06   -6.54   -3.91            0
+7.60-7.70      12208   1.839e-03      2.411e-03  1.311   2.162e-03  2.405e-03  2.660e-03            -7.69   -7.25   -6.74   -3.27            0
+7.70-7.80      14933   1.568e-03      1.917e-03  1.223   1.700e-03  1.912e-03  2.135e-03            -7.84   -7.37   -6.80   -4.22            0
+7.80-7.90      17728   1.336e-03      1.675e-03  1.254   1.481e-03  1.670e-03  1.869e-03            -8.01   -7.63   -7.02   -3.67            0
+7.90-8.00      19534   1.139e-03      1.435e-03  1.260   1.266e-03  1.432e-03  1.605e-03            -8.13   -7.75   -7.13   -3.73            0
+8.00-8.10      21389   9.704e-04      1.201e-03  1.238   1.052e-03  1.197e-03  1.350e-03            -8.29   -7.90   -7.27   -4.17            0
+8.10-8.20      22687   8.270e-04      9.902e-04  1.197   8.617e-04  9.866e-04  1.119e-03            -8.56   -8.11   -7.46   -4.04            0
+8.20-8.30      17395   6.631e-04      8.075e-04  1.218   6.997e-04  8.046e-04  9.154e-04            -8.65   -8.04   -7.32   -4.83            0
+8.30-8.40      22090   5.317e-04      6.851e-04  1.288   6.025e-04  6.815e-04  7.682e-04            -8.98   -8.56   -7.93   -4.00            0
+8.40-8.50      11202   4.264e-04      5.570e-04  1.306   4.852e-04  5.559e-04  6.293e-04            -8.45   -8.11   -7.55   -4.65            0
+8.50-8.60        171   3.419e-04      3.943e-04  1.153   3.359e-04  3.928e-04  4.524e-04            -6.52   -6.06   -5.34   -4.16            0
+all           204538   3.721e-02      4.419e-02  1.188   4.317e-02  4.418e-02  4.521e-02            -8.48   -7.66   -6.66   -3.20            0
 
 ruptures by decade of mean rate (each column counts the means from its value up to the next one's; <1e-10 includes means of exactly 0):
 bin         <1e-10  1e-10   1e-9   1e-8   1e-7   1e-6   1e-5   1e-4   1e-3 >=1e-2
-6.80-6.90        0      0      0    128   1830    697     40      1      0      0
-6.90-7.00        0      0      0    235   2410    768     41      5      0      0
-7.00-7.10        0      0      0    233   2570    727     70      4      0      0
-7.10-7.20        0      0      0    116   3804    498     46      3      0      0
-7.20-7.30        0      0      0    189   4725    477     44      0      0      0
-7.30-7.40        0      0      0    455   5099    429     35      0      0      0
-7.40-7.50        0      0      1   3380   5141    315     32      1      0      0
-7.50-7.60        0      0      4   4517   5839    267     25      0      0      0
-7.60-7.70        0      0     17   7806   4178    195     12      0      0      0
-7.70-7.80        0      0    152  11607   2958    211      5      0      0      0
-7.80-7.90        0      0   1089  14273   2179    182      5      0      0      0
-7.90-8.00        0      3   3275  14352   1756    148      0      0      0      0
-8.00-8.10        0     12   7461  12616   1181    113      6      0      0      0
-8.10-8.20        0    154  14447   7690    351     20     25      0      0      0
-8.20-8.30        0     59   6905   9752    601     69      9      0      0      0
-8.30-8.40        0   1512  17718   2555    210     81     14      0      0      0
-8.40-8.50        0      2   4655   6022    434     87      2      0      0      0
-8.50-8.60        0      0      0      0     71     93      7      0      0      0
-all              0   1742  55724  95926  45337   5377    418     14      0      0
+6.80-6.90        0      0      0    170   1952    538     32      4      0      0
+6.90-7.00        0      0      0    252   2469    701     29      8      0      0
+7.00-7.10        0      0      0    771   2424    353     50      6      0      0
+7.10-7.20        0      0      2    763   3322    330     44      6      0      0
+7.20-7.30        0      0      0    981   4031    376     44      3      0      0
+7.30-7.40        0      0      1   1431   4153    387     42      4      0      0
+7.40-7.50        0      0     16   4245   4173    403     31      2      0      0
+7.50-7.60        0      0     16   6339   3984    284     28      1      0      0
+7.60-7.70        0      0     66   9681   2272    172     16      1      0      0
+7.70-7.80        0      0    306  12050   2390    171     16      0      0      0
+7.80-7.90        0      0   1895  14187   1522    112     11      1      0      0
+7.90-8.00        0      0   4195  13991   1273     62     12      1      0      0
+8.00-8.10        0      0   8440  11836   1027     69     17      0      0      0
+8.10-8.20        0     53  13589   8169    817     44     15      0      0      0
+8.20-8.30        0    103   9203   7161    829     93      6      0      0      0
+8.30-8.40        0   2003  17473   2361    179     65      9      0      0      0
+8.40-8.50        0      2   7144   3740    259     45     12      0      0      0
+8.50-8.60        0      0      0      0     93     73      5      0      0      0
+all              0   2161  62346  98128  37169   4278    419     37      0      0
