@@ -11,8 +11,8 @@ fault event rates, together with weighted representative models for hazard calcu
 Output figures from a run on a setup with 211,000 ruptures, very similar to the NZSHM rupture set, are below.
 Configs of the inversion setup that produced the A matrix and D vector are at https://docs.google.com/document/d/13QdPHv5wpl3SfnFK5gyZggNQ66btGH1k4b4tntspJzY/
 
-<img width="2669" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_1" src="https://github.com/user-attachments/assets/0f3dd5d8-755c-48e8-8365-04f4a772f013" />
-<img width="2250" height="1398" alt="fig_slip_sections_ruptures_by_magnitude_2" src="https://github.com/user-attachments/assets/ec14095d-c772-423d-a76d-b5647650ab2c" />
-<img width="1290" height="1282" alt="fig_rate_magnitude" src="https://github.com/user-attachments/assets/107682cf-06ce-40fb-acd6-816b65d1df1b" />
-<img width="1590" height="1179" alt="fig_slip_rates" src="https://github.com/user-attachments/assets/c8006852-cb80-422b-9447-0944ed0fd3bc" />
-<img width="982" height="1376" alt="fig_paleo_rates" src="https://github.com/user-attachments/assets/4cbb0669-44f4-41a6-af2f-b025405813a7" />
+<img width="2669" height="1488" alt="fig_slip_sections_ruptures_by_magnitude_1" src="https://github.com/user-attachments/assets/dafd3763-5b6d-4b97-b275-067a74fece72" />
+<img width="2250" height="1488" alt="fig_slip_sections_ruptures_by_magnitude_2" src="https://github.com/user-attachments/assets/7592aab1-9dfe-45c1-900f-69990dd31b2e" />
+<img width="1290" height="1419" alt="fig_rate_magnitude" src="https://github.com/user-attachments/assets/0a03ca81-dc9a-445c-ab6b-98a572fd6338" />
+<img width="1590" height="1345" alt="fig_slip_rates" src="https://github.com/user-attachments/assets/3ad136a0-8d73-49cc-a60c-bfc4d8812535" />
+<img width="1590" height="1345" alt="fig_paleo_rates" src="https://github.com/user-attachments/assets/a3e7916e-b45f-42ef-8cd5-458672d13029" />
