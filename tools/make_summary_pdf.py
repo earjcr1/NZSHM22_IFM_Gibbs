@@ -71,20 +71,39 @@ def main():
     ap.add_argument('--prior', default='spikeslab', help="the prior's folder in RUN_DIR (default spikeslab)")
     ap.add_argument('--out', default=None, help='the PDF (default RUN_DIR/workflow_summary.pdf)')
     ap.add_argument('--title', default='Posterior sampling of NZSHM22 rupture rates')
+    ap.add_argument('--md', default=None, metavar='FILE',
+                    help='write the summary as Markdown to FILE instead of the PDF (the same text, tables and figures; no '
+                         'reportlab needed), e.g. the repository\'s README.md')
+    ap.add_argument('--fig-dir', default=None, metavar='DIR',
+                    help='--md: the folder the figures are linked from, as written in the links (relative to FILE\'s '
+                         'folder; each figure by its file name), e.g. example/output_figs; default: their paths in the run')
+    ap.add_argument('--pdf-link', default=None, metavar='PATH',
+                    help='--md: the summary PDF\'s path, as linked from FILE (e.g. example/workflow_summary.pdf)')
+    ap.add_argument('--skip-figs', nargs='*', default=[], metavar='NAME',
+                    help='--md: figures (file names) to leave out; the others are numbered in order, as the text refers to them')
     a = ap.parse_args()
-    try:
-        from PIL import Image
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4, landscape
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.lib.units import cm
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.platypus import (BaseDocTemplate, Frame, Image as RLImage, KeepTogether, NextPageTemplate,
-                                        PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
-    except ImportError as e:
-        raise SystemExit(f'{e}: this script needs reportlab (pip install reportlab) and Pillow')
-    import matplotlib
+    MD = a.md is not None
+    if MD:                                               # Markdown: stand-ins for the PDF's layout objects, unused
+        class _Nil:
+            def __init__(self, *a_, **k_):
+                pass
+        colors = type('colors', (), {'HexColor': staticmethod(lambda c: c)})
+        A4, landscape, cm = (595.3, 841.9), (lambda s_: (s_[1], s_[0])), 28.35
+        ParagraphStyle = Spacer = PageBreak = NextPageTemplate = KeepTogether = _Nil
+    else:
+        try:
+            from PIL import Image
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.styles import ParagraphStyle
+            from reportlab.lib.units import cm
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.platypus import (BaseDocTemplate, Frame, Image as RLImage, KeepTogether, NextPageTemplate,
+                                            PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
+        except ImportError as e:
+            raise SystemExit(f'{e}: this script needs reportlab (pip install reportlab) and Pillow (or give --md)')
+        import matplotlib
 
     RUN = os.path.abspath(os.path.expanduser(a.run_dir))
     PR = os.path.join(RUN, a.prior)
@@ -177,7 +196,8 @@ def main():
 
     pre = read(os.path.join(RUN, 'prelim_summary.txt'))
     m_ = re.search(r'SR_min and SR_max at ([\d.]+) sigma, times ([\d.]+)', pre or '')   # --cfm-sliprates' reading
-    cfm_ns, cfm_fa = (float(m_.group(1)), float(m_.group(2))) if m_ else (2.0, 2.0)
+    cfm_ns, cfm_fa = ((float(m_.group(1)), float(m_.group(2))) if m_ else   # else the recorded multiplier (the
+                      (2.0, float(cfg.get('slip_sd_multiplier') or 2)))           # timeframe runs' report has no such line)
     cfm_k = cfm_fa / cfm_ns                            # each side's sd over its width
     raw_rows, raw_cols, raw_nnz = grab(pre, r'== raw: G (\d+) x (\d+), nnz (\d+)', 'raw size', int, (1, 2, 3))
     pen_rows, pen_par = grab(pre, r'(\d+) penalty rows contain .*?they apply to (\d+) parameters', 'penalty rows', int, (1, 2))
@@ -342,11 +362,12 @@ def main():
     named = re.search(r'the (\d+) named faults', ss) is not None
 
     # ------------------------------------------------------------------ the document
-    FONTS = os.path.join(os.path.dirname(matplotlib.__file__), 'mpl-data', 'fonts', 'ttf')
-    for nm, f in (('DV', 'DejaVuSans.ttf'), ('DV-B', 'DejaVuSans-Bold.ttf'), ('DV-I', 'DejaVuSans-Oblique.ttf'),
-                  ('DV-BI', 'DejaVuSans-BoldOblique.ttf'), ('DVM', 'DejaVuSansMono.ttf')):
-        pdfmetrics.registerFont(TTFont(nm, os.path.join(FONTS, f)))
-    pdfmetrics.registerFontFamily('DV', normal='DV', bold='DV-B', italic='DV-I', boldItalic='DV-BI')
+    if not MD:
+        FONTS = os.path.join(os.path.dirname(matplotlib.__file__), 'mpl-data', 'fonts', 'ttf')
+        for nm, f in (('DV', 'DejaVuSans.ttf'), ('DV-B', 'DejaVuSans-Bold.ttf'), ('DV-I', 'DejaVuSans-Oblique.ttf'),
+                      ('DV-BI', 'DejaVuSans-BoldOblique.ttf'), ('DVM', 'DejaVuSansMono.ttf')):
+            pdfmetrics.registerFont(TTFont(nm, os.path.join(FONTS, f)))
+        pdfmetrics.registerFontFamily('DV', normal='DV', bold='DV-B', italic='DV-I', boldItalic='DV-BI')
     INK, INK2, MUTED, RULE = (colors.HexColor(c) for c in ('#0b0b0b', '#3d3c39', '#6f6e69', '#d6d5cd'))
     body = ParagraphStyle('body', fontName='DV', fontSize=9.6, leading=13.6, textColor=INK, spaceAfter=7)
     h1 = ParagraphStyle('h1', fontName='DV-B', fontSize=12.5, leading=16, textColor=INK, spaceBefore=12, spaceAfter=5)
@@ -382,12 +403,13 @@ def main():
         canvas.drawRightString(canvas._pagesize[0] - M, 1.0 * cm, f'{doc.page}')
         canvas.restoreState()
 
-    doc = BaseDocTemplate(out, pagesize=A4, leftMargin=M, rightMargin=M, topMargin=M, bottomMargin=M,
-                          title=f'{a.title}: workflow summary', author='cru_workflow', subject=run_name)
-    doc.addPageTemplates([
-        PageTemplate('portrait', [Frame(M, M, FW, P_H - 2 * M, id='p')], onPage=footer, pagesize=A4),
-        PageTemplate('landscape', [Frame(M, M, LW, L_H - 2 * M, id='l')], onPage=footer, pagesize=landscape(A4))])
-    story = []
+    if not MD:
+        doc = BaseDocTemplate(out, pagesize=A4, leftMargin=M, rightMargin=M, topMargin=M, bottomMargin=M,
+                              title=f'{a.title}: workflow summary', author='cru_workflow', subject=run_name)
+        doc.addPageTemplates([
+            PageTemplate('portrait', [Frame(M, M, FW, P_H - 2 * M, id='p')], onPage=footer, pagesize=A4),
+            PageTemplate('landscape', [Frame(M, M, LW, L_H - 2 * M, id='l')], onPage=footer, pagesize=landscape(A4))])
+    story, md = [], []                                   # the PDF's flowables, or the Markdown's blocks
 
     # the figures that exist, numbered in the order they appear
     FIGS = ['prelim.png', 'nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
@@ -395,22 +417,44 @@ def main():
                 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
                 'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png')]
-    present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))]
+    present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))
+               and not (MD and os.path.basename(f) in a.skip_figs)]
     for f in FIGS:
-        if f not in present:
+        if f not in present and not (MD and os.path.basename(f) in a.skip_figs):
             MISSING.append(f)
     num = {f: i + 1 for i, f in enumerate(present)}
     fref = lambda *fs: ('Figures ' if len([f for f in fs if f in num]) > 1 else 'Figure ') + \
         '\u2013'.join(str(num[f]) for f in fs if f in num) if any(f in num for f in fs) else 'the figures (not found)'
 
+    def to_md(t, cell_=False):
+        """The PDF's paragraph markup as Markdown (GitHub's: <sub> and <sup> kept as HTML)."""
+        t = re.sub(r'<font name="DVM"[^>]*>(.*?)</font>', lambda m_: '`' + m_.group(1) + '`', str(t))
+        t = re.sub(r'<font[^>]*>(.*?)</font>', r'\1', t)
+        t = t.replace('<b>', '**').replace('</b>', '**').replace('<i>', '*').replace('</i>', '*')
+        t = t.replace('<super>', '<sup>').replace('</super>', '</sup>')
+        t = t.replace('<br/>• ', '\n- ').replace('<br/>', '  \n')
+        if t.startswith('• '):
+            t = '- ' + t[2:]
+        return t.replace('|', '\\|').replace('\n', ' ') if cell_ else t
+
     def para(t, s=body):
+        if MD:
+            md.append(('# ' if s is title else '') + to_md(t))
+            return
         story.append(Paragraph(t, s))
 
     def head(t):
+        if MD:
+            md.append('## ' + to_md(t))
+            return
         story.append(Paragraph(t, h1))
 
     def figure(path, caption, width, max_h=None):
         if path not in num:
+            return
+        if MD:
+            link = (a.fig_dir.rstrip('/') + '/' + os.path.basename(path)) if a.fig_dir else path
+            md.append(f'![Figure {num[path]}]({link})\n\n*Figure {num[path]}.* {to_md(caption)} `{os.path.basename(path)}`')
             return
         w, h = Image.open(os.path.join(RUN, path)).size
         W, H = width, width * h / w
@@ -422,6 +466,11 @@ def main():
                                                   f'<font name="DVM" size="7.2" color="#6f6e69">{path}</font>', cap)]))
 
     def table(rows, widths):
+        if MD:
+            r0 = [to_md(c, True) for c in rows[0]]
+            md.append('\n'.join(['| ' + ' | '.join(r0) + ' |', '|' + '---|' * len(r0)]
+                                 + ['| ' + ' | '.join(to_md(c, True) for c in r) + ' |' for r in rows[1:]]))
+            return
         data = [[Paragraph(str(c), cellb if i == 0 else cell) for c in r] for i, r in enumerate(rows)]
         t = Table(data, colWidths=widths, hAlign='LEFT')
         sty = [('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LINEBELOW', (0, 0), (-1, 0), 0.6, INK2),
@@ -511,7 +560,8 @@ def main():
                     'place of the Gaussian' if mmis == 'log10' else 'the bins\u2019 Gaussian in rate, as the inputs give it']] if not amis and not mixed else [])
                 + [
                    ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
-                    f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too'
+                    + (f'corrected for its timeframe (CFM_TIMEFRAME) and scaled as a whole by {srf:g}, the slip sums too' if ctf else
+                       f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too')
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
                    *([['CFM_PREF', repr(cpref), 'SR_pref as each split normal\u2019s ' + ('median (each shifted, its sds kept)'
                        if cpref == 'median' else 'mode, the most likely slip rate')],
@@ -694,14 +744,23 @@ def main():
             'each log part is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts every part.' if mixed else '')
          + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
-            f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): its '
-            + (f'distribution shifted, sds kept, so that its median is {srf:g} \u00d7 SR_pref (SR_pref read as the median, CFM_PREF; a fault '
+            f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): '
+            + ('each fault\u2019s numbers corrected for its slip-rate timeframe (CFM_TIMEFRAME; Coffey et al.: the CFM\u2019s range '
+               'widened by the distribution of true over measured slip rate for the few earthquakes a short timeframe captures, '
+               'rebuilt in full from the paper\u2019s Table S4), and the split normal '
+               + ('fitted to that corrected distribution: through its 16%, 50% and 84% points, or, for the most right-skewed '
+                  'faults, fitted in log10 of the slip rate and converted, whichever is closest to it in Kullback\u2013Leibler '
+                  'divergence (its median and body exactly for most faults)' if cfg.get('cfm_timeframe_shape') == 'fit' else
+                  'with its mode at the corrected distribution\u2019s mode and its 2.5% and 97.5% points at 2 sd')
+               + f', times {srf:g}' if ctf else 'its '
+               + (f'distribution shifted, sds kept, so that its median is {srf:g} \u00d7 SR_pref (SR_pref read as the median, CFM_PREF; a fault '
                'whose mode would then fall at or below 0 keeps SR_pref as the mode), its sd below the mode ' if cpref == 'median' else
                f'mode at {srf:g} \u00d7 SR_pref, its sd below the mode ')
             + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_pref \u2212 SR_min) and above it '
             + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_max \u2212 SR_pref) '
             f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')
-            + '; a side of zero width takes the other\u2019s). The inputs\u2019 Gaussian has one sd, twice the half range, for both sides; '
+            + '; a side of zero width takes the other\u2019s)')
+            + '. The inputs\u2019 Gaussian has one sd, twice the half range, for both sides; '
             'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '
             'which sum the modes. The misfit, each residual weighed by its own side\u2019s sd, is evaluated exactly in every '
             'update.' if cfm else '')
@@ -994,8 +1053,15 @@ def main():
                'largely set by the prior.')
     para('<br/>'.join('• ' + p for p in pts))
 
-    doc.build(story)
-    print(f'wrote {out}: {len(present)} figures, {doc.page} pages')
+    if MD:
+        md.insert(1, '*The summary of a run, written from its reports by `tools/make_summary_pdf.py --md`'
+                  + (f'; the same as a PDF: [{os.path.basename(a.pdf_link)}]({a.pdf_link})' if a.pdf_link else '') + '.*')
+        with open(a.md, 'w') as f_:
+            f_.write('\n\n'.join(md) + '\n')
+        print(f'wrote {a.md}: {len(present)} figures' + (f' (left out: {", ".join(a.skip_figs)})' if a.skip_figs else ''))
+    else:
+        doc.build(story)
+        print(f'wrote {out}: {len(present)} figures, {doc.page} pages')
     if MISSING:
         print('not found (shown as n/a, or left out): ' + ', '.join(dict.fromkeys(MISSING)))
 

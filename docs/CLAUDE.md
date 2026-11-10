@@ -16,7 +16,11 @@ spikeslab/rates.csv, one row per rupture of the rupture set like the
 model's own rates.csv, when DATA_DIR holds the model's
 OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), make_summary_pdf.py (a finished
 run's summary as a PDF, about a paragraph per step with the run's figures, every number read from its reports; command
-line only, needs reportlab), gibbs.py (production sampler; Gaussian
+line only, needs reportlab; --md FILE writes the same as Markdown instead, without reportlab, figures linked from --fig-dir,
+--skip-figs leaving some out and the rest renumbered, --pdf-link naming the PDF: the repository's README.md is the example
+run's, python tools/make_summary_pdf.py RUN --md README.md --fig-dir example/output_figs --pdf-link example/workflow_summary.pdf
+--skip-figs fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png, with the cleaning and best-fit figures copied
+into example/output_figs), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
 and effective draws in convergence.npz), make_tables.py (the posterior tables and rate vectors, pooled over the
 replicates), block_fit.py (each row block's fit from a run's recorded predictions),
