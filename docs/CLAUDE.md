@@ -441,6 +441,9 @@ aside with it.
   count and the MFD bins' uncertainty level are modelling decisions: ask the user before changing them. If all-zero rows are kept (--keep-empty-rows), the fit check
   includes their constant.
 
+Presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
+8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
+
 Conventions that every new option follows (static_checks.py enforces the first): a model setting in the notebook is
 validated in the configuration cell, recorded in CONFIG, listed in cru_common.FIGURE_SETTINGS, part of RUN_NAME where
 it changes the results, passed to its script, given a default check in static_checks.py, shown in make_summary_pdf.py's
