@@ -1,15 +1,5 @@
 # Posterior sampling of NZSHM22 rupture rates
 
-*The summary of a run, written from its reports by `tools/make_summary_pdf.py --md`; the same as a PDF: [workflow_summary.pdf](example/workflow_summary.pdf).*
-
-Workflow summary for NZSHM22_Matrices-211k, preset very_conservative, with positivity on the slip-rate and paleo and MFD bin rows, the paleo rows scored by their recurrence-interval PDFs, the slip rates as lopsided distributions from the CFM, the summed slip rates and the plate rate (at most 0.8)
-
-Run folder: `MFD_UNCERTAINTYas-given_DOWN_THE_MIDDLE_False_preset_very_conservative_floor-10_misfit_sliplinear_mfdhalf_paleoyears_platemax0.8all_cfmtftmpl1links_slipsumprojall_L0100_1794301925`
-
-Run started 2026-11-10 22:12, last step 2026-11-11 06:34. Figures as last drawn; numbers from the run’s reports.
-
-## Overview
-
 The NZSHM22 inversion asks for the annual rate of every rupture in a rupture set such that the predicted slip rates, the regional magnitude-frequency distribution (MFD) and the paleoseismic event rates match their targets within their uncertainties: a linear system *G m* ≈ *d* with each row already divided by its uncertainty. The NZSHM22 solutions find one such model by simulated annealing. This workflow instead maps the whole set of models consistent with the data and a stated prior: a Bayesian posterior, sampled by an exact Gibbs sampler, from which it reports posterior means and spreads of every rupture rate, of every predicted datum and of sums such as fault event rates, together with weighted representative models for hazard calculations. The sections below follow the notebook `cru_workflow.ipynb` step by step; each figure is one this run wrote.
 
 ## 1. Inputs and configuration
