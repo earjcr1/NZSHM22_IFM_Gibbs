@@ -51,6 +51,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     PAL = {}                                                          # --paleo-misfit: each row's site curve, by row
     GEO = None                                                        # --slip-misfit: (b, fit-check mean, variance)
     B_M, B_P, MEX = 1.0, 1.0, None                                    # the bins' and paleo rows' log weights; the bins' moments
+    MPDF = False                                                      # MFD_GR: the bins by their PDFs (in PAL, with the sites)
     def mfd_rows_misfit(rows, yy):                                  # the bins as fitted: (1 - b) Gaussian + b log10
         sl = np.array([LOG[int(i)] for i in rows])
         with np.errstate(divide='ignore'):
@@ -77,6 +78,11 @@ def block_stats(P, runs, first=('S', 'MFD')):
             for j_, r_ in enumerate(z['paleo_rows'].tolist()):
                 PAL[int(r_)] = (z['paleo_th'][j_], float(z['paleo_best'][j_]), float(z['paleo_sd'][j_]), mode_,
                                 float(z['paleo_E'][j_]), float(z['paleo_V'][j_]), B_P)
+        if 'mfd_pdf_th' in z.files:                                   # MFD_GR: the bins scored by their own PDFs in log rate,
+            MPDF = True                                               # as the paleo sites by their curves (same helper)
+            for j_, r_ in enumerate(z['mfd_pdf_rows'].tolist()):
+                PAL[int(r_)] = (z['mfd_pdf_th'][j_], float(z['mfd_pdf_best'][j_]), float(z['mfd_pdf_sd'][j_]), 'log',
+                                float(z['mfd_pdf_E'][j_]), float(z['mfd_pdf_V'][j_]), 1.0)
         if 'slip_geo_expect' in z.files:                              # the run scored the slip rows in log10 too
             GEO = (float(z['slip_geo_b']) if 'slip_geo_b' in z.files else 0.5, float(z['slip_geo_expect'][0]),
                    float(z['slip_geo_expect'][1]))
@@ -154,8 +160,10 @@ def block_stats(P, runs, first=('S', 'MFD')):
     wt_ = lambda b_: 'in log10' if b_ >= 1 else f'{1 - b_:g} Gaussian + {b_:g} log10'
     tot['fitted'] = [w_ for w_, on_ in ((f'the slip rates {wt_(GEO[0])}, with the same sds' if GEO else '', GEO),
                                         (f'the MFD bins {wt_(B_M)}', LOG),
+                                        ('the MFD bins by -2 ln of their own PDFs in log rate (MFD_GR)', MPDF),
                                         ('the paleo sites by -2 ln of their recurrence-interval PDFs' + ('' if B_P >= 1 else
-                                         f', weighted {B_P:g}, with the Gaussian\'s {1 - B_P:g}'), PAL)) if on_]
+                                         f', weighted {B_P:g}, with the Gaussian\'s {1 - B_P:g}'),
+                                         any(v_[3] != 'log' or not MPDF for v_ in PAL.values()) and len(PAL) > 0)) if on_]
     return stats, tot, shapes
 
 

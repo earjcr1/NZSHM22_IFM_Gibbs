@@ -192,11 +192,19 @@ def tables(sites, mode='years', h=GRID_H):
     """Each site's tabulated half misfit for the kernel: dict of U0 (grid start in u = ln rate), H (step), NG (points
     per site), F and DF (values and slopes, sites one after another; F 0 at the minimum, ln best), KAPPA (the largest
     |f''| of each site's cubic Hermite interpolant), the fits (th, quantile errors, ok) and the report lines."""
+    fits = [fit_site(s['best'], s['q'], mode) for s in sites]
+    tab = curve_tables([f_[0] for f_ in fits], [s['best'] for s in sites], mode, h)
+    tab['fits'] = fits
+    return tab
+
+
+def curve_tables(ths, bests, mode='years', h=GRID_H):
+    """Tables for the kernel from given curves (th, each with its minimum at ln best): as tables, without fitting (MFD_GR's
+    bins, whose curves cleaning fits to their propagated PDFs, use it too)."""
     n = int(round((GRID_HI - GRID_LO) / h)) + 1
-    U0, F, DF, KAP, fits = [], [], [], [], []
-    for s in sites:
-        th, err, ok = fit_site(s['best'], s['q'], mode)
-        ub = np.log(s['best'])
+    U0, F, DF, KAP = [], [], [], []
+    for th, best in zip(ths, bests):
+        ub = np.log(best)
         u = ub + GRID_LO + h * np.arange(n)
         f, fp = half_misfit(th, u, mode)
         f = f - half_misfit(th, np.array([ub]), mode)[0][0]          # 0 at the minimum, ln best
@@ -204,9 +212,8 @@ def tables(sites, mode='years', h=GRID_H):
         c0 = (6.0 * d / h - 4.0 * fp[:-1] - 2.0 * fp[1:]) / h
         c1 = (-6.0 * d / h + 2.0 * fp[:-1] + 4.0 * fp[1:]) / h
         U0.append(u[0]); F.append(f); DF.append(fp); KAP.append(float(max(np.abs(c0).max(), np.abs(c1).max())))
-        fits.append((th, err, ok))
     return dict(U0=np.array(U0), H=float(h), NG=n, F=np.concatenate(F), DF=np.concatenate(DF), KAPPA=np.array(KAP),
-                fits=fits, mode=mode)
+                mode=mode)
 
 
 def report_lines(sites, tab):

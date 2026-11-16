@@ -79,8 +79,11 @@ def main():
                          'folder; each figure by its file name), e.g. example/output_figs; default: their paths in the run')
     ap.add_argument('--pdf-link', default=None, metavar='PATH',
                     help='--md: the summary PDF\'s path, as linked from FILE (e.g. example/workflow_summary.pdf)')
+    ap.add_argument('--ref-name', default=None, metavar='TEXT',
+                    help='the reference OpenSHA solution\'s name in the text (default: its folder\'s name)')
     ap.add_argument('--skip-figs', nargs='*', default=[], metavar='NAME',
-                    help='--md: figures (file names) to leave out; the others are numbered in order, as the text refers to them')
+                    help='figures (file names) to leave out, from the PDF or the Markdown; the others are numbered in order, '
+                         'as the text refers to them, and the text names a left-out figure\'s file instead')
     a = ap.parse_args()
     MD = a.md is not None
     if MD:                                               # Markdown: stand-ins for the PDF's layout objects, unused
@@ -131,12 +134,13 @@ def main():
     positive = band == 'positive'                      # BAND = 'positive': every prediction above zero
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
-    mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): the bins' targets from N5 and b
-    mgr_sp = cfg.get('mfd_gr_spread') or 'knobs'
+    mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from N5 and b triples
     if mfdgr:
-        _g = [float(x_) for x_ in str(mfdgr).split(',')]
-        mgr_txt = (f'N(M\u22655) {_g[0]:g} \u00b1 {_g[1]:g} per year, b {_g[2]:g} \u00b1 {_g[3]:g}' if mgr_sp == 'knobs'
-                   else f'N(M\u22655) {_g[0]:g} per year, b {_g[2]:g}, NZSHM22\u2019s uncertainty recipe')
+        _g = str(mfdgr).split(',')
+        _n5d = _g[6] if len(_g) > 6 else 'gamma'
+        mgr_txt = (f'N(M\u22655) {_g[0]} / {_g[1]} / {_g[2]} per year ('
+                   + ('a Gamma: mode, sd half the range' if _n5d == 'gamma' else f'a split normal in {_n5d}')
+                   + f'), b {_g[3]} / {_g[4]} / {_g[5]} (a split normal)')
     plate = cfg.get('plate_rate')                      # None, an upper limit, or (low, high)
     plate = (None if plate is None else (None, float(plate)) if isinstance(plate, (int, float))
              else (float(plate[0]), float(plate[1])))
@@ -198,6 +202,8 @@ def main():
     sb, bb = cfg.get('slip_block', 'S'), cfg.get('bin_block', 'MFD')
     ref_path = cfg.get('reference')
     ref = os.path.basename(os.path.dirname(os.path.dirname(ref_path))) if ref_path else None
+    if ref and a.ref_name:                             # a shorter name for the reference solution in the text
+        ref = a.ref_name
     data_name = os.path.basename(str(cfg.get('data_dir', '')).rstrip('/')) or 'the inputs'
 
     pre = read(os.path.join(RUN, 'prelim_summary.txt'))
@@ -290,7 +296,7 @@ def main():
         r'^\s*(\S*main_rep\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.e+]+)\s+([\d.e+]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+'
         r'([\d.e+]+)\s+([\d.e+]+)', conv, re.M)}
     on = {m.group(1): (int(m.group(2)), m.group(3), m.group(4)) for m in re.finditer(
-        r'^\s*(\S*main_rep\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s*$', conv, re.M)}
+        r'^\s*(\S*main_rep\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*$', conv, re.M)}
     verdict = dict(re.findall(r'^(\S*main_rep\d+): (PASS|CHECK)', conv, re.M))
     why_check = dict(re.findall(r'^(\S*main_rep\d+): CHECK: (.*?)(?:: run longer.*)?$', conv, re.M))
     slow = {m.group(1): (int(m.group(2)), m.group(3), float(m.group(4)), float(m.group(5)), int(m.group(6).replace(',', '')))
@@ -424,9 +430,9 @@ def main():
                 'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png')]
     present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))
-               and not (MD and os.path.basename(f) in a.skip_figs)]
+               and os.path.basename(f) not in a.skip_figs]
     for f in FIGS:
-        if f not in present and not (MD and os.path.basename(f) in a.skip_figs):
+        if f not in present and os.path.basename(f) not in a.skip_figs:
             MISSING.append(f)
     num = {f: i + 1 for i, f in enumerate(present)}
     fref = lambda *fs: ('Figures ' if len([f for f in fs if f in num]) > 1 else 'Figure ') + \
@@ -524,9 +530,9 @@ def main():
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
            ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
             'as the inputs give them)'],
-          ] + ([['MFD_GR', mgr_txt, 'the MFD bins\u2019 targets from N(M\u22655) and b, partitioned as NZSHM22\u2019s OpenSHA '
-                 'code does (the total GR less the off-fault and sub-seismogenic MFDs; mfd_gr.py), each bin\u2019s uncertainty '
-                 + ('the sd of its target over the two uncertainties' if mgr_sp == 'knobs' else 'by NZSHM22\u2019s recipe')]]
+          ] + ([['MFD_GR', mgr_txt, 'each MFD bin scored by its own target PDF in log rate, propagated from N(M\u22655) and b '
+                 'through NZSHM22\u2019s partitioning of the total GR (less the off-fault and sub-seismogenic MFDs; mfd_gr.py), '
+                 'in place of cru_D\u2019s targets (gibbs.py --mfd-misfit pdf)']]
                if mfdgr else []) + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
                  (f'each {k} prediction kept above zero (a hard constraint)' if g_band[k] == 'positive' else
                   f'each {k} prediction kept within a factor {float(g_band[k]):g} of its target (a hard constraint)'
@@ -641,7 +647,8 @@ def main():
          + (', for the Gaussians; with the paleo rows scored by their sites\u2019 recurrence-interval PDFs, each site\u2019s own '
             'expected misfit replaces its Gaussian share in the fit check used below (section 7)'
             if (cfg.get('paleo_misfit') or 'gaussian') != 'gaussian' else ' used below')
-         + f'. The diagnostics ({fref("prelim.png")}) show how weakly '
+         + '. The diagnostics (' + (fref('prelim.png') if 'prelim.png' in num else
+                                    f'{tt("prelim.png")} in the run folder, not shown here') + ') show how weakly '
          f'individual rates are determined: <i>G</i> has rank {fmt(rank)}, and the median diagonal of the resolution '
          f'matrix is {fmt(res_med, "{:.3f}")}, so the data fix sums of rates far better than single rates. There are also '
          f'{fmt(dup)} pairs of near-duplicate ruptures (cosine similarity above 0.99), which the sampler handles with swap '
@@ -652,6 +659,8 @@ def main():
            'row by row, coloured by data type.', FW * 0.86)
 
     head('3. The best fit (no prior)')
+    nn_shown = any(f in num for f in ('nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
+                                      'nnls/fig_paleo_rates_nnls.png'))
     para(f'Cleaning also computes the best nonnegative least-squares fit (Lawson\u2013Hanson NNLS, {fmt(nn_s)} s). It '
          f'reaches χ² = {fmt(nn_chi2, "{:.1f}")} over the {fmt(n_rows)} rows with only {fmt(nn_nz)} ruptures above zero: '
          f'{fmt(nn_blk.get(sb), "{:.1f}")} from the slip rates, {fmt(nn_blk.get(bb), "{:.1f}")} from the MFD bins and '
@@ -659,9 +668,12 @@ def main():
          f'{fmt(nb_pct, "{:+.1f}")}% against the bin targets, with every bin between {fmt(nb_lo, "{:+.1f}")}% and '
          f'{fmt(nb_hi, "{:+.1f}")}%. A fit chooses among all the rates to match far fewer numbers, so its χ² lies well '
          'below the fit check; it is a reference with no prior and the starting point of the chains, not a sample of the '
-         f'posterior. {fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} show its fit to each '
-         'data type' + (f', with {refname} for comparison' if ref else '') + '; the same three figures for the posterior '
-         'follow in step 9.'
+         'posterior. '
+         + (f'{fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} show its fit to each data type'
+            + (f', with {refname} for comparison' if ref else '') + '; the same three figures for the posterior follow in '
+            'step 9.' if nn_shown else
+            f'Its fit to each data type is drawn in the run\u2019s {tt("nnls/")} folder (not shown here); the posterior\u2019s '
+            'follows in step 9.')
          + (f' The best fit leaves {fmt(start_out)} rows outside the band, so the chains cannot start from it as it '
             'stands (step 5).' if band and start_out else ''))
     figure('nnls/fig_rate_magnitude_nnls.png', 'Best fit: each rupture\u2019s rate against its magnitude bin (ruptures at '
@@ -773,13 +785,14 @@ def main():
             'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '
             'which sum the modes. The misfit, each residual weighed by its own side\u2019s sd, is evaluated exactly in every '
             'update.' if cfm else '')
-         + (f' <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins\u2019 targets are not cru_D\u2019s but the '
-            'on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code derives from these: the total Gutenberg\u2013Richter '
-            'MFD, less the truly off-fault MFD and the sub-seismogenic on-fault MFD, with the rupture set\u2019s sections, their '
-            'minimum magnitudes and their shares of the seismicity from its inversion solution (mfd_gr.py, which reproduces the '
-            'solution\u2019s own MFDs exactly at its N(M\u22655) and b). Each bin\u2019s uncertainty is '
-            + ('the standard deviation of its target over the two uncertainties, each bin scored independently.' if mgr_sp == 'knobs'
-               else 'NZSHM22\u2019s recipe (10% at M7.0\u20137.1).') if mfdgr else '')
+         + (f' <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins are not scored against cru_D\u2019s '
+            'targets but by their own probability densities: the on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code '
+            'derives from N(M\u22655) and b (the total Gutenberg\u2013Richter MFD, less the truly off-fault MFD and the '
+            'sub-seismogenic on-fault MFD, with the rupture set\u2019s sections, minimum magnitudes and seismicity shares from its '
+            'inversion solution; mfd_gr.py reproduces the solution\u2019s own MFDs exactly), propagated exactly from the two '
+            'knobs\u2019 distributions to each bin. Each bin costs \u22122 ln of its density in log rate, measured from its minimum; '
+            'the bins are scored independently. Each bin\u2019s share of the fit check is its own misfit\u2019s mean and variance.'
+            if mfdgr else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
@@ -896,8 +909,10 @@ def main():
     if lb or ssr or pmr or mmr:
         para('Each run also records the terms it adds beside χ², each on χ²’s scale and not counted in it. '
              + (f'<b>The MFD misfit in log10</b>: {rng([x[0] for x in mmr], "{:.1f}")} on average per replicate (5–95% of draws '
-                f'{fmt(min(x[1] for x in mmr), "{:.1f}")}–{fmt(max(x[2] for x in mmr), "{:.1f}")}), in the likelihood in '
-                'place of the bins\u2019 Gaussian, which χ² still counts. ' if mmr else '')
+                f'{fmt(min(x[1] for x in mmr), "{:.1f}")}–{fmt(max(x[2] for x in mmr), "{:.1f}")}), '
+                + ('in the likelihood weighted one half, beside half the bins\u2019 Gaussian; χ² counts the whole Gaussian. '
+                   if '+' in mmis else 'in the likelihood in place of the bins\u2019 Gaussian, which χ² still counts. ')
+                if mmr else '')
              + (f'<b>The paleo misfit</b>: {rng([x[0] for x in pmr], "{:.1f}")} on average per replicate (5–95% of draws '
                 f'{fmt(min(x[1] for x in pmr), "{:.1f}")}–{fmt(max(x[2] for x in pmr), "{:.1f}")}), in the likelihood in '
                 'place of the paleo rows\u2019 Gaussian, which χ² still counts. ' if pmr else '')
@@ -943,8 +958,9 @@ def main():
     paleo_txt = ('the posterior underpredicts them, with a median ratio of prediction to target of ' if p_med and p_med < 0.85
                  else 'the posterior overpredicts them, with a median ratio of ' if p_med and p_med > 1.15
                  else 'the median ratio of prediction to target is ')
-    para(f'The next three figures repeat {fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} for '
-         'the posterior. Each coloured dot is the posterior mean'
+    para((f'The next three figures repeat {fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} '
+          'for the posterior. ' if nn_shown else 'The next three figures show the posterior\u2019s fit to each data type. ')
+         + 'Each coloured dot is the posterior mean'
          + (', and each faint x one of the kept draws, so where the draws gather shows darkest' if n_kept else '')
          + ('; open black squares are ' + refname if ref else '') + '. '
          + (f'<b>Rates by magnitude</b> ({fref(a.prior + "/fig_rate_magnitude.png")}): the posterior spreads each bin\u2019s '
@@ -988,7 +1004,7 @@ def main():
                      f'ruptures with {faults[0]["connected"]} other sections')
                   + f') to the most connected ({faults[-1]["name"]}, which shares ruptures with {faults[-1]["connected"]}). '
                   if faults else 'to the most connected. '))
-        if faults:
+        if faults and fig_ss[0] in num:
             n0 = sum(f['at0'] > 0 for f in faults)
             worst = min((f for f in faults if f['target'] > 0), key=lambda f: f['mean'] / f['target'])
             txt += (f'<b>{fref(fig_ss[0])}</b> shows each one\u2019s mean slip-rate prediction against its target. '
@@ -996,13 +1012,16 @@ def main():
                        f'{n0} of them have draws without any event (the middle panel). ')
                     + f'The lowest ratio of prediction to target is {worst["name"]}\u2019s ({worst["mean"]:.2g} against '
                     f'{worst["target"]:.2g}, in units of its uncertainty). ')
-        txt += (f'<b>{fref(*fig_ss[1:3])}</b> count each one\u2019s ruptures by rate: the posterior means spread rate over '
-                'many ruptures at low rates, whereas a single draw switches on only a few ruptures per rate bin, at higher '
-                'rates' + (f', as {refname} (black outline) does: a single model compares with a single draw, not with '
-                           'the mean' if ref else '') + '. '
-                f'<b>{fref(*fig_ss[3:5])}</b> sum each one\u2019s rupture rates by magnitude bin, its rate of events of each '
-                'size' + ('; the circles are the posterior means, the x\u2019s the kept draws\u2019 sums, and the strip marked '
-                          '0 shows by its opacity how often a draw has no event in the bin' if n_kept else '') + '.')
+        if any(f in num for f in fig_ss[1:3]):
+            txt += (f'<b>{fref(*fig_ss[1:3])}</b> count each one\u2019s ruptures by rate: the posterior means spread rate '
+                    'over many ruptures at low rates, whereas a single draw switches on only a few ruptures per rate bin, at '
+                    'higher rates' + (f', as {refname} (black outline) does: a single model compares with a single draw, not '
+                                      'with the mean' if ref else '') + '. ')
+        if any(f in num for f in fig_ss[3:5]):
+            txt += (f'<b>{fref(*fig_ss[3:5])}</b> sum each one\u2019s rupture rates by magnitude bin, its rate of events of '
+                    'each size' + ('; the circles are the posterior means, the x\u2019s the kept draws\u2019 sums, and the '
+                                   'strip marked 0 shows by its opacity how often a draw has no event in the bin' if n_kept
+                                   else '') + '.')
         para(txt)
         story += [NextPageTemplate('landscape'), PageBreak()]
         lmax = L_H - 2 * M

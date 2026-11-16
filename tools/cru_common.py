@@ -89,7 +89,8 @@ def load_problem(path):
                 cfm_rate_links=bool(z['cfm_rate_links']) if 'cfm_rate_links' in z.files else False,
                 sections_by_fault=bool(z['sections_by_fault']) if 'sections_by_fault' in z.files else False,
                 mfd_gr=str(z['mfd_gr']) if 'mfd_gr' in z.files else None,
-                mfd_gr_spread=str(z['mfd_gr_spread']) if 'mfd_gr_spread' in z.files else None)
+                mfd_pdf_th=z['mfd_pdf_th'].astype(np.float64) if 'mfd_pdf_th' in z.files else None,
+                mfd_pdf_best=z['mfd_pdf_best'].astype(np.float64) if 'mfd_pdf_best' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -110,7 +111,7 @@ MISFIT_MODES = {'linear': ('split', 'gaussian', 'gaussian'),            # the on
 def misfit_log_weight(mode):
     """A data group's misfit mode -> b, the weight of its log half: each row scored (1 - b) x its linear misfit + b x its
     log misfit. 0: linear ('split', 'gaussian'); 1/2: half and half ('split+log10', 'gaussian+log10', 'gaussian+years',
-    the geometric mean of the two densities); 1: log ('log10'; the paleo curves 'years', 'log')."""
+    the geometric mean of the two densities); 1: log ('log10'; the paleo curves 'years', 'log'; MFD_GR's bin curves 'pdf')."""
     if mode in (None, 'split', 'gaussian'):
         return 0.0
     return 0.5 if '+' in str(mode) else 1.0
@@ -445,6 +446,30 @@ def check_bin_magnitudes(P, rupture_dir, block='MFD', lowest=6.8, width=0.1, tol
                              'properties.csv): --lowest-bin or --bin-width does not describe these bins')
     return (f'every rupture of the {len(rows)} bins ({lo[0]:.2f}-{lo[-1] + width:.2f}) inside its bin\'s edges by the '
             f'rupture set\'s magnitudes (M{mag.min():.3f}-{mag.max():.3f})')
+
+
+def mfd_monotonic(P, block='MFD', lowest=6.8, width=0.1, rise_sd=0.89):
+    """--mfd-monotonic's pairs of neighbouring bins (gibbs.py; best_fit_as_fitted.py, so both keep the same constraint):
+    wherever a bin's target is not above its lower neighbour's, the upper bin's total may be at most the lower's (rho = 1);
+    where it rises, at most rho times it, rho the ratio at the lower bin's target of the target difference plus rise_sd sd
+    of it (from the two bins' uncertainties; rise_sd < 0: such pairs left free); a bin cleaning removed breaks the pair.
+    Returns dict(rows, R, orig, lo (as magnitude_bins), members (each bin's ruptures), sig (each bin's uncertainty), flat,
+    rise, skipped (pairs (k, k+1) of bin positions), pairs (flat + rise, sorted), rhos)."""
+    import scipy.sparse as sp_
+    mrows, Rm, origm, mlo = magnitude_bins(P, block, lowest, width)
+    Gb = sp_.csr_matrix(P['G'])[mrows]
+    members = [Gb.indices[Gb.indptr[k]:Gb.indptr[k + 1]] for k in range(len(mrows))]
+    sig_b = Rm / (P['d'][mrows] / P['row_scale'][mrows])    # each bin's uncertainty, as cleaning left it
+    adj = [(k, k + 1) for k in range(len(mrows) - 1) if origm[k + 1] == origm[k] + 1]
+    flat = [(k, k1) for k, k1 in adj if Rm[k1] <= Rm[k]]
+    rise = [(k, k1) for k, k1 in adj if Rm[k1] > Rm[k]] if rise_sd >= 0 else []
+    skipped = [(k, k + 1) for k in range(len(mrows) - 1) if (k, k + 1) not in flat + rise]
+    pairs = sorted(flat + rise)
+    rhos = np.array([1.0 if (k, k1) in flat else
+                     (Rm[k] + (Rm[k1] - Rm[k]) + rise_sd * np.hypot(sig_b[k], sig_b[k1])) / Rm[k]
+                     for k, k1 in pairs])
+    return dict(rows=mrows, R=Rm, orig=origm, lo=mlo, members=members, sig=sig_b, flat=flat, rise=rise, skipped=skipped,
+                pairs=pairs, rhos=rhos)
 
 
 def mfd_implied(R, rel, lo, width):
@@ -937,11 +962,11 @@ def run_settings(config, problem):
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
     if fixed_ and 'preset' in cfg:
         cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
-    if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' targets from N5 and b, or False
+    if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' PDFs from N5 and b triples, or False
         if cfg['mfd_gr']:
-            n5_, sn_, b_, sb_ = (float(x_) for x_ in str(cfg['mfd_gr']).split(','))
-            cfg['mfd_gr'] = (f'N5 {n5_:g}±{sn_:g} b {b_:g}±{sb_:g}' if cfg.get('mfd_gr_spread', 'knobs') == 'knobs'
-                             else f'N5 {n5_:g} b {b_:g} ({cfg.get("mfd_gr_spread")} sd)')
+            v_ = str(cfg['mfd_gr']).split(',')
+            cfg['mfd_gr'] = f'N5 {"/".join(v_[0:3])} b {"/".join(v_[3:6])}'
+            cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened

@@ -162,16 +162,28 @@ def main():
         head.append(f'order check skipped: no row block named {a.slip_block!r}')
 
     cfg_ = run_config(a.config, a.problem) or {}
-    from cru_common import misfit_log_weight, misfit_parts, misfit_text
+    from cru_common import misfit_log_weight, misfit_parts, misfit_text as misfit_text_
+    misfit_text = lambda c_, *a_, **k_: c_ if isinstance(c_, str) else misfit_text_(c_, *a_, **k_)   # MFD_GR: text as it is
     mmode = cfg_.get('mfd_misfit') or 'gaussian'
     mlog = mmode != 'gaussian'                         # the bins scored in log10 (gibbs.py --mfd-misfit log10, gaussian+log10)
     b_m = misfit_log_weight(mmode)
     s_log = np.log10(1.0 + 1.0 / P['d'][rows])         # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
 
+    mpdf = mmode == 'pdf' and P.get('mfd_pdf_th') is not None   # MFD_GR: each bin scored by its own PDF in log rate
+    if mpdf:
+        from paleo_misfit import site_misfit
+        sd_pdf = R / P['d'][rows]                      # each bin row's sigma (R_j / d_j): rate = y sigma_j
+
     def bins_fit(m_):
         """The misfit over the bin rows as the likelihood scores them, (1 - b) x the Gaussian + b x
-        (log10(total / R_j) / s_j)^2, and its two parts (cru_common.misfit_parts)."""
+        (log10(total / R_j) / s_j)^2, and its two parts (cru_common.misfit_parts); with MFD_GR's PDFs, -2 ln of each bin's
+        density in log rate, from its minimum (as text)."""
         y_ = Gr[rows] @ m_
+        if mpdf:
+            with np.errstate(divide='ignore'):
+                mis_ = sum(float(site_misfit(P['mfd_pdf_th'][r_], P['mfd_pdf_best'][r_], np.log(max(y_[k] * sd_pdf[k], 1e-300)), 'log'))
+                           for k, r_ in enumerate(rows))
+            return f'its misfit by the bins\' own PDFs (MFD_GR) {mis_:.1f}'
         with np.errstate(divide='ignore'):
             lg_ = (np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2
         return misfit_parts((y_ - P['d'][rows]) ** 2, lg_, b_m)

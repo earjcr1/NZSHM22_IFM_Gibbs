@@ -165,17 +165,29 @@ check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 
 check('\ndef check_bin_magnitudes(' in src['cru_common.py'] and 'check_bin_magnitudes(load_problem(args.out)' in src['preliminaries.py']
       and "raise SystemExit(f'magnitude bins: {e}')" in src['preliminaries.py'],
       'cleaning checks every bin row\'s ruptures against its edges by the rupture set\'s magnitudes (cru_common.check_bin_magnitudes) and stops if one lies outside')
+check(all(o_ in src['best_fit_as_fitted.py'] for o_ in ("'--down-the-middle'", "'--slip-sum'", "'--plate-rate'", "'--mfd-monotonic'",
+                                                    "'--snap-floor'", "'--con-tol'"))
+      and '\ndef sampler_terms(' in src['best_fit_as_fitted.py'] and '\ndef polish_feasible(' in src['best_fit_as_fitted.py']
+      and '\ndef mfd_monotonic(' in src['cru_common.py'] and 'mfd_monotonic(P, a.bins_block' in src['gibbs.py']
+      and 'from best_fit_as_fitted import terms_key' in src['gibbs.py'],
+      'best_fit_as_fitted.py takes the sampler\'s other terms and constraints as gibbs.py does (balance, summed slip rates, '
+      'monotonic MFD through cru_common.mfd_monotonic, plate rate; augmented Lagrangian, polish, --snap-floor), and gibbs.py '
+      '--init fitted notes a fit made with other terms')
 check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
-      and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(3.92, 1.0)']
-      and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.959, 0.1)']
-      and re.findall(r"^MFD_GR_SPREAD = ('\w+')", cells[0][1], re.M) == ["'knobs'"] and {'mfd_gr', 'mfd_gr_spread'} <= set(_cfg_keys)
-      and any("args += ['--mfd-gr', MFD_GR_SPEC, '--mfd-gr-spread', MFD_GR_SPREAD, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
-      and "'--mfd-gr'" in src['preliminaries.py'] and 'mfd_gr.load_parts(' in src['preliminaries.py']
-      and '\ndef load_parts(' in src['mfd_gr.py'] and '\ndef targets(' in src['mfd_gr.py']
-      and 'mfd-bound' not in src['gibbs.py'] and 'mfd_gr_bound' not in src['cru_common.py'],
-      'notebook MFD_GR = False (2026-11-17: the bins\' targets from N5 and b as NZSHM22 partitions them, mfd_gr.py; cru_D\'s '
-      'by default), MFD_GR_N5 (3.92, 1.0), MFD_GR_B (0.959, 0.1), MFD_GR_SPREAD \'knobs\'; recorded and passed to '
-      'preliminaries.py --mfd-gr; the upper bound of 2026-11-16 (--mfd-bound) removed')
+      and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(2.92, 3.92, 4.92)']
+      and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.859, 0.959, 1.059)'] and 'mfd_gr' in _cfg_keys
+      and 'MFD_GR_SPREAD' not in cells[0][1] and "MFD_MISFIT, MISFIT = 'pdf', 'mixed'" in cells[0][1]
+      and any("args += ['--mfd-gr', MFD_GR_SPEC, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and "'--mfd-gr'" in src['preliminaries.py'] and 'mfd_gr.gr_bins(' in src['preliminaries.py']
+      and '\ndef bin_pdfs(' in src['mfd_gr.py'] and '\ndef fit_bin_curves(' in src['mfd_gr.py'] and '\ndef gr_bins(' in src['mfd_gr.py']
+      and "'pdf']" in src['gibbs.py'] and '\ndef selftest_mfdpdf(' in src['gibbs.py'] and 'ok &= selftest_mfdpdf()' in src['gibbs.py']
+      and "'pdf']" in src['best_fit_as_fitted.py'] and "'mfd_pdf_th' in z.files" in src['block_fit.py']
+      and '\ndef curve_tables(' in src['paleo_misfit.py'] and 'mfd-bound' not in src['gibbs.py'],
+      'notebook MFD_GR = False (2026-11-17: each bin scored by its own target PDF, propagated from N5 and b triples through '
+      'NZSHM22\'s partitioning, mfd_gr.py; cru_D\'s bins by default), MFD_GR_N5 (2.92, 3.92, 4.92) a Gamma, MFD_GR_B (0.859, 0.959, '
+      '1.059) a split normal; recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
+      'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
+      'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
       and "PLATE_LIMITS = f'{SLIP_RATE_FACTOR:g}' if PLATE_RATE else None" in cells[0][1]
       and any("args += ['--plate-rate', PLATE_LIMITS]" in c for _, c in cells)
@@ -227,7 +239,7 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       and '\ndef misfit_settings(' in src['cru_common.py']
       and all(f"args += ['--{g_}-misfit', {g_.upper()}_MISFIT]" in ''.join(c for _, c in cells) for g_ in ('paleo', 'mfd', 'slip'))
       and "choices=['gaussian', 'years', 'log', 'gaussian+years', 'gaussian+log']" in src['gibbs.py']
-      and "choices=['gaussian', 'log10', 'gaussian+log10']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10']" in src['gibbs.py']
+      and "choices=['gaussian', 'log10', 'gaussian+log10', 'pdf']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10']" in src['gibbs.py']
       and "'half': ('split+log10', 'gaussian+log10', 'gaussian+years')" in src['cru_common.py']
       and all(src['gibbs.py'].count(t_) == 1 for t_ in ('ok &= selftest_paleo()', 'ok &= selftest_paleo(b=0.5)', 'ok &= selftest_mfdlog()',
                                                          'ok &= selftest_mfdlog(b=0.5)', 'ok &= selftest_slipgeo()', 'ok &= selftest_slipgeo(b=1.0)'))

@@ -16,11 +16,16 @@ spikeslab/rates.csv, one row per rupture of the rupture set like the
 model's own rates.csv, when DATA_DIR holds the model's
 OpenSHA solution folder, which RUPTURE_SET = 'auto' finds, then (rupture_dir())), make_summary_pdf.py (a finished
 run's summary as a PDF, about a paragraph per step with the run's figures, every number read from its reports; command
-line only, needs reportlab; --md FILE writes the same as Markdown instead, without reportlab, figures linked from --fig-dir,
---skip-figs leaving some out and the rest renumbered, --pdf-link naming the PDF: the repository's README.md is the example
-run's, python tools/make_summary_pdf.py RUN --md README.md --fig-dir example/output_figs --pdf-link example/workflow_summary.pdf
---skip-figs fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png, with the cleaning and best-fit figures copied
-into example/output_figs), gibbs.py (production sampler; Gaussian
+line only, needs reportlab (uv run --no-project --with reportlab --with pillow --with numpy python ...); --md FILE writes
+the same as Markdown instead, without reportlab, figures linked from --fig-dir, --pdf-link naming the PDF; --skip-figs
+leaves figures out of either, the rest renumbered and the text naming a left-out one's file; --ref-name shortens the
+reference solution's name. The example (since 2026-11-17: the very conservative 630k run _1794825297, 16 x 100,000) is
+example/workflow_summary.pdf and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
+fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png
+fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png (the README with --md README.md --fig-dir
+example/output_figs --pdf-link example/workflow_summary.pdf); example/output_figs holds only the figures shown (the three
+fits and the 33 named faults' MFDs) with their tables, example/NZSHM22_InversionSolution-630k.zip the OpenSHA solution;
+cru_A/cru_D are not in the example (148 MB zipped at 630k)), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
 and effective draws in convergence.npz), make_tables.py (the posterior tables and rate vectors, pooled over the
 replicates), block_fit.py (each row block's fit from a run's recorded predictions),
@@ -392,7 +397,7 @@ aside with it.
   line, so its distance from the line is the ratio of prediction to target.
 - Code, data and outputs may be in separate folders. Scripts take input paths as arguments, find prelim_results.npz
   next to --problem (or via --prelim), and write where --out points; the notebook uses DATA_DIR (its files only read) and RUN_DIR,
-  relative to its own folder (by default ~/inversions/NZSHM22_Matrices-211k/ and a new subfolder of it named after the
+  relative to its own folder (by default ~/inversions/NZSHM22_Matrices-630k/ and a new subfolder of it named after the
   settings and the start time, SLIP_SECTIONS..._floor..._<unix time>); the runs go into RUN_DIR/spikeslab/, with
   the shared cleaned problem and diagnostics at the top of RUN_DIR, the best fit's outputs in RUN_DIR/nnls/. One prior per notebook run (no comparison runs); a second
   setting of the same prior needs its own RUN_DIR (the default name gives it one). Never write into the data folder's
@@ -453,30 +458,50 @@ paleo_misfit.paleo_json then uses data/paleo_constraint_data.json (PALEO_JSON, t
 every site's sectionIndex and sectionName against the rupture set's fault_sections.geojson (the 211k and 630k sets share all 2,325
 subsections), and the paleo rows' targets against it as before. At 630k: cleaning 2,395 x 615,700, fit check 382 +- 26; 4 chains
 0.124 s per sweep (8 chains about twice that), the conservative preset about 6 h per replicate, peak memory 8.2 GB.
-MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): preliminaries.py --mfd-gr N5,SD_N5,B,SD_B
---mfd-gr-spread knobs|nzshm22 --rupture-set DIR (MFD_GR_SPEC from MFD_GR_N5 = (3.92, 1.0), MFD_GR_B = (0.959, 0.1); MFD_GR_SPREAD
-'knobs'): the bin rows' coefficients and targets replaced at cleaning (1/sigma_j, R_j/sigma_j; row_scale untouched, as if cru_D gave
-them), so everything downstream is unchanged. tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
+MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
+preliminaries.py --mfd-gr N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear] --rupture-set DIR (MFD_GR_SPEC from MFD_GR_N5 = (2.92, 3.92,
+4.92), MFD_GR_B = (0.859, 0.959, 1.059)): N5 a Gamma with that mode and sd half the range (the user's choice; skewness 0.48), b a split
+normal (mode, each side's sd its distance to low or high). tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
 NZSHM22_CrustalInversionTargetMFDs.RegionalTargetMFDs.init, NZSHM22_FaultSystemRupSetCalc): total GR 10^-bM at bin centres
 5.05..ci(min(Mmax, maxMag)) summing to N5; sub-seismogenic = sum over sections of GR(pdf_s N5) up to max(ci(minmag_s), ci(6.8001)) - 1;
 off-fault tri-linear (kink = moment-weighted mean section min mag as a bin, read from the stored off-fault MFD; 0.98/1.01 corrections;
-log10 interpolation to ci(8.0)+1); supra = total - off - sub, 1e-20 below 6.8001; ci mirrors getClosestXIndex (1 + 1e-14 nudge,
-round half up). Reads an inversion solution's regional_inversion_target_mfds.json, inversion_target_mfds.json,
-sub_seismo_on_fault_mfds.csv (pdf_s = row sum / the run's N5), mod_sect_min_mags.csv, properties.csv; load_parts checks the rebuild
-against the stored MFDs at the run's N5 and b (1e-14 at 19k, 211k, 630k) and stops otherwise; TVZ MFDs refused. 'knobs': sigma_j =
-sd of N5 s_j(b) (every component is proportional to N5) over N5 ~ Normal above 0 and b ~ Normal (truncated-normal moments,
-Gauss-Hermite), bins independent (the user: it stands in for assuming GR); 'nzshm22': 0.1 R_ref^0.25 R_j^0.75 (R_ref at M7.0), which at
-3.92/0.959 reproduces the cleaned problem to 2e-15. Recorded as the problem's mfd_gr and mfd_gr_spread and CONFIG mfd_gr (spec or False),
-mfd_gr_spread; FIGURE_SETTINGS lists MFD_GR (15, SETTINGS_PER_LINE 6); RUN_NAME _mfdgrN{n5}-{sd}b{b}-{sd}[nzshm22sd]; run_quick_checks
-pins MFD_GR=False. It replaced MFD_BOUND (2026-11-16, gibbs.py --mfd-bound: a one-sided soft top at the total GR, removed 2026-11-17 with
-its sampler, best-fit, block-fit, table and figure code; REPORT.md 'The MFD from N5 and b', History). With two ruptures/ folders in
-NZSHM22_Matrices-630k (the rupture set and its inversion solution), RUPTURE_SET must name one.
+log10 interpolation to ci(8.0)+1); supra = total - off - sub, 1e-20 below 6.8001; ci mirrors getClosestXIndex (1 + 1e-14 nudge, round
+half up). Reads an inversion solution's regional_inversion_target_mfds.json, inversion_target_mfds.json, sub_seismo_on_fault_mfds.csv
+(pdf_s = row sum / the run's N5), mod_sect_min_mags.csv, properties.csv; load_parts checks the rebuild against the stored MFDs at the run's
+N5 and b (1e-14 at 19k, 211k, 630k) and stops otherwise; TVZ MFDs refused. Each component is proportional to N5: target = N5 s_j(b);
+bin_pdfs gives each bin's density of u = ln target exactly (N5's density at u - ln s_j(b) summed over a fine b grid; a knob without
+spread a 1% kernel), with quantiles, mode, sd and P(target <= 0) (a bin where it is not negligible refused); fit_bin_curves fits the
+paleo sites' sinh-arcsinh curve in LOG RATE (paleo_misfit.fit_site mode 'log'; the user chose the density of log rate: its mode sits on the
+target, where the rate density's mode is 0.59-0.89 of it at 630k), minimum at the exact mode, through the exact 2.275/15.865/84.135/97.725%
+points (630k: quantile errors <= 0.002 decades, misfit within 0.26 of exact to 0.1/99.9%). Cleaning sets each bin row to the target at the
+knobs' modes over the propagated sd (row_scale untouched) and saves mfd_pdf_th, mfd_pdf_best (per cleaned row, NaN elsewhere); the
+notebook then sets MFD_MISFIT 'pdf' (MISFIT 'mixed'). gibbs.py --mfd-misfit pdf: the bins' rows out of the Gaussian (PALEO_EPS), their
+curves tabulated by paleo_misfit.curve_tables and appended to the paleo tables (T.lw['PM']: I, V0 = U0 - ln(sd/eps), F, D, K, weight 1;
+or alone, PM rows empty and the recording's PMr None), T.lw['MF'] = dict(pdf, idx, th, best, sd, E, V); recorded tr['mfd_misfit'] (the
+curves' misfit) and mfd_pdf_rows/th/best/sd/E/V; chi2 as fitted swaps the bins' Gaussian for it; fit check E, V per bin
+(paleo_misfit.site_moments). selftest_mfdpdf in the full set. best_fit_as_fitted.py --mfd-misfit pdf (the curves from the problem),
+block_fit.py (the bins into PAL, mode 'log', b 1), plot_rate_magnitude.py (bins_fit's misfit from the curves), make_summary_pdf.py.
+FIGURE_SETTINGS MFD_GR (shown 'N5 lo/mode/hi b lo/mode/hi', MISFIT_MFD 'pdf'); RUN_NAME _mfdgrN{lo-mode-hi}b{lo-mode-hi}, mixed misfit
+name mfdpdf; run_quick_checks pins MFD_GR=False. History (all 2026-11-16/17, superseded): MFD_BOUND (gibbs.py --mfd-bound, a one-sided soft
+top at the total GR), then MFD_GR with Gaussian bins (MFD_GR_SPREAD 'knobs' | 'nzshm22'), then sided log10 widths; the full PDF replaced
+them. With two ruptures/ folders in NZSHM22_Matrices-630k (the rupture set and its inversion solution), RUPTURE_SET must name one.
 Bin edges against magnitudes (2026-11-16, the user's request after checking that every constraint follows the model dialled up):
 cleaning checks every rupture of each bin row against that bin's edges (--lowest-bin, --bin-width) by the rupture set's
 properties.csv (cru_common.check_bin_magnitudes) and stops if any lies outside; 19k, 211k and 630k pass (Mmax 8.536, 8.524, 8.544).
 Audit the same day: every constraint is built from the inputs and the rupture set (row groups detected, sections by parent fault,
 CFM and timeframe by fault name, paleo sites checked against fault_sections.geojson, strips from the rupture set's geometry,
 monotonic pairs from the bins' targets, Mmax per set); the pole and the strips' end points belong to the fault model the sets share.
+
+Best fit in the sampler's model space (2026-11-17, the user's request): best_fit_as_fitted.py --down-the-middle, --slip-sum
+(--slip-sum-l0, --cross-sections), --mfd-monotonic (--mfd-rise-sd, --lowest-bin, --bin-width), --plate-rate, as gibbs.py takes them
+(sampler_terms: balance_rows and slip_sum_rows as Gaussian rows in the misfit; cru_common.mfd_monotonic's pairs, each row
+(rho 1[lower] - 1[upper]) / R_lower >= 0, and plate_rows' shares within the limits, as normalized linear constraints); an augmented
+Lagrangian around L-BFGS-B (mu from 1e4, x10 when the violation falls less than 4x; later rounds' window 100) to --con-tol 1e-9,
+then polish_feasible (gibbs.py's start scalings); --snap-floor puts the fit in the sampler's set (rates below --floor to 0, then
+positive_start over every row with a positive target at twice the floor, polish again). Saved terms (terms_key) and snapped;
+gibbs.py --init fitted prints a note when terms differ (not a refusal). gibbs.py's monotonic pairs now come from
+cru_common.mfd_monotonic (bit-identical). Without the new options the fit is identical to before. The notebook's best-fit cell is to
+pass the run's flags and --snap-floor (after the user's 630k run of 2026-11-17).
 
 Presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
 8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
