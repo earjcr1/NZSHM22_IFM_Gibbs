@@ -464,7 +464,7 @@ paleo_misfit.paleo_json then uses data/paleo_constraint_data.json (PALEO_JSON, t
 every site's sectionIndex and sectionName against the rupture set's fault_sections.geojson (the 211k and 630k sets share all 2,325
 subsections), and the paleo rows' targets against it as before. At 630k: cleaning 2,395 x 615,700, fit check 382 +- 26; 4 chains
 0.124 s per sweep (8 chains about twice that), the conservative preset about 6 h per replicate, peak memory 8.2 GB.
-MFD_STEP_SD (2026-11-17, the user's request; 0.25 by default, None off; gibbs.py --mfd-step-sd B): a soft term against bin-to-bin
+MFD_STEP_SD (2026-11-17, the user's request; None (off) by default since the same day, the user's choice; 0.25 suggested; gibbs.py --mfd-step-sd B): a soft term against bin-to-bin
 zig-zags, S = sum_p (eps_p - mean eps)^2 / tau^2, eps_p = log10 of the draw's step over the target's at pair p, tau = 0.1 B decades
 (B in b-value units): the target's own bends (the partitioning's) cost nothing, level and tilt stay with the bins (no double counting
 of b). gibbs.mstep_build (A, c of the quadratic form in lam = ln of each bin row's prediction; bx/gx each rupture's bin and
