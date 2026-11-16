@@ -79,6 +79,9 @@ def main():
                          'folder; each figure by its file name), e.g. example/output_figs; default: their paths in the run')
     ap.add_argument('--pdf-link', default=None, metavar='PATH',
                     help='--md: the summary PDF\'s path, as linked from FILE (e.g. example/workflow_summary.pdf)')
+    ap.add_argument('--no-preamble', action='store_true',
+                    help='start at the overview\'s text: no line naming the run, its folder and dates, no Overview heading '
+                         'and, with --md, no line on how the file was written (the repository\'s README.md)')
     ap.add_argument('--ref-name', default=None, metavar='TEXT',
                     help='the reference OpenSHA solution\'s name in the text (default: its folder\'s name)')
     ap.add_argument('--skip-figs', nargs='*', default=[], metavar='NAME',
@@ -498,13 +501,13 @@ def main():
 
     # title
     para(a.title, title)
-    para(f'Workflow summary for {data_name}, preset {preset}' + (f', with {model_txt}' if model_txt else ''), sub)
-    para(f'Run folder: <font name="DVM" size="7.6">{run_name}</font>', small)
-    para(f'Run started {t_start or "n/a"}' + (f', last step {t_end}' if t_end else '') + '. Figures as last drawn; '
-         'numbers from the run\u2019s reports.', small)
-    story.append(Spacer(1, 10))
-
-    head('Overview')
+    if not a.no_preamble:                              # the run's line, folder and dates, and the Overview heading
+        para(f'Workflow summary for {data_name}, preset {preset}' + (f', with {model_txt}' if model_txt else ''), sub)
+        para(f'Run folder: <font name="DVM" size="7.6">{run_name}</font>', small)
+        para(f'Run started {t_start or "n/a"}' + (f', last step {t_end}' if t_end else '') + '. Figures as last drawn; '
+             'numbers from the run\u2019s reports.', small)
+        story.append(Spacer(1, 10))
+        head('Overview')
     para('The NZSHM22 inversion asks for the annual rate of every rupture in a rupture set such that the predicted slip '
          'rates, the regional magnitude-frequency distribution (MFD) and the paleoseismic event rates match their targets '
          'within their uncertainties: a linear system <i>G m</i> ≈ <i>d</i> with each row already divided by its '
@@ -1089,8 +1092,9 @@ def main():
     para('<br/>'.join('• ' + p for p in pts))
 
     if MD:
-        md.insert(1, '*The summary of a run, written from its reports by `tools/make_summary_pdf.py --md`'
-                  + (f'; the same as a PDF: [{os.path.basename(a.pdf_link)}]({a.pdf_link})' if a.pdf_link else '') + '.*')
+        if not a.no_preamble:
+            md.insert(1, '*The summary of a run, written from its reports by `tools/make_summary_pdf.py --md`'
+                      + (f'; the same as a PDF: [{os.path.basename(a.pdf_link)}]({a.pdf_link})' if a.pdf_link else '') + '.*')
         with open(a.md, 'w') as f_:
             f_.write('\n\n'.join(md) + '\n')
         print(f'wrote {a.md}: {len(present)} figures' + (f' (left out: {", ".join(a.skip_figs)})' if a.skip_figs else ''))

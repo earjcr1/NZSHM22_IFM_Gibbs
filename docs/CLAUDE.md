@@ -23,7 +23,8 @@ reference solution's name. The example (since 2026-11-17: the very conservative 
 example/workflow_summary.pdf and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
 fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png
 fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png (the README with --md README.md --fig-dir
-example/output_figs --pdf-link example/workflow_summary.pdf); example/output_figs holds only the figures shown (the three
+example/output_figs --pdf-link example/workflow_summary.pdf --no-preamble: the user trimmed the README to open on the
+overview's text, no run line, folder, dates, Overview heading or how-written line); example/output_figs holds only the figures shown (the three
 fits and the 33 named faults' MFDs) with their tables, example/NZSHM22_InversionSolution-630k.zip the OpenSHA solution;
 cru_A/cru_D are not in the example (148 MB zipped at 630k)), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat
