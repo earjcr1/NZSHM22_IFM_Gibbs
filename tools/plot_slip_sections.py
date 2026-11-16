@@ -788,7 +788,7 @@ def main():
                     a_.fill_between(edges[b:b + 2], z_lo, z_hi, color=col[k], alpha=float(z0[k][b]), lw=0, zorder=2)
             dr, db = np.nonzero(D_ > 0)
             jx = edges[db] + mw * np.random.default_rng(k).uniform(0.15, 0.85, len(db))
-            draw_xs(a_, jx, D_[dr, db], col[k], zorder=2.5, alpha=0.12)
+            draw_xs(a_, jx, D_[dr, db], col[k], zorder=2.5, alpha=0.2)
             mm_ = mfd[0][k]
             cen = 0.5 * (edges[:-1] + edges[1:])
             a_.scatter(cen[mm_ > 0], mm_[mm_ > 0], s=18, color=col[k], edgecolors=INK, linewidths=0.8, zorder=4)
