@@ -11,7 +11,11 @@ tables (fig_*.txt). A number a report does not give (an older run, or a step tha
 the script lists those at the end; a figure that is missing is left out. Sentences that interpret a result (why chi2
 sits below the fit check, whether the paleo rates are underpredicted, ...) are chosen from the numbers, not written in.
 
-Sections: an overview; inputs and configuration (the settings table); cleaning and diagnostics (prelim.png); the best
+Sections: why the workflow (what NZSHM22's simulated annealing gives and does not: the range of rates the data allow,
+whether its sparse solutions are warranted, and freedom from its settings; from Gerstenberger et al. 2022, 2024 and Page et al.
+2014); the Gibbs sampler and why it suits the problem (exact single-rate updates, hard limits, on/off, log rate); other ways to
+explore the model space (annealing, random-walk Metropolis, HMC/NUTS, the Neighbourhood Algorithm, ensemble samplers,
+parallel tempering, analytic posteriors), with references; then, for the run: inputs and configuration (the settings table); cleaning and diagnostics (prelim.png); the best
 fit (nnls/'s three fit figures); the model (prior, likelihood, and the constraints and soft terms the run used: the band
 or positivity, the soft band, the monotonic MFD, the plate rate, the summed slip rates); sampling; convergence (per
 replicate); the fit to the data (the row-block table, and the terms recorded apart from chi2: the soft band's and the
@@ -220,6 +224,7 @@ def main():
     zero_rows = grab(pre, r'(\d+) all-zero rows and', 'all-zero rows', int)
     zero_chi2 = grab(pre, r'constant chi\^2 = ([\d.]+)', 'constant chi2')
     n_rows, n_cols = grab(pre, r'cleaned G: (\d+) x (\d+)', 'cleaned size', int, (1, 2))
+    n_nnz = grab(pre, r'cleaned G: \d+ x \d+, nnz (\d+)', 'cleaned nonzeros', int)
     removed = None if raw_cols is None or n_cols is None else raw_cols - n_cols
     blocks = {m.group(1): int(m.group(2)) for m in re.finditer(r'row block (\S+)\s+original rows .*?:\s+(\d+) rows', pre)}
     paleo_b = next((b for b in blocks if b not in (sb, bb)), None)
@@ -507,16 +512,144 @@ def main():
         para(f'Run started {t_start or "n/a"}' + (f', last step {t_end}' if t_end else '') + '. Figures as last drawn; '
              'numbers from the run\u2019s reports.', small)
         story.append(Spacer(1, 10))
-        head('Overview')
-    para('The NZSHM22 inversion asks for the annual rate of every rupture in a rupture set such that the predicted slip '
-         'rates, the regional magnitude-frequency distribution (MFD) and the paleoseismic event rates match their targets '
-         'within their uncertainties: a linear system <i>G m</i> ≈ <i>d</i> with each row already divided by its '
-         'uncertainty. The NZSHM22 solutions find one such model by simulated annealing. This workflow instead maps the '
-         'whole set of models consistent with the data and a stated prior: a Bayesian posterior, sampled by an exact '
-         'Gibbs sampler, from which it reports posterior means and spreads of every rupture rate, of every predicted datum '
-         'and of sums such as fault event rates, together with weighted representative models for hazard calculations. '
-         f'The sections below follow the notebook {tt("cru_workflow.ipynb")} step by step; each figure is one this run '
-         'wrote.')
+    on_draw = [v[0] for v in on.values()]               # ruptures on per draw, each replicate
+    floor_m = f'{floor:g}'.replace('-', '−')             # the floor's exponent with a minus sign
+    per_col = n_nnz / n_cols if n_nnz and n_cols else None
+    head('Why this workflow')
+    para('The 2022 New Zealand National Seismic Hazard Model (NZSHM22) builds its fault-based earthquake rates by an '
+         'inversion (Gerstenberger et al., 2022, 2024) that follows the UCERF3 recipe (Field et al., 2014; Page et al., '
+         '2014), as implemented in OpenSHA (Milner and Field, 2023). Every rupture in a rupture set (411,270 for the '
+         'crustal faults) is given an annual rate so that the predicted fault slip rates, paleoseismic event rates and a '
+         'regional magnitude-frequency distribution (MFD) match their targets; the MFD is built from the regional rate N of '
+         'M ≥ 5 earthquakes and a b-value, less the share that falls off the modelled faults or below their ruptures’ '
+         'magnitudes. The problem is a linear system <i>G m</i> ≈ <i>d</i>, each row divided by its uncertainty, with far '
+         'more unknowns than independent data. NZSHM22 solves it by simulated annealing: fast simulated annealing (Szu and '
+         'Hartley, 1987) from all rates at zero, each step perturbing a rate by a random order of magnitude between '
+         '10<super>−10</super> and 10<super>−2</super> times a uniform number in ±0.5; four threads, the best of them chosen '
+         'about every second; four such inversions averaged every 30 seconds; about 3 billion iterations in all; and, for '
+         'the crustal faults, constraint weights rebalanced as it runs so that the slip rates, the MFD and the paleo rates '
+         'end up fit equally well relative to their uncertainties. Each logic-tree branch gets one solution, with a few '
+         'hundred to about 1,700 crustal ruptures at non-zero rates.')
+    para('That gives a sound model for each branch, but leaves three things this workflow sets out to supply:'
+         '<br/>• <b>The range of rupture rates the data allow, carried into hazard.</b> The data fix sums of rates (on a '
+         'fault, in a magnitude bin) far better than single rates'
+         + (f': here <i>G</i> has rank {fmt(rank)} for {fmt(n_cols)} unknowns' if rank and n_cols else '') + '. Each '
+         'annealing run lands on a different model, depending on its random seed (Gerstenberger et al., 2022), and the '
+         'averaging of threads widens what one run covers, but the result is still one rate vector per branch, with no '
+         'statement of how far others could differ while fitting the data as well. This workflow samples the whole set as a '
+         'Bayesian posterior: every rupture rate and every derived quantity gets a mean and a spread, and weighted '
+         'representative models (step 8) carry that spread into hazard calculations alongside the logic tree.'
+         '<br/>• <b>Whether sparse solutions are warranted.</b> In UCERF3 a single annealing run put only about 4% of '
+         'ruptures above their minimum ("water level") rates; averaging 10 runs of the same branch raised that to about '
+         '38,000 ruptures and averaging 200 runs to about 115,000, because different runs fit the data equally well with '
+         'different subsets (Page et al., 2014). The sparsity of one solution therefore reflects the search, a start from '
+         'zero and a stop once the data are fit, at least as much as the data. Here the spike-and-slab prior lets each '
+         'rupture be exactly off or on, and estimates the fraction on in each magnitude bin from the data, so the number of '
+         'active ruptures is an outcome'
+         + (f': in this run about {rng(on_draw)} ruptures are on in each draw, but which ones varies from draw to draw'
+            if on_draw else '') + '. Single draws may still be fairly sparse, depending on what counts as a negligible '
+         f'rate (the slab floor is 10<super>{floor_m}</super> per year; a single rupture becomes detectable in the data '
+         'nearer 10<super>−5</super>), but their sparsity is now the outcome of a stated prior and the data, rather than '
+         'of the way it emerges from the annealing.'
+         '<br/>• <b>Freedom from the annealing’s settings.</b> The perturbation function, the cooling schedule, the '
+         'starting model, the number of iterations, the intervals of thread selection and averaging, and the rule for '
+         'rebalancing the constraint weights all shape the solution. They were chosen for fast, reliable convergence (the '
+         'report notes that other starting models gave unacceptable fits and were set aside), not tested as sources of '
+         'uncertainty. A posterior does not depend on how it is sampled: the length of a run sets only its precision, which '
+         'the convergence checks measure (step 6). The choices that remain are stated as a prior or a likelihood, each a '
+         'setting in the notebook (each data type scored in the space its uncertainties were worked out in, the MFD from N '
+         'and b, the plate rate, and so on), so each can be tested.')
+
+    head('The Gibbs sampler, and why it suits this problem')
+    para('A Markov chain Monte Carlo (MCMC) sampler draws a sequence of models whose distribution settles on the '
+         'posterior: the models that fit the data, each weighted by how well it fits and by the prior. A Gibbs sampler does '
+         'it one unknown at a time: it draws each rupture’s rate from its exact distribution given all the other rates '
+         f'and the data, then moves to the next rupture; one sweep updates all {fmt(n_cols)} rates. Three things make that '
+         'efficient here:'
+         '<br/>• <b>Each update is exact and cheap.</b> A rate enters the predictions linearly, so with the others fixed '
+         'its misfit is a quadratic in it (or, for the terms scored in log space, a smooth one-dimensional function), and '
+         'one rupture’s column of <i>G</i> holds only '
+         + (f'{per_col:.0f} nonzero entries on average' if per_col else 'a few dozen nonzero entries') + '. With each '
+         'chain’s residuals kept current, an update reads one sparse column and draws from a one-dimensional '
+         'distribution exactly: there is no step size to tune and no update wasted by a step that was too large.'
+         '<br/>• <b>Hard constraints become simple limits.</b> Positivity, the monotonic MFD and the plate rate each '
+         'become, for one rate with the others fixed, a range of allowed values, so every draw keeps them exactly instead '
+         'of paying a penalty for breaking them.'
+         '<br/>• <b>Switching a rupture on or off is part of its update.</b> Under spike-and-slab each update decides '
+         'exactly whether the rupture is off or on, so the chains move between sparser and denser models as the data allow.')
+    dec = re.search(r'up to R_j \(([\d.]+) to ([\d.]+) decades', log0 or '')   # the slab's span, from the run's log
+    para('<b>Why in log rate.</b> The rates that matter span '
+         + (f'{float(dec.group(1)):.1f}–{float(dec.group(2)):.1f} decades' if dec else 'about seven decades')
+         + f', from the slab floor of 10<super>{floor_m}</super> per year up to each magnitude bin’s target. Each rupture '
+         'that is on is '
+         'updated by a slice sampler (Neal, 2003) in the logarithm of its rate, so its steps are proportional to its own '
+         'size: a rate near 10<super>−8</super> per year and one near 10<super>−3</super> move equally readily in relative '
+         'terms, where any fixed step in linear rate would be far too large for the first or far too small for the second. '
+         'The prior is uniform in log rate as well, so the update works in the variable the prior is flat in. Log space '
+         'also matches what matters downstream: hazard responds to rates over orders of magnitude, and the MFD and paleo '
+         'misfits are themselves scored partly in log space.')
+    para('<b>Where it is slow.</b> One rate at a time is slow where rates are strongly correlated. Near-duplicate '
+         'ruptures'
+         + (f' ({fmt(dup)} pairs with cosine similarity above 0.99)' if dup else '') + ' can trade rate between them almost '
+         'freely, which single-rate updates do only in small steps; swap moves, which exchange two such ruptures’ '
+         'rates in one step, address this. The slowest quantities are the fractions of ruptures on in the highest '
+         'magnitude bins, which change only as individual ruptures switch (step 6).')
+
+    head('Other ways to explore the model space')
+    para('The sampler was chosen for the shape of this problem: hundreds of thousands of unknowns, a sparse linear '
+         'forward model, exact zeros and hard limits. How other approaches would fare, judged from how they scale (none '
+         'was run here):'
+         '<br/>• <b>Simulated annealing</b> (NZSHM22, UCERF3) is an optimizer. Each run gives one well-fitting model, and '
+         'many runs give many, but their spread reflects the search (the seed, the start, the stopping point) rather than '
+         'a stated probability, so it cannot say how likely each model is or when the range of solutions has been covered. '
+         'Its cost is set by the cooling schedule and the number of iterations.'
+         '<br/>• <b>Random-walk Metropolis</b> on all rates at once must take steps small enough for the most tightly fit '
+         f'direction; with {fmt(n_cols)} unknowns whose scales differ by many decades, nearly every proposal is rejected or '
+         'barely moves. It is impractical at this size.'
+         '<br/>• <b>Hamiltonian Monte Carlo (HMC) and its adaptive form, the No-U-Turn Sampler (NUTS)</b> (Neal, 2011; '
+         'Hoffman and Gelman, 2014) move all rates together along the gradient of the log posterior, which here costs '
+         'about one sparse product with <i>G</i><super>T</super>, comparable to a Gibbs sweep, and they excel on smooth, '
+         'correlated posteriors. Three features of this problem work against them: the exact zeros of spike-and-slab are '
+         'discrete, which HMC cannot sample without replacing the prior by a continuous one; the hard limits (positivity, '
+         'the monotonic MFD, the plate rate) need reflections or transformations, and a transformation to log rate makes '
+         'a sharp funnel near the floor; and the step size is set by the stiffest direction (sums of rates fit within a '
+         'few percent) while the loosest (single rates unresolved over many decades) then need thousands of steps, unless '
+         f'a mass matrix over {fmt(n_cols)} unknowns can be tuned. Without spike-and-slab and with a good mass matrix it '
+         'could compete; as the model stands, its single point of slowdown is the discreteness.'
+         '<br/>• <b>The Neighbourhood Algorithm</b> (Sambridge, 1999a, 1999b) searches, and then appraises the ensemble, '
+         'by dividing parameter space into Voronoi cells around the models tried. It is effective for tens of unknowns; '
+         f'with {fmt(n_cols)} it cannot cover the space, and its geometry grows costly with the number of unknowns.'
+         '<br/>• <b>Ensemble samplers</b> such as the affine-invariant sampler (Goodman and Weare, 2010) need more walkers '
+         'than twice the number of unknowns, over a million here, so they do not scale to this problem. <b>Parallel '
+         'tempering</b> helps when the posterior has separated modes; it runs an inner sampler such as this one at several '
+         'temperatures and multiplies the cost by their number, so it is an option to add, not a replacement.'
+         '<br/>• <b>Analytic and approximate posteriors</b> (Gaussian, Laplace, variational) are fast, but the exact '
+         'zeros, the hard limits and the posterior’s long tails toward zero break their assumptions. Without '
+         'positivity the linear-Gaussian posterior could be written down directly; it serves as a check, not as the answer.')
+    para('For the Gibbs sampler the single point of slowdown is correlation that its one-at-a-time updates cannot cross '
+         'in one move: near-duplicate ruptures (handled by the swaps) and the fraction on in each bin. Its cost per sweep '
+         'grows only with the number of nonzero entries in <i>G</i>, so it scales to the full rupture sets.')
+    para('<i>References.</i> Field, E. H., et al. (2014). Uniform California earthquake rupture forecast, version 3 '
+         '(UCERF3): the time-independent model, <i>Bull. Seismol. Soc. Am.</i> 104, 1122–1180. Gerstenberger, M. C., et '
+         'al. (2022). The seismicity rate model for the 2022 New Zealand National Seismic Hazard Model, <i>GNS Science '
+         'Report</i> 2022/47, doi:10.21420/2EXG-NP48. Gerstenberger, M. C., et al. (2024). The seismicity rate model for '
+         'the 2022 Aotearoa New Zealand National Seismic Hazard Model, <i>Bull. Seismol. Soc. Am.</i>, '
+         'doi:10.1785/0120230165. Goodman, J., and J. Weare (2010). Ensemble samplers with affine invariance, '
+         '<i>Commun. Appl. Math. Comput. Sci.</i> 5, 65–80. Hoffman, M. D., and A. Gelman (2014). The No-U-Turn Sampler, '
+         '<i>J. Mach. Learn. Res.</i> 15, 1593–1623. Milner, K. R., and E. H. Field (2023). A comprehensive fault-system '
+         'inversion approach: methods and application to NSHM23, <i>Bull. Seismol. Soc. Am.</i>, '
+         'doi:10.1785/0120230122. Neal, R. M. (2003). Slice sampling, <i>Ann. Stat.</i> 31, 705–767. Neal, R. M. (2011). '
+         'MCMC using Hamiltonian dynamics, in <i>Handbook of Markov Chain Monte Carlo</i>, CRC Press, 113–162. Page, M. '
+         'T., et al. (2014). The UCERF3 grand inversion: solving for the long-term rate of ruptures in a fault system, '
+         '<i>Bull. Seismol. Soc. Am.</i> 104, 1181–1204. Sambridge, M. (1999a, 1999b). Geophysical inversion with a '
+         'neighbourhood algorithm, I and II, <i>Geophys. J. Int.</i> 138, 479–494 and 727–746. Szu, H., and R. Hartley '
+         '(1987). Fast simulated annealing, <i>Phys. Lett. A</i> 122, 157–162.')
+
+    head('This run, step by step')
+    para('This workflow maps the whole set of models consistent with the data and a stated prior, reporting posterior '
+         'means and spreads of every rupture rate, of every predicted datum and of sums such as fault event rates, together '
+         f'with weighted representative models for hazard calculations. The sections below follow the notebook '
+         f'{tt("cru_workflow.ipynb")} step by step for one run; each figure is one this run wrote.')
 
     head('1. Inputs and configuration')
     para(f'The inputs are the inversion matrices in {tt(data_name)}: {tt(cfg.get("a_file", "cru_A.txt"))} (<i>G</i>, '
