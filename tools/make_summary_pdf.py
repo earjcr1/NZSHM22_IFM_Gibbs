@@ -131,7 +131,12 @@ def main():
     positive = band == 'positive'                      # BAND = 'positive': every prediction above zero
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
-    mfdb = cfg.get('mfd_bound') or None                # MFD_BOUND (2026-11-16): the bins an upper bound from a regional GR MFD
+    mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): the bins' targets from N5 and b
+    mgr_sp = cfg.get('mfd_gr_spread') or 'knobs'
+    if mfdgr:
+        _g = [float(x_) for x_ in str(mfdgr).split(',')]
+        mgr_txt = (f'N(M\u22655) {_g[0]:g} \u00b1 {_g[1]:g} per year, b {_g[2]:g} \u00b1 {_g[3]:g}' if mgr_sp == 'knobs'
+                   else f'N(M\u22655) {_g[0]:g} per year, b {_g[2]:g}, NZSHM22\u2019s uncertainty recipe')
     plate = cfg.get('plate_rate')                      # None, an upper limit, or (low, high)
     plate = (None if plate is None else (None, float(plate)) if isinstance(plate, (int, float))
              else (float(plate[0]), float(plate[1])))
@@ -162,12 +167,6 @@ def main():
     smis = cfg.get('slip_misfit') or 'split'            # the slip rows' misfit: the split normal, or half it plus half log10
     amis = cfg.get('misfit')                            # MISFIT (since 2026-11-10): every group's misfit, 'linear', 'log10' or 'half'
     gmis = {g_: cfg.get(k_) for g_, k_ in (('slip', 'misfit_slip'), ('mfd', 'misfit_mfd'), ('paleo', 'misfit_paleo'))}
-    if mfdb:                                            # the bins scored by the bound alone, whatever MISFIT_MFD says
-        gmis['mfd'] = 'bound'
-        _v = [float(x_) for x_ in str(mfdb).split(',')]
-        mfdb_txt = f'N(M\u22655) {_v[0]:g} \u00b1 {_v[1]:g} per year, b {_v[2]:g} \u00b1 {_v[3]:g}'
-    else:
-        mfdb_txt = 'False'
     mixed = amis == 'mixed'                             # since 2026-11-09 one setting per group, MISFIT_SLIP, _MFD, _PALEO:
     gnames = {'slip': ('linear', 'log10', 'half'), 'mfd': ('linear', 'log10', 'half'), 'paleo': ('rate', 'years', 'half')}
     if mixed:                                           # MISFIT then their common setting, or 'mixed'
@@ -266,7 +265,7 @@ def main():
     if ssum and not ssr:
         MISSING.append('summed slip rates term')
     rise_cap = re.search(r'^\s*(\d\.\d\d)-\d\.\d\d -> \S+: the target rises .*?at most ([\d.]+) times the lower\'s '
-                         r'\(the (?:target )?difference plus ([\d.]+) sd', log0, re.M) if mono else None   # since 2026-11-03
+                         r'\(the target difference plus ([\d.]+) sd', log0, re.M) if mono else None   # since 2026-11-03
     rise_cap = (rise_cap.group(1), float(rise_cap.group(2)), float(rise_cap.group(3))) if rise_cap else None
     pr_txt = read(os.path.join(PR, 'plate_rate.txt')) if plate else ''
     plate_top = re.search(r'comes closest to the plate rate \(kept draws\' 97\.5%\):\s*strip\s+([+-]\d+) \(([\d.]+) E, '
@@ -525,7 +524,10 @@ def main():
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
            ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
             'as the inputs give them)'],
-          ] + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
+          ] + ([['MFD_GR', mgr_txt, 'the MFD bins\u2019 targets from N(M\u22655) and b, partitioned as NZSHM22\u2019s OpenSHA '
+                 'code does (the total GR less the off-fault and sub-seismogenic MFDs; mfd_gr.py), each bin\u2019s uncertainty '
+                 + ('the sd of its target over the two uncertainties' if mgr_sp == 'knobs' else 'by NZSHM22\u2019s recipe')]]
+               if mfdgr else []) + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
                  (f'each {k} prediction kept above zero (a hard constraint)' if g_band[k] == 'positive' else
                   f'each {k} prediction kept within a factor {float(g_band[k]):g} of its target (a hard constraint)'
                   if g_band[k] else 'no limit')] for nm, k in (('SLIP', 'slip-rate'), ('PALEO', 'paleo'))
@@ -556,12 +558,7 @@ def main():
                         'half their Gaussians plus half the Gaussian in log10'),
                        ('paleo', 'the paleo rows scored linearly, by the inputs\u2019 Gaussians in rate',
                         'the paleo rows scored by each site\u2019s recurrence-interval PDF in years',
-                        'half their Gaussians in rate plus half the PDF in years')) if mixed and gmis[g_] != 'bound']
-                + ([['MFD_BOUND', mfdb_txt, 'the MFD bins\u2019 targets replaced by an upper bound from a regional '
-                     'Gutenberg\u2013Richter MFD truncated at the largest rupture\u2019s magnitude: each bin\u2019s total free '
-                     'below the GR\u2019s rate U<sub>j</sub> and held above it by a half-Gaussian in log10, sd the GR\u2019s '
-                     'own spread to its 84th percentile; the spike-and-slab soft top at U<sub>j</sub> too (gibbs.py --mfd-bound; '
-                     'MISFIT_MFD and MFD_UNCERTAINTY then do not apply to the bins)']] if mfdb else [])
+                        'half their Gaussians in rate plus half the PDF in years')) if mixed]
                 + ([['PALEO_MISFIT', repr(pmis), 'the paleo rows scored by each site\u2019s recurrence-interval PDF in years '
                     '(\u22122 ln of its density, a curve through its quantiles with its mode at 1/bestEstimate'
                     + ('' if pband_set else '; each paleo prediction kept above zero') + '), in place of '
@@ -607,7 +604,7 @@ def main():
                   f'each prediction within {dec(tau)} of its target at 1 sd (a soft band: a penalty on the log ratio of '
                   'prediction to target, beside the misfit)' if tau else 'no soft band']]) + [
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
-                 + ('GR bounds U<sub>j</sub>' if mfdb else 'targets') + ' do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
+                 'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
                                           'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
             + ('and PLATE_RATE use' if plate else 'uses') + f', 8.5 km wide {xsec_txt}'],
@@ -737,8 +734,7 @@ def main():
             'decades off, so a prediction an order of magnitude off is unlikely, two far more so, and every prediction is kept '
             'above zero. Each log half is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts both halves.'
             if amis == 'half' else '')
-         + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, '
-            + ('MFD_BOUND' if gmis['mfd'] == 'bound' else f'MISFIT_MFD {gmis["mfd"]!r}') + ', MISFIT_PALEO '
+         + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
             f'{gmis["paleo"]!r}). '
             + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], str(gmis[g_]))
                         for g_, lin_, log_, half_ in (
@@ -751,9 +747,7 @@ def main():
                              'the MFD bins by half their Gaussians and half a Gaussian in log10 with the same sds'),
                             ('paleo', 'the paleo rows by their Gaussians in rate',
                              'the paleo rows by their recurrence-interval PDFs in years',
-                             'the paleo rows by half their Gaussians in rate and half their recurrence-interval PDFs in years'))
-                        if gmis[g_] != 'bound')
-            + ('; the MFD bins by the MFD bound below' if gmis['mfd'] == 'bound' else '')
+                             'the paleo rows by half their Gaussians in rate and half their recurrence-interval PDFs in years')))
             + '. A half-and-half group\u2019s score is the geometric mean of its two densities, so each measurement still '
             'counts once; away from a target a log part grows with the decades off. Every prediction is kept above zero, '
             'each log part is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts every part.' if mixed else '')
@@ -779,16 +773,14 @@ def main():
             'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '
             'which sum the modes. The misfit, each residual weighed by its own side\u2019s sd, is evaluated exactly in every '
             'update.' if cfm else '')
-         + (f' <b>An MFD bound</b> (MFD_BOUND, {mfdb_txt}). The MFD bins\u2019 targets from the inputs are replaced by an '
-            'upper bound: a regional Gutenberg\u2013Richter MFD with these N(M\u22655) and b, its incremental rates truncated '
-            'at Mmax, the largest rupture\u2019s magnitude, so that the cumulative tapers. Each bin\u2019s bound U<sub>j</sub> is '
-            'the GR\u2019s rate at the central values; a bin total below it costs nothing, and above it (log10(total / '
-            'U<sub>j</sub>) / s<sub>j</sub>)\u00b2, s<sub>j</sub> = log10(q84<sub>j</sub> / U<sub>j</sub>) from the two '
-            'measurements\u2019 uncertainties (b Gaussian, N(M\u22655) Gaussian above zero), a soft top like the prior\u2019s, '
-            'which moves to U<sub>j</sub> as well. The bound is not data: it is out of the fit check and recorded beside '
-            '\u03c7\u00b2.' if mfdb else '')
-         + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s ' + ('bound U<sub>j</sub>' if mfdb else 'target')
-            + ' is not above the next lower bin\u2019s, its '
+         + (f' <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins\u2019 targets are not cru_D\u2019s but the '
+            'on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code derives from these: the total Gutenberg\u2013Richter '
+            'MFD, less the truly off-fault MFD and the sub-seismogenic on-fault MFD, with the rupture set\u2019s sections, their '
+            'minimum magnitudes and their shares of the seismicity from its inversion solution (mfd_gr.py, which reproduces the '
+            'solution\u2019s own MFDs exactly at its N(M\u22655) and b). Each bin\u2019s uncertainty is '
+            + ('the standard deviation of its target over the two uncertainties, each bin scored independently.' if mgr_sp == 'knobs'
+               else 'NZSHM22\u2019s recipe (10% at M7.0\u20137.1).') if mfdgr else '')
+         + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
                f'most {rise_cap[1]:.3f} times the lower\u2019s, a cap {rise_cap[2]:g} sd above the targets\u2019 own difference, as far as the other pairs\u2019 '

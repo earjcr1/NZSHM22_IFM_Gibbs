@@ -221,17 +221,6 @@ def main():
         best_b, best_s = np.full(len(brows), np.nan), np.full(len(srows), np.nan)
         best_txt = '; no best fit in the cleaning results'
     print(f'bin totals / targets: posterior median {np.median(ratio):.3f} (range {ratio.min():.3f} to {ratio.max():.3f})' + best_txt)
-    U_b = s_b = None                                     # --mfd-bound: the bins an upper bound U_j (the run file records it)
-    with np.load(MAIN[0] + '.npz') as z0_:
-        if 'mfd_bound_U' in z0_.files:
-            U_b, s_b = np.asarray(z0_['mfd_bound_U'], float), np.asarray(z0_['mfd_bound_s'], float)
-            spec_ = np.asarray(z0_['mfd_bound_spec'], float)
-    if U_b is not None:
-        rU = np.median(bin_m, 0) / U_b
-        print(f'bin totals / the MFD bound U_j (--mfd-bound: GR, N5 = {spec_[0]:g} +- {spec_[1]:g}/yr, b = {spec_[2]:g} +- '
-              f'{spec_[3]:g}): posterior median {np.median(rU):.3f} (range {rU.min():.3f} to {rU.max():.3f}); bins whose median '
-              f'total is above U_j: {int(np.sum(rU > 1))} of {len(rU)}, beyond its 1-sd shoulder (U_j 10^s_j): '
-              f'{int(np.sum(rU > 10.0 ** s_b))}; the targets R_j are not used with the bound')
     parts_m = mean_parts(MAIN, det)
     und_s, und_b = undetectable_share(parts_m, inc_s), undetectable_share(parts_m, inc_b)
     print(f'share of each total carried by individually undetectable rates (below sigma/||G_i||): bins median '
@@ -263,13 +252,12 @@ def main():
             ('bins_posterior.csv', brows, bin_m, targets, best_b, und_b)]:
         with open(os.path.join(OUT, fname), 'w', newline='') as f:
             w = csv.writer(f)
-            bnd_ = U_b if (obs is not None and U_b is not None) else None   # --mfd-bound: the bound, last
             w.writerow(['row', 'target_total' if obs is not None else 'd', 'total_q05', 'total_median', 'total_q95', 'best_fit_total',
-                        'undetectable_share'] + (['gr_bound'] if bnd_ is not None else []))
+                        'undetectable_share'])
             q = np.quantile(draws_m, [0.05, 0.5, 0.95], axis=0)
             for k, j in enumerate(rows_):
                 w.writerow([int(keep_r[j]), f'{(obs[k] if obs is not None else d[j]):.5g}', f'{q[0, k]:.4e}', f'{q[1, k]:.4e}',
-                            f'{q[2, k]:.4e}', f'{best[k]:.4e}', f'{und_m[k]:.3f}'] + ([f'{bnd_[k]:.5g}'] if bnd_ is not None else []))
+                            f'{q[2, k]:.4e}', f'{best[k]:.4e}', f'{und_m[k]:.3f}'])
     print(f'wrote {OUT}/ruptures_posterior.csv, {OUT}/subsections_posterior.csv, {OUT}/bins_posterior.csv')
     if all(os.path.exists(r + '_stream.npz') or os.path.exists(r + '_samples.npy') for r in MAIN):
         print('wrote', write_rate_vectors(MAIN, prob, os.path.join(OUT, 'rate_vectors')), '(and .npz), pooled over the replicates')

@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -165,17 +165,17 @@ check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 
 check('\ndef check_bin_magnitudes(' in src['cru_common.py'] and 'check_bin_magnitudes(load_problem(args.out)' in src['preliminaries.py']
       and "raise SystemExit(f'magnitude bins: {e}')" in src['preliminaries.py'],
       'cleaning checks every bin row\'s ruptures against its edges by the rupture set\'s magnitudes (cru_common.check_bin_magnitudes) and stops if one lies outside')
-check(re.findall(r'^MFD_BOUND = (\S+)', cells[0][1], re.M) == ['False']
-      and re.findall(r'^MFD_BOUND_N5 = (\(.*?\))', cells[0][1], re.M) == ['(4.0, 1.0)']
-      and re.findall(r'^MFD_BOUND_B = (\(.*?\))', cells[0][1], re.M) == ['(0.96, 0.1)'] and 'mfd_bound' in _cfg_keys
-      and any("args += ['--mfd-bound', MFD_BOUND_SPEC, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
-      and any("'--mfd-bound', MFD_BOUND_SPEC" in c and 'best_fit_as_fitted.py' in c for _, c in cells)
-      and "'--mfd-bound'" in src['gibbs.py'] and "'--mfd-bound'" in src['best_fit_as_fitted.py']
-      and '\ndef mfd_gr_bound(' in src['cru_common.py'] and '\ndef selftest_mfdbound(' in src['gibbs.py']
-      and 'selftest_mfdbound()' in src['gibbs.py'],
-      'notebook MFD_BOUND = False (2026-11-16, off by default: the bins\' R_j from cru_D), MFD_BOUND_N5 (4.0, 1.0), MFD_BOUND_B '
-      '(0.96, 0.1); recorded and passed to gibbs.py and best_fit_as_fitted.py --mfd-bound (cru_common.mfd_gr_bound), with '
-      'its exact test (selftest_mfdbound) in the full set')
+check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
+      and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(3.92, 1.0)']
+      and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.959, 0.1)']
+      and re.findall(r"^MFD_GR_SPREAD = ('\w+')", cells[0][1], re.M) == ["'knobs'"] and {'mfd_gr', 'mfd_gr_spread'} <= set(_cfg_keys)
+      and any("args += ['--mfd-gr', MFD_GR_SPEC, '--mfd-gr-spread', MFD_GR_SPREAD, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and "'--mfd-gr'" in src['preliminaries.py'] and 'mfd_gr.load_parts(' in src['preliminaries.py']
+      and '\ndef load_parts(' in src['mfd_gr.py'] and '\ndef targets(' in src['mfd_gr.py']
+      and 'mfd-bound' not in src['gibbs.py'] and 'mfd_gr_bound' not in src['cru_common.py'],
+      'notebook MFD_GR = False (2026-11-17: the bins\' targets from N5 and b as NZSHM22 partitions them, mfd_gr.py; cru_D\'s '
+      'by default), MFD_GR_N5 (3.92, 1.0), MFD_GR_B (0.959, 0.1), MFD_GR_SPREAD \'knobs\'; recorded and passed to '
+      'preliminaries.py --mfd-gr; the upper bound of 2026-11-16 (--mfd-bound) removed')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
       and "PLATE_LIMITS = f'{SLIP_RATE_FACTOR:g}' if PLATE_RATE else None" in cells[0][1]
       and any("args += ['--plate-rate', PLATE_LIMITS]" in c for _, c in cells)
@@ -391,7 +391,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", cfg, re.M) == ["'auto'"] and 'find
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
-                  'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_BOUND', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
+                  'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
                   'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
 _fx = cells[0][1].index('# Fixed since 2026-11-09, no longer settings')
 check(_fx > cells[0][1].index('RUN_SELFTESTS = ')
@@ -419,7 +419,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_BOUND', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

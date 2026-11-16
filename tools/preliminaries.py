@@ -52,7 +52,7 @@ from scipy.sparse.csgraph import connected_components
 
 from cru_common import (load_colt_sparse, load_vector, save_problem, load_problem, column_norms, describe, detect_bin_rows,
                         check_bin_rows, check_slip_rows, relabel_rows, slip_sections, chi2_expectation, mfd_uncertainty,
-                        scale_rows)
+                        scale_rows, magnitude_bins)
 
 LOG = []
 
@@ -364,6 +364,14 @@ def main():
                     "section's measurement, so its k rows are divided by sqrt(k); rows unlike their neighbours are "
                     "unchanged; 'none': every row its own measurement (the inputs as given; a sensitivity test); or a file "
                     "of 'original_row section' lines giving every slip-rate row's section")
+    ap.add_argument('--mfd-gr', default=None, metavar='N5,SD_N5,B,SD_B',
+                    help='the magnitude bins\' targets replaced by the supra-seismogenic MFD that NZSHM22\'s OpenSHA code '
+                    'derives from a regional rate of M>=5 earthquakes N5 and a b-value (mfd_gr.py; MFD_GR in the notebook), '
+                    'with the rupture set\'s sections from an inversion solution (--rupture-set, or the one beside --A); '
+                    'each bin\'s sigma by --mfd-gr-spread; the inputs\' bins otherwise')
+    ap.add_argument('--mfd-gr-spread', default='knobs', choices=['knobs', 'nzshm22'],
+                    help="--mfd-gr: each bin's sigma: 'knobs' (default), the sd of its target over N5 and b's uncertainties "
+                    "(each bin independent); 'nzshm22', NZSHM22's own recipe (10%% at M7.0-7.1, growing as R_j^-0.25)")
     ap.add_argument('--mfd-uncertainty', default='as-given',
                     help="the magnitude bins' uncertainty level, their bin-to-bin shape kept as the inputs give it: "
                     "'as-given' (default): the inputs' uncertainties, each bin its own measurement; 'two-measurements': "
@@ -532,6 +540,48 @@ def main():
             f'({len(det)} rows), labelled {args.bins_block!r}')
     else:
         say('   no magnitude-bin rows detected; the per-bin and hierarchical priors need them named in --blocks')
+    mfd_gr_info = None
+    if args.mfd_gr:                                      # MFD_GR: the bins' targets and sigmas from N5 and b, as the inputs' own
+        if args.bins_block not in bnames:
+            raise SystemExit('--mfd-gr: there are no magnitude-bin rows to set')
+        from cru_common import find_rupture_set
+        import mfd_gr
+        try:
+            rd_g = find_rupture_set(args.rupture_set) if args.rupture_set else find_rupture_set(os.path.dirname(os.path.abspath(args.A)))
+        except ValueError as e:
+            raise SystemExit(f'--mfd-gr: {e}')
+        if rd_g is None:
+            raise SystemExit('--mfd-gr: no rupture set (--rupture-set, or one beside --A)')
+        try:
+            parts = mfd_gr.load_parts(rd_g)
+            T = mfd_gr.targets(parts, args.mfd_gr, args.mfd_gr_spread)
+        except (OSError, ValueError) as e:
+            raise SystemExit(f'--mfd-gr: {e}')
+        Pg = dict(G=G, d=d, block=block, block_names=bnames, keep_rows=keep_r)
+        brows, R_in, orig_b, lo_b = magnitude_bins(Pg, args.bins_block, args.lowest_bin, args.bin_width)
+        ib = [mfd_gr.ci(l_ + args.bin_width / 2) for l_ in lo_b]
+        if args.bin_width != mfd_gr.DELTA or any(abs(mfd_gr.X[i] - (l_ + args.bin_width / 2)) > 1e-6 for i, l_ in zip(ib, lo_b)):
+            raise SystemExit(f'--mfd-gr: the bins ({lo_b[0]:.2f}-{lo_b[-1] + args.bin_width:.2f} in steps of {args.bin_width:g}) '
+                             'are not the OpenSHA MFD\'s 0.1 bins')
+        R_new, s_new = T['R'][ib], T['sigma'][ib]
+        if not (np.all(R_new > 1e-19) and np.all(s_new > 0)):
+            raise SystemExit('--mfd-gr: some bin gets no target or no sigma (' + ', '.join(f'{lo_b[k]:.2f}' for k in
+                             np.flatnonzero(~((R_new > 1e-19) & (s_new > 0)))) + ')')
+        st_b = parts['stored']['supra'][ib]
+        rel_in = 1.0 / np.asarray(d, float)[brows]       # the inputs' sigma / target per bin, before the rows are replaced
+        G = sp.csr_matrix(G)
+        for k, r_ in enumerate(brows):                   # each bin row: coefficient 1/sigma_j, target R_j/sigma_j
+            G.data[G.indptr[r_]:G.indptr[r_ + 1]] = 1.0 / s_new[k]
+            d[r_] = R_new[k] / s_new[k]
+        G = sp.csc_matrix(G)
+        for line in mfd_gr.report_lines(parts, T, lo_b[0]):
+            say(line)
+        say(f'   the inputs\' bins against the solution\'s stored target: ratio {np.min(R_in / st_b):.6f}-{np.max(R_in / st_b):.6f}'
+            + ('' if np.allclose(R_in, st_b, rtol=1e-9) else ' (not the same: cru_D was not built with this solution\'s MFDs)'))
+        say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets {R_new.sum():.5g} per year in all '
+            f'(the inputs\' {R_in.sum():.5g}), sigma / target {np.min(s_new / R_new):.3f}-{np.max(s_new / R_new):.3f} (the inputs\' '
+            f'{rel_in.min():.3f}-{rel_in.max():.3f})')
+        mfd_gr_info = (args.mfd_gr, args.mfd_gr_spread)
     sd = detect_slip_rows(d_raw, info, keep_r)          # slip-rate rows: leading rows up to the first zero-forcing row
     if sd is not None and det is not None and np.intersect1d(sd[0], det).size:
         sd = None                                        # overlaps the bin rows: not a usable detection
@@ -711,6 +761,7 @@ def main():
     save_problem(args.out, G, d, sig, args.lo, args.hi, keep_r, keep_c, block, bnames, branges, raw_shape=A.shape,
                  row_scale=row_scale, section=section, slip_sections=str(spec), chi2_expect=np.array(chi2_exp),
                  mfd_uncertainty=mfd_spec, mfd_scale=mfd_c,
+                 mfd_gr=None if mfd_gr_info is None else mfd_gr_info[0], mfd_gr_spread=None if mfd_gr_info is None else mfd_gr_info[1],
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',

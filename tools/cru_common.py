@@ -87,7 +87,9 @@ def load_problem(path):
                 template_scale=z['template_scale'].astype(np.float64) if 'template_scale' in z.files else None,
                 cfm_template_rho=float(z['cfm_template_rho']) if 'cfm_template_rho' in z.files else None,
                 cfm_rate_links=bool(z['cfm_rate_links']) if 'cfm_rate_links' in z.files else False,
-                sections_by_fault=bool(z['sections_by_fault']) if 'sections_by_fault' in z.files else False)
+                sections_by_fault=bool(z['sections_by_fault']) if 'sections_by_fault' in z.files else False,
+                mfd_gr=str(z['mfd_gr']) if 'mfd_gr' in z.files else None,
+                mfd_gr_spread=str(z['mfd_gr_spread']) if 'mfd_gr_spread' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -683,21 +685,6 @@ def bin_targets(P, block='MFD'):
     return np.array([P['d'][j] / G.data[G.indptr[j]] for j in rows]), rows
 
 
-MFD_BOUND_Q = 0.8413447460685429                  # the bound's upper spread: its 1-sd point above the central GR (Phi(1))
-
-
-def parse_mfd_bound(spec):
-    """--mfd-bound N5,SD_N5,B,SD_B (the notebook's MFD_N5 and MFD_B) -> (n5, sd_n5, b, sd_b), checked."""
-    try:
-        v = [float(x) for x in str(spec).split(',')]
-    except ValueError:
-        v = []
-    if len(v) != 4 or not (v[0] > 0 and v[1] >= 0 and v[2] > 0 and v[3] >= 0):
-        raise ValueError(f'--mfd-bound {spec}: give N5,SD_N5,B,SD_B (the rate of M>=5 per year and its sd, the b-value '
-                         'and its sd), e.g. 4,1,0.96,0.1')
-    return tuple(v)
-
-
 def rupture_magnitudes(rupture_dir):
     """Each rupture's magnitude, from the OpenSHA rupture set's properties.csv, by rupture index."""
     f = os.path.join(rupture_dir, 'properties.csv')
@@ -709,56 +696,6 @@ def rupture_magnitudes(rupture_dir):
     out = np.full(int(idx.max()) + 1, np.nan)
     out[idx.astype(np.int64)] = mag
     return out
-
-
-def mfd_gr_bound(P, rupture_dir, spec, block='MFD', lowest=6.8, width=0.1, m_ref=5.0):
-    """MFD_BOUND: each magnitude bin's upper bound from a Gutenberg-Richter MFD for the whole region, truncated at the
-    largest kept rupture's magnitude Mmax: incremental rates N5 b ln10 10^(-b (M - 5)) / (1 - 10^(-b (Mmax - 5))) up to
-    Mmax and 0 above (so the cumulative tapers to 0 at Mmax), N5 the rate of M >= 5. spec: --mfd-bound's
-    N5,SD_N5,B,SD_B (parse_mfd_bound). The bins are counted up from lowest in steps of width in their rows' order, as
-    plot_rate_magnitude.py counts them (the bin holding Mmax only up to Mmax). Each bin's rate is N5 g_j(b); with N5
-    ~ Normal(n5, sd_n5) above 0 and b ~ Normal(b, sd_b), independent, U_j is the central GR's (n5, b), and s_j =
-    log10(q_j / U_j) with q_j that rate's MFD_BOUND_Q point (its 84th percentile; exact: Gauss-Hermite over b, the
-    truncated normal over N5), the soft top's width in decades. Returns dict(U, s, q, lo, hi, Mmax, rows, spec)."""
-    from scipy.optimize import brentq
-    from scipy.stats import norm
-    n5, sn, b0, sb = parse_mfd_bound(spec)
-    rows = np.flatnonzero(P['block'] == P['block_names'].index(block))
-    lo = lowest + width * np.arange(len(rows))
-    hi = lo + width
-    mag = rupture_magnitudes(rupture_dir)
-    kc = np.asarray(P['keep_cols'])
-    if len(mag) < kc.max() + 1:
-        raise ValueError(f'{rupture_dir}: properties.csv has {len(mag)} ruptures; the problem has {kc.max() + 1}')
-    mmax = float(np.nanmax(mag[kc]))
-    if not (lo[0] < mmax <= hi[-1] + 1e-9):
-        raise ValueError(f'the largest rupture magnitude {mmax:.3f} is outside the bins ({lo[0]:.2f}-{hi[-1]:.2f})')
-
-    def g(b):                                            # each bin's share of N5 at b-value b (b broadcasts)
-        b = np.asarray(b, float)[..., None]
-        t = 10.0 ** (-b * (mmax - m_ref))
-        up = np.minimum(hi, mmax)
-        return np.where(lo < mmax, (10.0 ** (-b * (lo - m_ref)) - 10.0 ** (-b * (up - m_ref))) / (1.0 - t), 0.0)
-    U = n5 * g(b0)
-    z, w = np.polynomial.hermite_e.hermegauss(120)
-    w = w / w.sum()
-    gb = g(b0 + sb * z) if sb > 0 else g(np.full(1, b0))     # nodes x bins
-    wb = w if sb > 0 else np.ones(1)
-    p0 = norm.cdf(-n5 / sn) if sn > 0 else 0.0
-
-    def cdf(x, j):                                       # P(N5 g_j(b) <= x)
-        y = x / np.maximum(gb[:, j], 1e-300)
-        pn = (norm.cdf((y - n5) / sn) - p0) / (1.0 - p0) if sn > 0 else (y >= n5).astype(float)
-        return float(wb @ np.clip(pn, 0.0, 1.0))
-    q = np.array([brentq(lambda x: cdf(x, j) - MFD_BOUND_Q, U[j] * 1e-6, U[j] * 1e3, xtol=U[j] * 1e-12)
-                  if U[j] > 0 else 0.0 for j in range(len(rows))])
-    s = np.where(U > 0, np.log10(np.maximum(q, 1e-300) / np.maximum(U, 1e-300)), 0.0)
-    return dict(U=U, s=s, q=q, lo=lo, hi=hi, Mmax=mmax, rows=rows, spec=(n5, sn, b0, sb))
-
-
-def average_data_rate(P, block='MFD'):
-    """Average data-imposed rupture rate: the sum of the magnitude-bin target rates divided by the number of ruptures."""
-    return float(bin_targets(P, block)[0].sum() / P['G'].shape[1])
 
 
 def logbox_mean(a, b, se, u_hi, npts=400001):
@@ -954,7 +891,7 @@ def reference_rates(spec, P):
 
 FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
-                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_BOUND', 'mfd_bound'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
@@ -1000,13 +937,13 @@ def run_settings(config, problem):
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
     if fixed_ and 'preset' in cfg:
         cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
-    if 'mfd_bound' in cfg:                               # MFD_BOUND (2026-11-16): N5 +- sd, b +- sd, or False
-        if cfg['mfd_bound']:                             # the bins scored by the bound alone, not by MISFIT_MFD
-            n5_, sn_, b_, sb_ = parse_mfd_bound(cfg['mfd_bound'])
-            cfg['misfit_mfd'] = 'bound'
-            cfg['mfd_bound'] = f'N5 {n5_:g}±{sn_:g} b {b_:g}±{sb_:g}'
+    if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' targets from N5 and b, or False
+        if cfg['mfd_gr']:
+            n5_, sn_, b_, sb_ = (float(x_) for x_ in str(cfg['mfd_gr']).split(','))
+            cfg['mfd_gr'] = (f'N5 {n5_:g}±{sn_:g} b {b_:g}±{sb_:g}' if cfg.get('mfd_gr_spread', 'knobs') == 'knobs'
+                             else f'N5 {n5_:g} b {b_:g} ({cfg.get("mfd_gr_spread")} sd)')
         else:
-            cfg['mfd_bound'] = 'False'
+            cfg['mfd_gr'] = 'False'
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
         name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))
         cfg['rupture_set'] = name if len(name) <= 20 else name[:19] + '…'

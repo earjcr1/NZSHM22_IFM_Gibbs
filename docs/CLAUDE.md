@@ -453,36 +453,30 @@ paleo_misfit.paleo_json then uses data/paleo_constraint_data.json (PALEO_JSON, t
 every site's sectionIndex and sectionName against the rupture set's fault_sections.geojson (the 211k and 630k sets share all 2,325
 subsections), and the paleo rows' targets against it as before. At 630k: cleaning 2,395 x 615,700, fit check 382 +- 26; 4 chains
 0.124 s per sweep (8 chains about twice that), the conservative preset about 6 h per replicate, peak memory 8.2 GB.
-MFD_BOUND (2026-11-16, the user's request; False by default, the bins' R_j from cru_D as before): gibbs.py --mfd-bound
-N5,SD_N5,B,SD_B --rupture-set DIR (MFD_BOUND_SPEC from MFD_BOUND_N5 = (4.0, 1.0) and MFD_BOUND_B = (0.96, 0.1), both knobs):
-cru_common.mfd_gr_bound (parse_mfd_bound, rupture_magnitudes from properties.csv) builds a regional Gutenberg-Richter MFD, the
-incremental rates truncated at Mmax = the largest kept rupture's magnitude, N(>=M) = N5 (10^-b(M-5) - 10^-b(Mmax-5)) /
-(1 - 10^-b(Mmax-5)), so the cumulative tapers; each bin's bound U_j its rate at the central N5 and b (the top bin's from its lower
-edge to Mmax), s_j = log10(q84_j / U_j), q84_j the bin rate's exact 84.13th percentile (MFD_BOUND_Q) with b Gaussian
-(Gauss-Hermite) and N5 Gaussian truncated above 0. The bins leave the Gaussian (scaled by PALEO_EPS, b_m = 1, as MFD log10)
-and each bin's total costs (max(log10(total / U_j), 0) / s_j)^2 (the soft band's sided weights: W above, WL = 0 below; LD
-centred on d_j U_j / R_j; T.lw['MF'] gains ctr, bound, U, q, Mmax, spec), and spike-and-slab's soft top moves to U_j with sd s_j
-(the user: "as a soft top, like R_j"). Not data: out of the fit check (m_ -= bins, v_ -= 2 bins) and out of chi2 as fitted
-(the bins' Gaussian share subtracted), recorded apart as tr['mfd_bound'] (its chi2-equivalent) and tr['mfd_bound_over'] (bins
-above U_j per draw), with mfd_bound_rows, _s, _U, _q, _spec, _Mmax; not with --mfd-misfit (the notebook sets MFD_MISFIT 'gaussian'
-and MISFIT 'mixed' when on, records misfit_mfd as set, mfd_bound = the spec or False; figures show MISFIT_MFD 'bound');
-MISFIT_MFD and MFD_UNCERTAINTY then do not apply to the bins. selftest_mfdbound (grid integral, one-sided, U != R, both
-backends) in the full set. best_fit_as_fitted.py --mfd-bound (the same term; the fitted file records mfd_bound and --init fitted
-checks it), block_fit.py (the bound's term beside the blocks, MFD measurements out), plot_rate_magnitude.py (U_j drawn and used
-for the ratios, R_j faint, the lower panel's band the shoulder above 1), make_tables.py (bin totals / U_j, counts above U_j and
-U_j 10^s_j, a gr_bound column in bins_posterior.csv), make_summary_pdf.py. FIGURE_SETTINGS 15 (SETTINGS_PER_LINE 6). RUN_NAME
-_mfdboundN{n5}-{sd}b{b}-{sd} and _mfdbound in the mixed misfit name. run_quick_checks pins MFD_BOUND=False.
---mfd-monotonic with --mfd-bound (2026-11-16, the user's request): the pairs follow U_j, not R_j (rise cap sd U_j (10^s_j - 1); the
-bound's rows must be the monotonic bins), so every pair from M6.8 up; without the bound unchanged (R_j: 211k/19k rise at M6.8->6.9,
-capped; 630k falls throughout, 17 pairs), bit-identical. The log line names what it follows ('target' or 'bound U_j (--mfd-bound)');
-make_summary_pdf's rise_cap pattern reads both wordings. N5 (the user) is the total upper-plate M>=5 rate, off-fault included: why the
-bound is an upper bound only; the faults' share is thought to grow with magnitude, its form unknown.
+MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): preliminaries.py --mfd-gr N5,SD_N5,B,SD_B
+--mfd-gr-spread knobs|nzshm22 --rupture-set DIR (MFD_GR_SPEC from MFD_GR_N5 = (3.92, 1.0), MFD_GR_B = (0.959, 0.1); MFD_GR_SPREAD
+'knobs'): the bin rows' coefficients and targets replaced at cleaning (1/sigma_j, R_j/sigma_j; row_scale untouched, as if cru_D gave
+them), so everything downstream is unchanged. tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
+NZSHM22_CrustalInversionTargetMFDs.RegionalTargetMFDs.init, NZSHM22_FaultSystemRupSetCalc): total GR 10^-bM at bin centres
+5.05..ci(min(Mmax, maxMag)) summing to N5; sub-seismogenic = sum over sections of GR(pdf_s N5) up to max(ci(minmag_s), ci(6.8001)) - 1;
+off-fault tri-linear (kink = moment-weighted mean section min mag as a bin, read from the stored off-fault MFD; 0.98/1.01 corrections;
+log10 interpolation to ci(8.0)+1); supra = total - off - sub, 1e-20 below 6.8001; ci mirrors getClosestXIndex (1 + 1e-14 nudge,
+round half up). Reads an inversion solution's regional_inversion_target_mfds.json, inversion_target_mfds.json,
+sub_seismo_on_fault_mfds.csv (pdf_s = row sum / the run's N5), mod_sect_min_mags.csv, properties.csv; load_parts checks the rebuild
+against the stored MFDs at the run's N5 and b (1e-14 at 19k, 211k, 630k) and stops otherwise; TVZ MFDs refused. 'knobs': sigma_j =
+sd of N5 s_j(b) (every component is proportional to N5) over N5 ~ Normal above 0 and b ~ Normal (truncated-normal moments,
+Gauss-Hermite), bins independent (the user: it stands in for assuming GR); 'nzshm22': 0.1 R_ref^0.25 R_j^0.75 (R_ref at M7.0), which at
+3.92/0.959 reproduces the cleaned problem to 2e-15. Recorded as the problem's mfd_gr and mfd_gr_spread and CONFIG mfd_gr (spec or False),
+mfd_gr_spread; FIGURE_SETTINGS lists MFD_GR (15, SETTINGS_PER_LINE 6); RUN_NAME _mfdgrN{n5}-{sd}b{b}-{sd}[nzshm22sd]; run_quick_checks
+pins MFD_GR=False. It replaced MFD_BOUND (2026-11-16, gibbs.py --mfd-bound: a one-sided soft top at the total GR, removed 2026-11-17 with
+its sampler, best-fit, block-fit, table and figure code; REPORT.md 'The MFD from N5 and b', History). With two ruptures/ folders in
+NZSHM22_Matrices-630k (the rupture set and its inversion solution), RUPTURE_SET must name one.
 Bin edges against magnitudes (2026-11-16, the user's request after checking that every constraint follows the model dialled up):
 cleaning checks every rupture of each bin row against that bin's edges (--lowest-bin, --bin-width) by the rupture set's
 properties.csv (cru_common.check_bin_magnitudes) and stops if any lies outside; 19k, 211k and 630k pass (Mmax 8.536, 8.524, 8.544).
 Audit the same day: every constraint is built from the inputs and the rupture set (row groups detected, sections by parent fault,
 CFM and timeframe by fault name, paleo sites checked against fault_sections.geojson, strips from the rupture set's geometry,
-monotonic pairs from R_j or U_j, Mmax per set); the pole and the strips' end points belong to the fault model the sets share.
+monotonic pairs from the bins' targets, Mmax per set); the pole and the strips' end points belong to the fault model the sets share.
 
 Presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
 8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
