@@ -555,9 +555,10 @@ def main():
          + (f': in this run about {rng(on_draw)} ruptures are on per draw, a different set in each' if on_draw else '')
          + '. A draw may still look sparse, depending on what counts as negligible, but that is now the outcome of a '
          'stated prior and the data.'
-         '<br/>• <b>Freedom from the annealing’s weights and settings.</b> Combining slip rates, the MFD and paleo '
+         '<br/>• <b>Freedom from the annealing’s settings, weighting and nuances.</b> Combining slip rates, the MFD and paleo '
          'rates into one objective needs a weight on each, set subjectively for the subduction interfaces and, for the '
-         'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties: '
+         'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
+         'its own chosen misfit measure): '
          'either way a choice, to be treated as epistemic uncertainty (Gerstenberger et al., 2024). Here each datum counts '
          'by its own uncertainty in the likelihood, with no weights between data types'
          + (', and the MFD bins’ uncertainties too come from N and b (MFD_GR)' if mfdgr else
