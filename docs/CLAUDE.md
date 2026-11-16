@@ -464,6 +464,16 @@ paleo_misfit.paleo_json then uses data/paleo_constraint_data.json (PALEO_JSON, t
 every site's sectionIndex and sectionName against the rupture set's fault_sections.geojson (the 211k and 630k sets share all 2,325
 subsections), and the paleo rows' targets against it as before. At 630k: cleaning 2,395 x 615,700, fit check 382 +- 26; 4 chains
 0.124 s per sweep (8 chains about twice that), the conservative preset about 6 h per replicate, peak memory 8.2 GB.
+MFD_STEP_SD (2026-11-17, the user's request; 0.25 by default, None off; gibbs.py --mfd-step-sd B): a soft term against bin-to-bin
+zig-zags, S = sum_p (eps_p - mean eps)^2 / tau^2, eps_p = log10 of the draw's step over the target's at pair p, tau = 0.1 B decades
+(B in b-value units): the target's own bends (the partitioning's) cost nothing, level and tilt stay with the bins (no double counting
+of b). gibbs.mstep_build (A, c of the quadratic form in lam = ln of each bin row's prediction; bx/gx each rupture's bin and
+coefficient) and mstep_value; kernel stctx (st_fill, st_change, st_bounds, st_update): per-chain LAM/HH, in the on/off decision
+(bounds for off ruptures), the on chain's slice step as a Metropolis proposal, and swap_run (one or two bins); ODD now allocated with
+LW or ST. C only. Recorded as tr['mfd_step'], printed 'MFD steps (--mfd-step-sd B): ... near n_pairs-1'. best_fit_as_fitted.py
+--mfd-step-sd (mfd_step_term, exact gradient; terms_key mfd_step=). Notebook: cell 9 and gibbs_run pass it; RUN_NAME _mfdstep{B};
+FIGURE_SETTINGS; summary PDF (settings row, model text, recorded term). run_quick_checks pins MFD_STEP_SD=None. selftest_mfdstep at
+B = 2 (tight B mixes slowly in its toy). REPORT.md "The MFD's steps".
 MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
 preliminaries.py --mfd-gr N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear] --rupture-set DIR (MFD_GR_SPEC from MFD_GR_N5 = (2.92, 3.92,
 4.92), MFD_GR_B = (0.859, 0.959, 1.059)): N5 a Gamma with that mode and sd half the range (the user's choice; skewness 0.48), b a split

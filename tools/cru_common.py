@@ -916,14 +916,14 @@ def reference_rates(spec, P):
 
 FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
-                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_STEP_SD', 'mfd_step_sd'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
                    ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 15 in 3 lines
+SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 16 in 3 lines
 
 
 def run_config(config, problem):
@@ -969,6 +969,8 @@ def run_settings(config, problem):
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'
+    if 'mfd_step_sd' not in cfg and 'preset' in cfg:     # MFD_STEP_SD (2026-11-17): a run from before it had no such term
+        cfg['mfd_step_sd'] = None
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
         name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))
         cfg['rupture_set'] = name if len(name) <= 20 else name[:19] + '…'

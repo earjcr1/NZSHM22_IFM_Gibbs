@@ -861,6 +861,53 @@ static void col_lwsums(int64_t kg, const double *data, const int32_t *indices, c
     else              col_lwsums1(data, indices, pos, q0, q1, A, s1, s2, s3);
 }
 
+/* --mfd-step-sd: the MFD's steps held to the target's. With lam_b = ln y_b, y_b = r[row_b] + dy_b each magnitude bin's
+   prediction (its total times its row's coefficient), each pair p of neighbouring bins (a, a + 1) has eps_p = lam_{a+1} -
+   lam_a - e_p (e_p the target's own step, so eps_p is ln of the draw's step over the target's), and the term is
+   S = sum_p (eps_p - mean eps)^2 / tau^2 = lam' A lam - 2 c' lam + const (A, c from Python), on chi2's scale: it
+   multiplies the likelihood by exp(-S / 2). Every rupture is in at most one bin (bx; -1 none), with the coefficient gx
+   there. Each chain keeps lam and H_b = sum_{k != b} A_bk lam_k - c_b, so that a change of bin b alone from y0 to y1
+   changes S by (l1 - l0) (A_bb (l1 + l0) + 2 H_b), with l = ln y. */
+typedef struct { int64_t NB; const int64_t *row; const double *A, *c, *dy; const int32_t *bx; const double *gx; } stctx;
+static void st_fill(const stctx *st, const double *r, double *lam, double *hh) {
+    const int64_t NB = st->NB;
+    for (int64_t b = 0; b < NB; b++) lam[b] = log(r[st->row[b]] + st->dy[b]);
+    for (int64_t b = 0; b < NB; b++) {
+        double h = -st->c[b];
+        for (int64_t k = 0; k < NB; k++) if (k != b) h += st->A[b * NB + k] * lam[k];
+        hh[b] = h;
+    }
+}
+/* half the change of S (the log likelihood's share) when bin b's prediction goes from y0 to y1, the other bins fixed:
+   +INFINITY if y1 is not above 0, -INFINITY if y0 is not (and y1 is) */
+static inline double st_change(const stctx *st, const double *hh, int64_t b, double y0, double y1) {
+    if (!(y1 > 0.0)) return INFINITY;
+    if (!(y0 > 0.0)) return -INFINITY;
+    const double l0 = log(y0), l1 = log(y1);
+    return 0.5 * (l1 - l0) * (st->A[b * st->NB + b] * (l1 + l0) + 2.0 * hh[b]);
+}
+/* bounds on st_change(b, y, y + t y) for an off rupture switching on (t = g m / y > 0, l0 = lam_b = ln y): with
+   u = ln(1 + t) in [t - t^2 / 2, t], the change is a convex quadratic in u, A u^2 / 2 + (A l0 + H) u; u's range is
+   widened by 1e-12 (|l0| + 1) for the rounding of ln(y1) - ln(y0), and the bounds by 1e-9 of the terms' size */
+static inline void st_bounds(const stctx *st, const double *lam, const double *hh, int64_t b, double t,
+                             double *flo, double *fhi) {
+    const double A = st->A[b * st->NB + b], l0 = lam[b], G = A * l0 + hh[b];
+    const double w = 1e-12 * (fabs(l0) + 1.0);
+    const double ulo = fmax(t - 0.5 * t * t, 0.0) - w, uhi = t + w;
+    const double fa = (0.5 * A * ulo + G) * ulo, fb = (0.5 * A * uhi + G) * uhi;
+    double lo = fmin(fa, fb), hi = fmax(fa, fb);
+    if (A > 0.0) { const double us = -G / A; if (us > ulo && us < uhi) lo = -0.5 * G * G / A; }
+    const double size = fabs(uhi) * (A * (fabs(l0) + fabs(uhi)) + fabs(hh[b])) + fabs(lo) + fabs(hi) + 1e-300;
+    *flo = lo - 1e-9 * size; *fhi = hi + 1e-9 * size;
+}
+/* bin b's prediction is now y: lam_b and the other bins' H follow */
+static inline void st_update(const stctx *st, double *lam, double *hh, int64_t b, double y) {
+    const double l = log(y), dl = l - lam[b];
+    lam[b] = l;
+    for (int64_t k = 0; k < st->NB; k++) if (k != b) hh[k] += st->A[k * st->NB + b] * dl;
+}
+/* two penalty changes added, +INFINITY (impossible) winning over -INFINITY */
+static inline double pen_add(double a, double b) { return (a == INFINITY || b == INFINITY) ? INFINITY : a + b; }
 static inline void band_bounds(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
                                const double *RLO, const double *RHI, double xi, double *lo, double *hi) {
     double a = -INFINITY, b = INFINITY;
@@ -890,7 +937,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                const double *LW, const double *LWL, const double *LD, const double *DY, const pmctx *PM, const double *SL2,
                const double *SH2, const int64_t *LWP, const int64_t *LWQ,
                const int64_t *PF, const int64_t *PC, int64_t NB, int64_t NSR, const int64_t *SSP, const int32_t *SSJ,
-               const double *SSV, const double *NSS)
+               const double *SSV, const double *NSS, const stctx *ST)
 {
     /* PF (or NULL: each column's end): where each column's passes for the likelihood end, the entries after it in rows the
        passes need not read: the constraint rows (eps coefficients, held within their limits by band_bounds, which reads the
@@ -932,17 +979,26 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 }
     }
     double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
-                                                      and each chain's odds pi / (1 - pi) of a rupture on, per bin */
+                                                      and each chain's odds pi / (1 - pi) of a rupture on, per bin (also
+                                                      with --mfd-step-sd alone) */
     if (LW) {
         AC = (double *)calloc((size_t)K * (size_t)N * 4, sizeof(double));
-        ODD = (double *)malloc(sizeof(double) * (size_t)K * (size_t)SB);
-        for (int64_t k = 0; k < K; k++) {
+        for (int64_t k = 0; k < K; k++)
             for (int64_t j = 0; j < N; j++) {
                 if (LW[j] > 0.0) lw_coef(AC + 4 * (k * N + j), LW[j], LWL ? LWL[j] : LW[j], R[k * N + j] + DY[j], LD[j]);
                 if (PM && PM->I[j] >= 0) pm_coef(AC + 4 * (k * N + j), PM, PM->I[j], R[k * N + j] + DY[j]);
             }
+    }
+    if (LW || ST) {
+        ODD = (double *)malloc(sizeof(double) * (size_t)K * (size_t)SB);
+        for (int64_t k = 0; k < K; k++)
             for (int64_t b = 0; b < SB; b++) ODD[k * SB + b] = exp(LOD[k * SB + b]);
-        }
+    }
+    double *LAM = NULL, *HH = NULL;                /* --mfd-step-sd: each chain's bins' ln predictions and cross terms */
+    if (ST) {
+        LAM = (double *)malloc(sizeof(double) * (size_t)K * (size_t)ST->NB);
+        HH = (double *)malloc(sizeof(double) * (size_t)K * (size_t)ST->NB);
+        for (int64_t k = 0; k < K; k++) st_fill(ST, R + k * N, LAM + k * ST->NB, HH + k * ST->NB);
     }
     for (int64_t sw = 0; sw < nsweeps; sw++) {
       for (int64_t i = 0; i < n; i++) {
@@ -1046,8 +1102,13 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         m = exp(lb_slice(s, &c, z0, slw));
                         /* --log-band: the slice step, reversible under the rest of the target, is a proposal that
                            the soft band's change accepts or not (Metropolis), so the update stays exact */
-                        if (LW && !empty && m != xi) {
-                            const double dp = lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, 0.0, m - xi, PM);
+                        if ((LW || ST) && !empty && m != xi) {
+                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, 0.0, m - xi, PM) : 0.0;
+                            if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: its change, from x_i to m */
+                                const int64_t b = ST->bx[i];
+                                const double y = r[ST->row[b]] + ST->dy[b];
+                                dp = pen_add(dp, st_change(ST, HH + k * ST->NB, b, y, y + ST->gx[i] * (m - xi)));
+                            }
                             if (!(log(unif(s)) < -dp)) m = xi;
                         }
                     } else {                  /* off: a fresh draw from the slab, the pseudo-prior */
@@ -1062,7 +1123,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                                                          U ? uq[q] : 0.0, U ? NSS[i] : 0.0)) / (2.0 * s2);
                         lr -= xl;
                     } else if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
-                    if (LW && !empty) {
+                    if ((LW || ST) && !empty) {
                         /* --log-band: the soft band's penalty on at m against off, dp, exactly in the log odds: on with
                            probability 1 / (1 + exp(-(lr - dp))), that is, when dp < lr - logit(u) (off impossible if a
                            penalized row would then be predicted at 0). For an off rupture, bounds on dp from the column's sums
@@ -1078,6 +1139,13 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             const double sm1 = m * S1[q], mm = m * m;
                             double dlo = sm1 - mm * S3[q], dhi = sm1 + mm * S2[q];
                             dlo -= 1e-9 * (fabs(dlo) + 1e-12); dhi += 1e-9 * (fabs(dhi) + 1e-12);
+                            if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: bounds on its change, without logarithms */
+                                const int64_t b = ST->bx[i];
+                                const double y = r[ST->row[b]] + ST->dy[b];
+                                double flo, fhi;
+                                st_bounds(ST, LAM + k * ST->NB, HH + k * ST->NB, b, ST->gx[i] * m / y, &flo, &fhi);
+                                dlo += flo; dhi += fhi;
+                            }
                             /* stays off, without logarithms: on needs u < 1 / (1 + exp(dp - lr)) <= exp(lr - dlo)
                                = odds exp(X), X = -xl - dlo, and exp(X) <= 1 + X + X^2/2 (X <= 0), 1 + X + X^2 (X <= 1) */
                             const double X = -xl - dlo;
@@ -1092,7 +1160,13 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         }
                         if (on < 0) {
                             if (!have_g) g = lr - (log(uu) - log1p(-uu));
-                            on = lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) < g;
+                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) : 0.0;
+                            if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: on at m against off, exactly */
+                                const int64_t b = ST->bx[i];
+                                const double y = r[ST->row[b]] + ST->dy[b];
+                                dp = pen_add(dp, st_change(ST, HH + k * ST->NB, b, y - ST->gx[i] * xi, y + ST->gx[i] * (m - xi)));
+                            }
+                            on = dp < g;
                         }
                         xn = on ? m : 0.0;
                     } else {
@@ -1163,6 +1237,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             WC[k * N + j] = sp_w2(r[j], SL2[j], SH2[j]);
                             if (rw) rw[j].w[qk] = WC[k * N + j];
                         }
+                    if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: the bin's ln prediction and the others' cross terms */
+                        const int64_t b = ST->bx[i];
+                        st_update(ST, LAM + k * ST->NB, HH + k * ST->NB, b, r[ST->row[b]] + ST->dy[b]);
+                    }
                     if (AC)                   /* --log-band: the changed rows' bound coefficients (with LWP, the
                                                  weighted rows', the only ones with any) */
                         for (int64_t t = LWP ? LWP[i] : p0; t < (LWP ? LWP[i + 1] : pe); t++) {
@@ -1181,7 +1259,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         }
       }
     }
-    if (AC) { free(AC); free(ODD); }
+    free(AC); free(ODD); free(LAM); free(HH);
     free(WC);
     free(U);
     free(RW);
@@ -1263,13 +1341,16 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
               const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
               const double *RLO, const double *RHI, const double *LW, const double *LWL, const double *LD, const double *DY,
-              const pmctx *PM, const double *SL2, const double *SH2)
+              const pmctx *PM, const double *SL2, const double *SH2, const stctx *ST)
 {
     const double s2 = sigma * sigma;
+    double *lam = ST ? (double *)malloc(sizeof(double) * (size_t)ST->NB) : NULL;
+    double *hh = ST ? (double *)malloc(sizeof(double) * (size_t)ST->NB) : NULL;
     for (int64_t k = 0; k < K; k++) {
         double *x = X + k * n, *r = R + k * N;
         uint64_t *s = rng + 4 * k;
         int64_t acc = 0;
+        if (ST) st_fill(ST, r, lam, hh);
         for (int64_t q = 0; q < npair; q++) {
             const int64_t i = pi[q], j = pj[q];
             const double mi = x[i], mj = x[j];
@@ -1280,15 +1361,49 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const double dl = mj - mi;
             const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
-            const double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
+            double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
+            const int64_t bi = ST ? ST->bx[i] : -1, bj = ST ? ST->bx[j] : -1;
+            if (ST && (bi >= 0 || bj >= 0)) {     /* --mfd-step-sd: its change, the one or two bins moved */
+                const int64_t NB = ST->NB;
+                double st = 0.0;
+                if (bi == bj) {
+                    const double y = r[ST->row[bi]] + ST->dy[bi];
+                    st = st_change(ST, hh, bi, y, y + (ST->gx[i] - ST->gx[j]) * dl);
+                } else {
+                    double l1[2], d_[2]; const int64_t bb[2] = {bi, bj}; const double dv[2] = {bi >= 0 ? ST->gx[i] * dl : 0.0,
+                                                                                               bj >= 0 ? -ST->gx[j] * dl : 0.0};
+                    int bad = 0;
+                    for (int t = 0; t < 2; t++) {
+                        if (bb[t] < 0) { d_[t] = 0.0; l1[t] = 0.0; continue; }
+                        const double y1 = r[ST->row[bb[t]]] + ST->dy[bb[t]] + dv[t];
+                        if (!(y1 > 0.0)) bad = 1;
+                        l1[t] = bad ? 0.0 : log(y1);
+                        d_[t] = l1[t] - lam[bb[t]];
+                    }
+                    if (bad) st = INFINITY;
+                    else {
+                        double S2 = 0.0;
+                        for (int t = 0; t < 2; t++)
+                            if (bb[t] >= 0) S2 += d_[t] * (ST->A[bb[t] * NB + bb[t]] * (l1[t] + lam[bb[t]]) + 2.0 * hh[bb[t]]);
+                        if (bi >= 0 && bj >= 0) S2 += 2.0 * ST->A[bi * NB + bj] * d_[0] * d_[1];
+                        st = 0.5 * S2;
+                    }
+                }
+                dlp = st == INFINITY ? -INFINITY : dlp - st;
+            }
             if (log(unif(s)) < -0.5 * dchi / s2 + dlp && (!RLO || swap_in_band(indptr, indices, data, i, j, dl, r, RLO, RHI))) {
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
                 for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) r[indices[p]] -= data[p] * dl;
                 x[i] = mj; x[j] = mi; acc++;
+                if (ST) {                     /* --mfd-step-sd: the moved bins' ln predictions and cross terms */
+                    if (bi >= 0) st_update(ST, lam, hh, bi, r[ST->row[bi]] + ST->dy[bi]);
+                    if (bj >= 0 && bj != bi) st_update(ST, lam, hh, bj, r[ST->row[bj]] + ST->dy[bj]);
+                }
             }
         }
         nacc[k] += acc;
     }
+    free(lam); free(hh);
 }
 
 /* ---- transfer moves: exact draws along fixed directions v (library from build_transfers.py).
@@ -1415,11 +1530,11 @@ def build_kernel():
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
     L.gibbs_run.argtypes = ([I] * 3 + [P] * 7 + [D] + [P] * 3 + [I, I, D, D, D, D] + [P, P, P, P, P, P, P, I] + [P, P, P, P, D, P, P, P]
-                            + [P] * 4 + [P] + [P, P] + [P, P] + [P, P, I, I, P, P, P, P])
+                            + [P] * 4 + [P] + [P, P] + [P, P] + [P, P, I, I, P, P, P, P] + [P])
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P]
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -1458,6 +1573,7 @@ class Target:
         self.balance = None                        # --down-the-middle: dict(A, names) of the balance rows
         self.slip_sum = None                       # --slip-sum: dict(expect) of the summed slip rates' rows
         self.lw = None                             # --log-band: dict(W, LD, DY): each row's weight, log target, target
+        self.mstep = None                          # --mfd-step-sd: dict(row, A, c, dy, bx, gx, pairs, e, tau, const) (mfd_step)
         self.split = None                          # --cfm-sliprates (in the problem): dict(L2, H2), each row's weight
                                                    # below and above its target (1 on rows without a split normal)
         self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
@@ -1605,6 +1721,22 @@ def _pm_ptr(T):
     return ctypes.addressof(pm['_c'])
 
 
+class _STC(ctypes.Structure):
+    """--mfd-step-sd: the kernel's stctx, the MFD steps' term."""
+    _fields_ = [('NB', ctypes.c_int64), ('row', ctypes.c_void_p), ('A', ctypes.c_void_p), ('c', ctypes.c_void_p),
+                ('dy', ctypes.c_void_p), ('bx', ctypes.c_void_p), ('gx', ctypes.c_void_p)]
+
+
+def _st_ptr(T):
+    """--mfd-step-sd: the address of the kernel's stctx, or None without it."""
+    ms = getattr(T, 'mstep', None)
+    if ms is None:
+        return None
+    if '_c' not in ms:
+        ms['_c'] = _STC(len(ms['row']), *(ms[k].ctypes.data for k in ('row', 'A', 'c', 'dy', 'bx', 'gx')))
+    return ctypes.addressof(ms['_c'])
+
+
 def _sp_ptrs(T):
     """--cfm slip rates: the split misfit's weights below and above each row's target (1 on rows without it), or NULLs."""
     if getattr(T, 'split', None) is None:
@@ -1712,7 +1844,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
                       None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T),
-                      *_pass_ptrs(T))
+                      *_pass_ptrs(T), _st_ptr(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -1792,7 +1924,8 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
                      _ptr(pi), _ptr(pj), _ptr(gij), _ptr(T.beta), T.sigma,
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
-                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))
+                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T),
+                     _st_ptr(T))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2329,6 +2462,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     lib = build_kernel() if backend == 'c' else None
     if backend == 'c' and lib is None:
         backend = 'numpy'
+    if T.mstep is not None and backend != 'c':
+        raise ValueError('--mfd-step-sd is implemented in the C kernel only (backend c)')
     sc = getattr(T, 'scale', None)                       # per-rupture scale: the sampler works on u = m / scale
     X = T.init(X0 if sc is None else np.asarray(X0, np.float64) / sc)
     K = X.shape[0]
@@ -2419,6 +2554,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     if T.slip_sum is not None:
         tr['slip_sum_expect'] = float(T.slip_sum['expect'])
+    if T.mstep is not None:                              # --mfd-step-sd: its tolerance, and its value if the steps scatter so
+        tr['mfd_step_sd'], tr['mfd_step_expect'] = T.mstep['sigma_s'], len(T.mstep['pairs']) - 1
     samp = None
     ST = None                                            # running summaries: everything the notebook needs, without draws
     if stream is not None and n_keep > 0:
@@ -2540,6 +2677,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('balance_s', np.zeros((K, n_rec, nbal - nd)))[:, rec] = R[:, nd:nbal] / np.sqrt(T.balance['A'])
         if T.slip_sum is not None:                           # the summed slip rates' term, on its own
             tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
+        if T.mstep is not None:                              # --mfd-step-sd: the MFD steps' term, on its own
+            tr.setdefault('mfd_step', np.zeros((K, n_rec)))[:, rec] = mstep_value(T.mstep, R)
         if T.lw is not None and T.lw.get('tau') is not None:   # --log-band: the soft band's penalty, on its own
             lr_ = T.lw['rows']
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -2658,6 +2797,11 @@ def report(tr, burn, thin, names=None):
               + f'): {tr["balance"][:, nb:].mean():.1f} on average, '
               f'not counted in chi2 above; each type\'s relative shortfall (sum of predictions / sum of targets - 1): '
               + ', '.join(f'{nm} {sb[..., k].mean():+.3f}' for k, nm in enumerate(tr['balance_types'])))
+    if 'mfd_step' in tr:                             # --mfd-step-sd: the MFD steps' term (not in chi2 above)
+        v = tr['mfd_step'][:, nb:]
+        print(f'MFD steps (--mfd-step-sd {float(tr["mfd_step_sd"]):g}): {v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-'
+              f'{np.quantile(v, .95):.1f}; near {int(tr["mfd_step_expect"])} if the steps scatter about the target\'s as it says), '
+              'not counted in chi2 above')
     if 'slip_sum' in tr:                             # the summed slip rates' term (not in chi2 above)
         v = tr['slip_sum'][:, nb:]
         print(f'summed slip rates (--slip-sum): {v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-'
@@ -3250,6 +3394,96 @@ def selftest_mfdpdf(backends=('c', 'numpy')):
                    and np.allclose(ch_, tr['chi2'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-9)
                    and np.allclose(fit_, tr['misfit'][:, sw // 10:].ravel(), rtol=1e-5, atol=1e-6))
     print('SELFTEST (MFD misfit pdf)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_mfdstep(backends=('c',)):
+    """The MFD steps' term (--mfd-step-sd) on four spike-and-slab rates in three magnitude bins (one, two, one), with a
+    Gaussian row across all four, Gaussian bin rows and swap moves (within the middle bin and across bins), against a
+    grid integral: P(on) of the middle bin's two rates, E[log10 m | on] of each, and the recorded term. The end bins'
+    rates must stay on (the term is infinite with a bin at 0), and the middle bin's two never both off. C backend only.
+    sigma_s = 2 (tau 0.2 decades a step): the term ties the bins' shape while their level and tilt stay loose, so the
+    single-rate updates mix slowly at tight tolerances (at 0.5, some 30 effective draws of 144,000 in this toy); the
+    standard errors are the spread of the 16 chains' own means."""
+    from scipy.special import betaln
+    print('MFD steps (--mfd-step-sd): spike-and-slab with swaps vs a grid integral')
+    ok = True
+    c0, d0, sig = np.array([1.0, 0.4, 0.7, 1.0]), 0.06, 0.02
+    db = np.array([0.05, 0.03, 0.02])                  # the bins' targets
+    sig_s, width = 2.0, 0.1
+    Gs = np.array([c0, [1.0, 0, 0, 0], [0, 1.0, 1.0, 0], [0, 0, 0, 1.0]])
+    dv = np.r_[d0, db]
+    lo10, su = -4.0, 0.1
+    U = np.linspace(lo10, 0.8, 101)
+    ww = np.full(len(U), U[1] - U[0])
+    ww[[0, -1]] *= 0.5
+    gw = np.where(U > 0, np.exp(-U ** 2 / (2 * su ** 2)), 1.0) * ww
+    gw /= gw.sum()
+    M = 10.0 ** U
+    pg = {k: np.exp(betaln(1 + k, 1 + 4 - k) - betaln(1, 1)) for k in (3, 4)}
+    tau = width * sig_s * LN10
+    e = np.diff(np.log(db))
+
+    def logL(m0, m1, m2, m3):
+        y = [m0, m1 + m2, m3]
+        g = (c0[0] * m0 + c0[1] * m1 + c0[2] * m2 + c0[3] * m3 - d0) ** 2 + sum((y[b] - db[b]) ** 2 for b in range(3))
+        lam = [np.log(v) for v in y]
+        ep = [lam[1] - lam[0] - e[0], lam[2] - lam[1] - e[1]]
+        mb = 0.5 * (ep[0] + ep[1])
+        return -0.5 * g / sig ** 2 - 0.5 * ((ep[0] - mb) ** 2 + (ep[1] - mb) ** 2) / tau ** 2
+    # the three allowed configurations of the middle bin (both on; r1 alone; r2 alone), the end rates always on
+    acc = {k: 0.0 for k in ('W', 'p1', 'p2')}
+    eu = np.zeros(4); nu = np.zeros(4)
+    ref = logL(db[0], db[1] / 2, db[1] / 2, db[2])
+    for a0 in range(len(U)):
+        m0 = M[a0]
+        # both on: m1, m2, m3 on the grid
+        L = np.exp(logL(m0, M[:, None, None], M[None, :, None], M[None, None, :]) - ref)
+        w = L * (gw[a0] * gw[:, None, None] * gw[None, :, None] * gw[None, None, :]) * pg[4]
+        # r1 alone, r2 alone
+        L1 = np.exp(logL(m0, M[:, None], 0.0, M[None, :]) - ref) * (gw[a0] * gw[:, None] * gw[None, :]) * pg[3]
+        L2 = np.exp(logL(m0, 0.0, M[:, None], M[None, :]) - ref) * (gw[a0] * gw[:, None] * gw[None, :]) * pg[3]
+        W_ = w.sum() + L1.sum() + L2.sum()
+        acc['W'] += W_
+        acc['p1'] += w.sum() + L1.sum()
+        acc['p2'] += w.sum() + L2.sum()
+        eu[0] += U[a0] * W_
+        eu[1] += (w.sum((1, 2)) @ U) + (L1.sum(1) @ U)
+        eu[2] += (w.sum((0, 2)) @ U) + (L2.sum(1) @ U)
+        eu[3] += (w.sum((0, 1)) @ U) + (L1.sum(0) @ U) + (L2.sum(0) @ U)
+    p_on = np.array([1.0, acc['p1'] / acc['W'], acc['p2'] / acc['W'], 1.0])
+    e_u = eu / np.array([acc['W'], acc['p1'], acc['p2'], acc['W']])
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dv, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0, 1, 2]), np.array([1, 2, 3]),
+                          np.array([Gs[:, i] @ Gs[:, i + 1] for i in range(3)])))
+        T.zlo_vec = np.ascontiguousarray(np.full(4, lo10 * LN10))
+        T.ku_vec = np.ascontiguousarray(np.full(4, 1.0 / (2.0 * (su * LN10) ** 2)))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(4, np.int64), B=1, nb=np.array([4.0]), a=1.0, b=1.0)
+        T.mstep = mstep_build(T, np.array([1, 2, 3]), np.array([1, 2, 3]), sig_s, width)
+        K, sw = 16, 40000
+        tr = sample(T, np.tile([0.05, 0.015, 0.015, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 41, monitor=(0, 1, 2, 3),
+                    verbose=False, keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= bool((Mo[..., 0] > 0).all() and (Mo[..., 3] > 0).all() and ((Mo[..., 1] > 0) | (Mo[..., 2] > 0)).all())
+        for i in range(4):
+            on = Mo[:, :, i] > 0
+            pc = on.mean(1)                             # each chain's own estimates; their spread gives the errors
+            uc = np.array([np.log10(Mo[k_, :, i][on[k_]]).mean() for k_ in range(K)])
+            se_p, se_u = pc.std(ddof=1) / np.sqrt(K), uc.std(ddof=1) / np.sqrt(K)
+            zp = 0.0 if se_p == 0 and abs(pc.mean() - p_on[i]) < 1e-12 else (pc.mean() - p_on[i]) / max(se_p, 1e-300)
+            zu = (uc.mean() - e_u[i]) / se_u
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pc.mean():.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uc.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f})')
+        mm_ = Mo.reshape(-1, 4)                        # the recorded term against its value at the draws
+        y_ = np.c_[mm_[:, 0], mm_[:, 1] + mm_[:, 2], mm_[:, 3]]
+        ep_ = np.diff(np.log(y_), axis=1) - e
+        S_ = np.sum((ep_ - ep_.mean(1, keepdims=True)) ** 2, 1) / tau ** 2
+        ok &= bool(np.allclose(S_, tr['mfd_step'][:, sw // 10:].ravel(), rtol=1e-7, atol=1e-9))
+        print(f'   {be:5s} the term: {S_.mean():.3f} on average; swap acceptance {tr["swap_rate"].mean():.2f}')
+    print('SELFTEST (MFD steps)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -4065,6 +4299,61 @@ def band_start(G, d, rows, F, m0, hi, verbose=True):
     return None
 
 
+def mstep_build(T, rows, orig, sigma_s, width):
+    """--mfd-step-sd: the MFD steps' term for the kernel (stctx). rows: the magnitude bins' rows of T, in magnitude order
+    (cru_common.magnitude_bins), orig their original row numbers (a gap breaks a pair). With lam_b = ln y_b, y_b = r_b + d_b
+    each bin's prediction (in its row's units, as the kernel has it), each pair p of neighbouring bins (a, a + 1) has
+    eps_p = lam_{a+1} - lam_a - e_p, e_p = ln(d_{a+1} / d_a) the target's own step, so eps_p is ln of the draw's step over
+    the target's (each row's coefficient cancels); S = sum_p (eps_p - mean eps)^2 / tau^2, tau = width x sigma_s x ln 10
+    (sigma_s in b-value units: a step straying from the draw's common tilt by sigma_s x width decades costs 1), on chi2's
+    scale. Its quadratic form in lam: A = D' P D / tau^2, c = D' P e / tau^2, const = e' P e / tau^2 (D the pairs'
+    differences, P = I - 1 1' / n_pairs). Each rupture's bin (bx, -1 none) and its coefficient there (gx > 0)."""
+    rows = np.asarray(rows, np.int64)
+    orig = np.asarray(orig)
+    dy = np.asarray(T.d, np.float64)[rows]
+    if not (dy > 0).all():
+        raise SystemExit('--mfd-step-sd: every magnitude bin needs a target above 0')
+    pairs = [(a_, a_ + 1) for a_ in range(len(rows) - 1) if orig[a_ + 1] == orig[a_] + 1]
+    if len(pairs) < 2:
+        raise SystemExit('--mfd-step-sd: needs at least two pairs of neighbouring magnitude bins')
+    nb_, np_ = len(rows), len(pairs)
+    D = np.zeros((np_, nb_))
+    for p_, (a_, b_) in enumerate(pairs):
+        D[p_, a_], D[p_, b_] = -1.0, 1.0
+    e = D @ np.log(dy)
+    Pc = np.eye(np_) - 1.0 / np_
+    tau = width * sigma_s * LN10
+    A = D.T @ Pc @ D / tau ** 2
+    c = D.T @ Pc @ e / tau ** 2
+    rb = np.full(T.N, -1, np.int64)
+    rb[rows] = np.arange(nb_)
+    col = np.repeat(np.arange(T.n, dtype=np.int64), np.diff(T.indptr))
+    sel = rb[T.indices] >= 0
+    if np.bincount(col[sel], minlength=T.n).max() > 1:
+        raise SystemExit('--mfd-step-sd: a rupture is in more than one magnitude bin')
+    bx = np.full(T.n, -1, np.int32)
+    gx = np.zeros(T.n)
+    bx[col[sel]] = rb[T.indices[sel]]
+    gx[col[sel]] = T.data[sel]
+    if not (gx[bx >= 0] > 0).all():
+        raise SystemExit('--mfd-step-sd: every bin row\'s coefficients must be above 0')
+    return dict(row=rows, A=np.ascontiguousarray(A), c=np.ascontiguousarray(c), dy=np.ascontiguousarray(dy),
+                bx=np.ascontiguousarray(bx), gx=np.ascontiguousarray(gx), D=D, e=e, tau=tau, sigma_s=float(sigma_s),
+                width=float(width), pairs=np.array(pairs, np.int64), const=float(e @ Pc @ e / tau ** 2))
+
+
+def mstep_value(ms, R):
+    """--mfd-step-sd: the term S for each chain (rows of R, the residuals), on chi2's scale; +inf where a bin is not
+    predicted above 0."""
+    R = np.atleast_2d(R)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        lam = np.log(R[:, ms['row']] + ms['dy'])
+    eps = lam @ ms['D'].T - ms['e']
+    eps = eps - eps.mean(1, keepdims=True)
+    out = np.sum(eps ** 2, 1) / ms['tau'] ** 2
+    return np.where(np.isfinite(lam).all(1), out, np.inf)
+
+
 def positive_start(T, U):
     """A start with every row of T's positivity above zero, from U (rates in T's units, on its prior's support): for the
     rows predicted at 0, ruptures crossing them are switched on at twice their slab floor, each time the one that
@@ -4223,6 +4512,13 @@ def main():
     ap.add_argument('--all-positive', action='store_true',
                     help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
                          '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
+    ap.add_argument('--mfd-step-sd', type=float, default=None, metavar='B',
+                    help='the MFD\'s steps held to the target\'s, softly: each pair of neighbouring magnitude bins\' step in '
+                         'log10 total, less the target\'s own step there, is to stray from the draw\'s common tilt (the mean of '
+                         'those differences over the pairs) by about B x the bin width decades, B in b-value units (0.25: a step '
+                         'ratio off by about 6%%); a soft term recorded apart from chi2, near the number of pairs less 1 if the '
+                         'steps scatter as B says. The target\'s own bends (the partitioning\'s) cost nothing, and the MFD\'s '
+                         'level and tilt are left to the bins. C backend only')
     ap.add_argument('--mfd-monotonic', action='store_true',
                     help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target is not above the next '
                          'lower bin\'s (neighbouring bins, counted up from --lowest-bin in steps of --bin-width; a bin '
@@ -4287,7 +4583,7 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twenty verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-one verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
                          "term, swap moves, the band, and the column passes with the summed slip rates folded), seven verdicts")
     a = ap.parse_args()
@@ -4318,6 +4614,7 @@ def main():
         ok &= selftest_mfdlog()
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_mfdpdf()
+        ok &= selftest_mfdstep()
         ok &= selftest_slipgeo()
         ok &= selftest_slipgeo(b=1.0)
         ok &= selftest_fold()
@@ -5091,6 +5388,28 @@ def main():
         left = T.band_outside(T.residual(Us))
         if left.any():
             raise SystemExit(f'plate rate: the start leaves {left.max()} rows outside {T.band["what"]}')
+    if a.mfd_step_sd is not None:                  # the MFD's steps held to the target's: a soft term, recorded apart
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--mfd-step-sd is not implemented for transfer moves or the hierarchical prior')
+        if a.backend != 'c':
+            raise SystemExit('--mfd-step-sd is implemented in the C kernel only (--backend c)')
+        if not a.mfd_step_sd > 0:
+            raise SystemExit(f'--mfd-step-sd {a.mfd_step_sd:g}: give a tolerance above 0 (in b-value units)')
+        from cru_common import magnitude_bins
+        rows_ms, R_ms, orig_ms, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
+        T.mstep = mstep_build(T, rows_ms, orig_ms, a.mfd_step_sd, a.bin_width)
+        Us = T.init(X0 if scale is None else X0 / scale)
+        s0 = mstep_value(T.mstep, T.residual(Us))
+        if not np.isfinite(s0).all():
+            raise SystemExit('--mfd-step-sd: the start leaves a magnitude bin at 0; every bin must hold a rupture that is on')
+        ms_ = T.mstep
+        print(f'MFD steps: each of the {len(ms_["pairs"])} pairs of neighbouring bins\' step in log10 total, less the target\'s '
+              f'own step there, held to the draw\'s common tilt within {a.mfd_step_sd:g} in b ({ms_["tau"] / LN10:.4f} decades a '
+              f'step, a ratio off by about {100 * (10 ** (ms_["tau"] / LN10) - 1):.1f}%), a soft term recorded apart from chi2 '
+              f'(near {len(ms_["pairs"]) - 1} if the steps scatter so); the target rates\' own steps '
+              + ', '.join(f'{np.log10(R_ms[b_] / R_ms[a_]):+.3f}' for a_, b_ in ms_['pairs'])
+              + f' decades; the start\'s {s0[0]:.1f}'
+              + ('' if np.allclose(s0, s0[0]) else f' (chain 1; {s0.min():.1f}-{s0.max():.1f} over the chains)'))
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)

@@ -185,7 +185,8 @@ def terms_key(a):
                      f'slip_sum={a.slip_sum_l0:g}' if a.slip_sum else 'slip_sum=',
                      f'cross_sections={a.cross_sections}' if (a.slip_sum or a.plate_rate) else 'cross_sections=',
                      f'plate_rate={a.plate_rate or ""}',
-                     f'mfd_monotonic={a.mfd_rise_sd:g}' if a.mfd_monotonic else 'mfd_monotonic='])
+                     f'mfd_monotonic={a.mfd_rise_sd:g}' if a.mfd_monotonic else 'mfd_monotonic=',
+                     f'mfd_step={a.mfd_step_sd:g}' if getattr(a, 'mfd_step_sd', None) is not None else 'mfd_step='])
 
 
 def sampler_terms(P, a):
@@ -230,6 +231,35 @@ def sampler_terms(P, a):
         k_ = A_p.shape[0]
         cons.append(('the plate rate', sp_.csr_matrix(A_p), np.full(k_, -np.inf if lo_p is None else lo_p), np.full(k_, hi_p)))
     return extra, cons
+
+
+def mfd_step_term(P, a):
+    """--mfd-step-sd: the MFD steps' term as gibbs.py has it (mstep_build): with y_b = G_b m each magnitude bin row's
+    prediction and lam = ln y, S = lam' A lam - 2 c' lam + const, each pair's step less the target's, about the draw's
+    common tilt, over tau = bin width x sigma_s x ln 10. Returns a function m -> (S, its gradient), or None without it."""
+    if getattr(a, 'mfd_step_sd', None) is None:
+        return None
+    import scipy.sparse as sp_
+    from cru_common import magnitude_bins
+    rows, _, orig, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
+    dy = np.asarray(P['d'], float)[rows]
+    pairs = [(k, k + 1) for k in range(len(rows) - 1) if orig[k + 1] == orig[k] + 1]
+    D = np.zeros((len(pairs), len(rows)))
+    for p_, (k, k1) in enumerate(pairs):
+        D[p_, k], D[p_, k1] = -1.0, 1.0
+    e = D @ np.log(dy)
+    Pc = np.eye(len(pairs)) - 1.0 / len(pairs)
+    tau = a.bin_width * a.mfd_step_sd * np.log(10.0)
+    A, c, const = D.T @ Pc @ D / tau ** 2, D.T @ Pc @ e / tau ** 2, float(e @ Pc @ e / tau ** 2)
+    Gb = sp_.csr_matrix(P['G'])[rows]
+
+    def term(m):
+        y = Gb @ m
+        lam = np.log(y)
+        Al = A @ lam
+        return float(lam @ Al - 2.0 * c @ lam + const), Gb.T @ (2.0 * (Al - c) / y)
+    term.npairs = len(pairs)
+    return term
 
 
 def constraint_violation(cons, m):
@@ -305,6 +335,8 @@ def main():
     ap.add_argument('--mfd-rise-sd', type=float, default=0.89, metavar='M', help='as gibbs.py --mfd-rise-sd (default 0.89)')
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='as gibbs.py --lowest-bin (default 6.8)')
     ap.add_argument('--bin-width', type=float, default=0.1, help='as gibbs.py --bin-width (default 0.1)')
+    ap.add_argument('--mfd-step-sd', type=float, default=None, metavar='B',
+                    help='the MFD steps\' term, as gibbs.py --mfd-step-sd (B in b-value units), in the misfit')
     ap.add_argument('--snap-floor', action='store_true', help='the fit put in the sampler\'s set of rates: each rate below '
                     '--floor set to 0, then, where a slip-rate, paleo or MFD row is predicted at 0, a rupture crossing it switched '
                     'on at twice the floor (as gibbs.py\'s positive start), and scaled inside the constraints again')
@@ -341,6 +373,7 @@ def main():
     b_s, b_m, b_p = (misfit_log_weight(a.slip_misfit), misfit_log_weight(a.mfd_misfit), misfit_log_weight(a.paleo_misfit))
     fun_data, by_block_data = make_objective(P, G, pal, mlog, a.paleo_misfit, geo, b_s, b_m, b_p)
     extra, cons = sampler_terms(P, a)                 # the sampler's other terms (Gaussian rows) and constraints, if given
+    mstep = mfd_step_term(P, a)                       # --mfd-step-sd: the MFD steps' term, nonlinear in the rates
 
     def fun(m):                                       # the data misfit as fitted, plus the other terms' rows
         f_, g_ = fun_data(m)
@@ -348,6 +381,10 @@ def main():
             res_ = E_ @ m - e_
             f_ += float(res_ @ res_)
             g_ = g_ + 2.0 * (E_.T @ res_)
+        if mstep is not None:
+            s_, gs_ = mstep(m)
+            f_ += s_
+            g_ = g_ + gs_
         return f_, g_
 
     def by_block(m):
@@ -355,6 +392,8 @@ def main():
         for name_, E_, e_ in extra:
             res_ = E_ @ m - e_
             out_[name_] = float(res_ @ res_)
+        if mstep is not None:
+            out_['MFD steps'] = mstep(m)[0]
         return out_
     f0, _ = fun(np.maximum(m_nnls, a.lower))          # the NNLS fit itself, every rate at least --lower
     log_rows = np.concatenate([np.zeros(0, np.int64)]   # none when every row is Gaussian (only other terms or constraints)
@@ -372,6 +411,9 @@ def main():
           f'L-BFGS-B from the NNLS fit, every rate at least {a.lower:g}')
     for name_, E_, _ in extra:
         print(f'   the {name_}: {E_.shape[0]} rows in the misfit, as gibbs.py has them')
+    if mstep is not None:
+        print(f'   the MFD steps (--mfd-step-sd {a.mfd_step_sd:g}): {mstep.npairs} pairs of neighbouring bins in the misfit, as '
+              'gibbs.py has them')
     for name_, C_, lo_, hi_ in cons:
         print(f'   {name_}: {C_.shape[0]} constraints, kept by an augmented Lagrangian (to {a.con_tol:g}) and a final scaling, as '
               'gibbs.py keeps them')
