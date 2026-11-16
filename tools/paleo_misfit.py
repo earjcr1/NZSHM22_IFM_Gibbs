@@ -34,13 +34,40 @@ POOR = 0.05                                             # quantile error (decade
 PALEO_EPS = 1e-9                                        # the paleo rows' scale in G with the misfit on: out of the Gaussian
 
 
-def load_sites(rupture_dir):
-    """The paleo constraints in file order: name, section index, bestEstimate, one-sigma sd, and the four rate quantiles
-    (2.275, 15.865, 84.135, 97.725%)."""
+PALEO_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'paleo_constraint_data.json')
+# the NZSHM22 paleo constraints (PALEO_RI_GEOLOGIC_MAY24, NZSHM22_C_42; from the 211k inversion solution's rupture set), for
+# rupture sets without their own: an OpenSHA rupture set made without an inversion has none (630k, November 2026)
+
+
+def paleo_json(rupture_dir, verbose=True):
+    """The paleo constraint data for a rupture set: its own paleo_constraint_data.json, or else PALEO_JSON, once each
+    site's section index and name are checked against the rupture set's fault_sections.geojson (the same subsections:
+    the 211k and 630k rupture sets share all 2,325). The callers check the paleo rows' targets against it as well."""
     f = os.path.join(rupture_dir, 'paleo_constraint_data.json')
-    if not os.path.exists(f):
-        raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set')
-    C = json.load(open(f))['paleoRateConstraints']
+    if os.path.exists(f):
+        return f
+    if not os.path.exists(PALEO_JSON):
+        raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set, nor {PALEO_JSON}')
+    gj = os.path.join(rupture_dir, 'fault_sections.geojson')
+    if not os.path.exists(gj):
+        raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set, and no fault_sections.geojson to check {PALEO_JSON} against')
+    names = {int(g['properties']['FaultID']): g['properties']['FaultName'] for g in json.load(open(gj))['features']}
+    bad = [c.get('name', '?') for c in json.load(open(PALEO_JSON))['paleoRateConstraints']
+           if names.get(int(c.get('sectionIndex', -1))) != c.get('sectionName')]
+    if bad:
+        raise ValueError(f'{PALEO_JSON}: {len(bad)} paleo sites\' sections do not match the rupture set {rupture_dir} '
+                         f'(e.g. {bad[0]}): give the rupture set its own paleo_constraint_data.json')
+    if verbose:
+        print(f'paleo sites: the rupture set has no paleo_constraint_data.json; using {PALEO_JSON} (every site\'s section '
+              'index and name match its fault sections)')
+    return PALEO_JSON
+
+
+def load_sites(rupture_dir, verbose=True):
+    """The paleo constraints in file order: name, section index, bestEstimate, one-sigma sd, and the four rate quantiles
+    (2.275, 15.865, 84.135, 97.725%); from the rupture set's paleo_constraint_data.json or, without one, PALEO_JSON
+    (paleo_json)."""
+    C = json.load(open(paleo_json(rupture_dir, verbose)))['paleoRateConstraints']
     out = []
     for c in C:
         u = {t['type']: t for t in c['uncertainties']}
@@ -207,7 +234,7 @@ def main():
     ap.add_argument('--mode', default='years', choices=['years', 'log'])
     ap.add_argument('--out', default=None, help='report file (default: printed only)')
     a = ap.parse_args()
-    rd = a.ruptures if os.path.exists(os.path.join(a.ruptures, 'paleo_constraint_data.json')) else os.path.join(a.ruptures, 'ruptures')
+    rd = a.ruptures if os.path.exists(os.path.join(a.ruptures, 'fault_sections.geojson')) else os.path.join(a.ruptures, 'ruptures')
     sites = load_sites(rd)
     tab = tables(sites, a.mode)
     L = report_lines(sites, tab)

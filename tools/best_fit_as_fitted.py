@@ -87,11 +87,12 @@ def nnls_key(m):
     return hashlib.sha1(np.ascontiguousarray(m, np.float64).tobytes()).hexdigest()
 
 
-def make_objective(P, G, pal, mlog, mode, geo=None, b_s=0.5, b_m=1.0, b_p=1.0):
+def make_objective(P, G, pal, mlog, mode, geo=None, b_s=0.5, b_m=1.0, b_p=1.0, mbound=None):
     """The misfit as fitted, on chi2's scale, and its gradient in the rates; and a function giving it by row block. Each
     group with a log misfit is scored (1 - b) x its Gaussian + b x its log misfit (cru_common.misfit_log_weight): the slip
     rows (geo, b_s) and the MFD bins (mlog, b_m) in log10 with their effective sds, the paleo rows (pal, b_p) by their
-    sites' curves."""
+    sites' curves. mbound (--mfd-bound): dict(rows, ctr, s): the bins not data but an upper bound, each scored by
+    (log10(y / ctr) / s)^2 above its bound ctr (in the row's units) and not at all below, as gibbs.py has it."""
     from paleo_misfit import half_misfit
     from paleo_misfit import GRID_HI, GRID_LO, curve_mode
     d, sig2 = np.asarray(P['d'], float), float(P['sigma']) ** 2
@@ -134,6 +135,12 @@ def make_objective(P, G, pal, mlog, mode, geo=None, b_s=0.5, b_m=1.0, b_p=1.0):
             gc = 2.0 * hp[0] / y[i]                       # d/dy of 2 f(ln(y sd)), linear beyond the grid as the tables
             f[i] = (1.0 - b_p) * f[i] + b_p * fc
             g[i] = (1.0 - b_p) * g[i] + b_p * gc
+        if mbound is not None:                            # --mfd-bound: nothing below each bin's bound, the log above
+            br = mbound['rows']
+            yb = np.maximum(y[br], 1e-300)
+            q = np.maximum(np.log10(yb / mbound['ctr']), 0.0) / mbound['s']
+            f[br] = q * q
+            g[br] = 2.0 * q / (mbound['s'] * LN10 * yb)
         if len(m_rows):
             q = np.log10(y[m_rows] / d[m_rows]) / s_log   # (log10(y / R) / s)^2
             f[m_rows] = (1.0 - b_m) * f[m_rows] + b_m * q * q
@@ -166,6 +173,9 @@ def main():
     ap.add_argument('--mfd-misfit', default='gaussian', choices=['gaussian', 'log10', 'gaussian+log10'],
                     help="the MFD bins' misfit, as gibbs.py --mfd-misfit (default gaussian)")
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin rows (default MFD)')
+    ap.add_argument('--mfd-bound', default=None, metavar='N5,SD_N5,B,SD_B',
+                    help="the bins as gibbs.py --mfd-bound has them: an upper bound from a regional GR MFD, not targets "
+                         "(needs --rupture-set; not with --mfd-misfit)")
     ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10'],
                     help="the slip-rate rows' misfit, as gibbs.py --slip-misfit (default split)")
     ap.add_argument('--slip-block', default='S', help='the slip-rate rows (default S)')
@@ -199,13 +209,26 @@ def main():
         if a.bins_block not in P['block_names']:
             raise SystemExit(f'--mfd-misfit {a.mfd_misfit}: no row block named {a.bins_block!r}')
         mlog = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.bins_block))
+    mbound = None
+    if a.mfd_bound:                                   # --mfd-bound: the bins an upper bound (cru_common.mfd_gr_bound)
+        if a.mfd_misfit != 'gaussian':
+            raise SystemExit('--mfd-bound replaces the bins\' targets: give it without --mfd-misfit')
+        if not a.rupture_set:
+            raise SystemExit('--mfd-bound needs --rupture-set (the ruptures\' magnitudes)')
+        from cru_common import bin_targets, find_rupture_set, mfd_gr_bound
+        rd_b = find_rupture_set(a.rupture_set, search=False)
+        if rd_b is None:
+            raise SystemExit(f'--rupture-set {a.rupture_set}: no OpenSHA rupture set there')
+        B_ = mfd_gr_bound(P, rd_b, a.mfd_bound, a.bins_block)
+        Rb_ = bin_targets(P, a.bins_block)[0]
+        mbound = dict(rows=B_['rows'], ctr=np.asarray(P['d'], float)[B_['rows']] * B_['U'] / Rb_, s=np.asarray(B_['s']))
     geo = None
     if a.slip_misfit != 'split':
         if a.slip_block not in P['block_names']:
             raise SystemExit(f'--slip-misfit {a.slip_misfit}: no row block named {a.slip_block!r}')
         geo = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
     b_s, b_m, b_p = (misfit_log_weight(a.slip_misfit), misfit_log_weight(a.mfd_misfit), misfit_log_weight(a.paleo_misfit))
-    fun, by_block = make_objective(P, G, pal, mlog, a.paleo_misfit, geo, b_s, b_m, b_p)
+    fun, by_block = make_objective(P, G, pal, mlog, a.paleo_misfit, geo, b_s, b_m, b_p, mbound)
     f0, _ = fun(np.maximum(m_nnls, a.lower))          # the NNLS fit itself, every rate at least --lower
     log_rows = np.concatenate([r_ for r_, b_ in ((geo, b_s), (mlog, b_m), (pal[0] if pal is not None else None, b_p))
                                if r_ is not None and b_ > 0]).astype(np.int64)
@@ -215,7 +238,9 @@ def main():
     how = ', '.join(w for w, on in ((f'the slip rates {a.slip_misfit} (log10 weighted {b_s:g}, its sds the effective ones)', geo is not None),
                                     ('the slip rates by their split normals', geo is None and P.get('split_lo2') is not None),
                                     (f'the paleo rows {a.paleo_misfit} (the sites\' curves weighted {b_p:g})', pal is not None),
-                                    (f'the MFD bins {a.mfd_misfit} (log10 weighted {b_m:g})', mlog is not None)) if on) or 'every row Gaussian'
+                                    (f'the MFD bins {a.mfd_misfit} (log10 weighted {b_m:g})', mlog is not None),
+                                    (f'the MFD bins an upper bound only (--mfd-bound {a.mfd_bound}: (log10(total / U_j) / s_j)^2 '
+                                     'above each bin\'s GR bound, nothing below)', mbound is not None)) if on) or 'every row Gaussian'
     print(f'best fit as fitted: {G.shape[0]} rows x {G.shape[1]} ruptures; the misfit as the sampler scores it ({how}); '
           f'L-BFGS-B from the NNLS fit, every rate at least {a.lower:g}')
     print(f'   start: the NNLS fit with its rates below the slab floor {a.floor:g} at {a.lower:g}, and {added} ruptures '
@@ -256,7 +281,7 @@ def main():
     np.savez(out + '.npz', mean=full, penalised=z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int),
              model=np.array('best fit as fitted'), misfit=np.array(f1), misfit_nnls=np.array(f0),
              nnls_key=np.array(nnls_key(np.asarray(z0['mean'], float)[keep_c])),
-             paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit),
+             paleo_misfit=np.array(a.paleo_misfit), mfd_misfit=np.array(a.mfd_misfit), mfd_bound=np.array(a.mfd_bound or ''),
              slip_misfit=np.array(a.slip_misfit))
     with open(out + '.csv', 'w') as fh:
         fh.write('rupture,penalised,best_fit_as_fitted\n')

@@ -2265,7 +2265,13 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['slip_geo_expect'] = np.array([SMr['E'], SMr['V']])
         tr['slip_geo_b'] = b_s
         sm_wk = np.asarray(SMr.get('wk', np.ones(len(SMr['rows']))), float)
-    if MFr is not None:
+    mf_bound = MFr is not None and bool(MFr.get('bound'))   # --mfd-bound: the bins an upper bound, recorded apart
+    if mf_bound:
+        tr['mfd_bound_rows'], tr['mfd_bound_s'], tr['mfd_bound_U'] = (np.asarray(MFr['rows']), np.asarray(MFr['s']),
+                                                                      np.asarray(MFr['U']))
+        tr['mfd_bound_q'], tr['mfd_bound_spec'], tr['mfd_bound_Mmax'] = (np.asarray(MFr['q']), np.asarray(MFr['spec']),
+                                                                         np.array(MFr['Mmax']))
+    elif MFr is not None:
         tr['mfd_log_rows'], tr['mfd_log_s'] = np.asarray(MFr['rows']), np.asarray(MFr['s'])
         tr['mfd_log_b'] = b_m
         if 'E' in MFr:
@@ -2364,8 +2370,12 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         if MFr is not None:                                  # --mfd-misfit log10: the bins' misfit, sum (log10(y / R) / s)^2,
             mr_ = MFr['rows']                                # on chi2's scale, and the bins' rows unscaled, as above
             with np.errstate(divide='ignore'):
-                lq_ = np.log10(np.maximum(y[:, mr_], 0.0) / T.d[mr_])
-            tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = np.sum((lq_ / MFr['s']) ** 2, 1)
+                lq_ = np.log10(np.maximum(y[:, mr_], 0.0) / MFr.get('ctr', T.d[mr_]))
+            if mf_bound:                                     # --mfd-bound: only above each bin's bound
+                tr.setdefault('mfd_bound', np.zeros((K, n_rec)))[:, rec] = np.sum((np.maximum(lq_, 0.0) / MFr['s']) ** 2, 1)
+                tr.setdefault('mfd_bound_over', np.zeros((K, n_rec)))[:, rec] = np.sum(lq_ > 0, 1)
+            else:
+                tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = np.sum((lq_ / MFr['s']) ** 2, 1)
             y = y.copy()
             y[:, mr_] /= MFr['eps']
             Rd = y - Dd
@@ -2387,7 +2397,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         mis_ = tr['chi2'][:, rec].copy()                     # chi2 as fitted: each group scored as the likelihood scores it
         if PMr is not None:                                  # each group (1 - b) x its Gaussian + b x its log misfit
             mis_ += b_p * (tr['paleo_misfit'][:, rec] - np.sum(C_[:, PMr['rows']], 1) / T.sigma ** 2)
-        if MFr is not None:
+        if mf_bound:                                         # --mfd-bound: the bins not data: out of chi2 as fitted
+            mis_ -= np.sum(C_[:, MFr['rows']], 1) / T.sigma ** 2
+        elif MFr is not None:
             mis_ += b_m * (tr['mfd_misfit'][:, rec] - np.sum(C_[:, MFr['rows']], 1) / T.sigma ** 2)
         if SMr is not None:
             mis_ += b_s * (tr['slip_log'][:, rec] - np.sum(C_[:, SMr['rows']], 1) / T.sigma ** 2)
@@ -2534,6 +2546,11 @@ def report(tr, burn, thin, names=None):
         print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
               f'tau of their targets: {o.mean():.1f} per draw')
+    if 'mfd_bound' in tr:                            # --mfd-bound: the bins' upper bound (not in chi2 as fitted)
+        v, o = tr['mfd_bound'][:, nb:], tr['mfd_bound_over'][:, nb:]
+        print(f'MFD bound (--mfd-bound; its chi2-equivalent, sum over the bins above it of (log10(total / U_j) / s_j)^2): '
+              f'{v.mean():.1f} on average (5-95% {np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 as '
+              f'fitted; bins above their bound: {o.mean():.1f} per draw (of {len(tr["mfd_bound_rows"])})')
     if 'mfd_misfit' in tr:                           # --mfd-misfit log10: in the likelihood in place of the bins' Gaussian
         v = tr['mfd_misfit'][:, nb:]
         print(f'MFD misfit (log10 part, sum (log10(total / R_j) / s_j)^2, s_j = log10(1 + sigma_j / R_j)): {v.mean():.1f} '
@@ -3026,6 +3043,86 @@ def selftest_mfdlog(backends=('c', 'numpy'), b=1.0):
                    and np.allclose(ch_, tr['chi2'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-9)
                    and np.allclose(fit_, tr['misfit'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-8))
     print(f'SELFTEST (MFD misfit {mode_})', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_mfdbound(backends=('c', 'numpy')):
+    """--mfd-bound on two spike-and-slab rates: a Gaussian row, and a bin row holding both, scaled out of the Gaussian and
+    scored only above its bound U (not its target R): (log10(total / U) / s)^2 for total > U, nothing below, through the
+    soft band's machinery with sided weights (WL = 0 below), with positivity on it and swap moves, against a grid integral:
+    P(on) and E[log10 m | on] of each rate, the recorded bound term, chi2 (the bin's Gaussian against R, unscaled) and chi2
+    as fitted (without the bin)."""
+    from scipy.special import betaln
+    from paleo_misfit import PALEO_EPS
+    print('MFD bound (--mfd-bound): spike-and-slab with positivity and swaps vs a grid integral')
+    ok = True
+    c0, d0, sig, Rb, Ub, sb = np.array([1.0, 0.4]), 0.03, 0.02, 0.05, 0.03, np.log10(1.4)
+    lo10, su, a_, b_ = np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def Lb(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        with np.errstate(divide='ignore'):
+            lq = np.where(m1 + m2 > 0, np.maximum(np.log10(np.maximum(m1 + m2, 1e-300) / Ub), 0.0) / sb, np.inf)
+        return np.exp(-0.5 * (c0[0] * m1 + c0[1] * m2 - d0) ** 2 / sig ** 2 - 0.5 * lq ** 2)
+    L1, L2_, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2_), pg[2] * L12.sum()   # both off: impossible (positivity)
+    W_ = w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2_ + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    eps = PALEO_EPS
+    Gs = np.vstack([c0, np.array([1.0, 1.0]) * eps])
+    dv = np.array([d0, eps * Rb])
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dv, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([Gs[:, 0] @ Gs[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.set_groups(np.array([1]), np.zeros(0, np.int64), np.zeros(0))
+        ctr = eps * Ub
+        T.lw = dict(W=np.array([0.0, 1.0 / (2.0 * (sb * LN10) ** 2)]), WL=np.array([0.0, 0.0]),
+                    LD=np.log(np.array([d0, ctr])), DY=np.ascontiguousarray(dv), rows=np.array([], np.int64), tau=None,
+                    MF=dict(rows=np.array([1]), s=np.array([sb]), eps=eps, d_data=np.array([d0, Rb]), b=1.0,
+                            ctr=np.array([ctr]), bound=True, U=np.array([Ub]), q=np.array([Ub * 10 ** sb]), Mmax=8.5,
+                            spec=np.array([4.0, 1.0, 0.96, 0.1])))
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 41, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= bool((Mo > 0).any(-1).all())
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        mm_ = Mo.reshape(-1, 2)
+        bd_ = (np.maximum(np.log10(mm_.sum(1) / Ub), 0.0) / sb) ** 2
+        ch_ = ((mm_ @ c0 - d0) ** 2 + (mm_.sum(1) - Rb) ** 2) / sig ** 2
+        fit_ = (mm_ @ c0 - d0) ** 2 / sig ** 2               # chi2 as fitted: the Gaussian row alone
+        ok &= bool(np.allclose(bd_, tr['mfd_bound'][:, sw // 10:].ravel(), rtol=1e-7, atol=1e-9)
+                   and np.allclose(ch_, tr['chi2'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-9)
+                   and np.allclose(fit_, tr['misfit'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-8)
+                   and 'mfd_misfit' not in tr)
+        print(f'   {be:5s} totals above the bound in {np.mean(mm_.sum(1) > Ub):.0%} of draws; recorded terms checked')
+    print('SELFTEST (MFD bound)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -3994,11 +4091,20 @@ def main():
                          "scored by ((log10(total) - log10(R_j)) / s_j)^2, s_j = log10(1 + sigma_j / R_j) (the soft top's "
                          "width), in place of the Gaussian, with positivity on the bins (spike-and-slab, the per-group "
                          "--slip-band and --paleo-band or --positive); gaussian+log10, half of each, the geometric mean")
+    ap.add_argument('--mfd-bound', default=None, metavar='N5,SD_N5,B,SD_B',
+                    help="the MFD bins as an upper bound only, in place of their targets (the notebook's MFD_BOUND): a "
+                         "Gutenberg-Richter MFD for the whole region, N5 per year of M>=5 and b-value B (each with its 1-sd "
+                         "uncertainty), truncated at the largest rupture's magnitude (cru_common.mfd_gr_bound; needs "
+                         "--rupture-set): each bin's total costs nothing up to the central GR's rate U_j and (log10(total / "
+                         "U_j) / s_j)^2 above it, s_j = log10(the bin rate's 84th percentile / U_j), recorded apart from chi2 "
+                         "as mfd_bound; the bins leave chi2 as fitted and the fit check; each rupture's soft top is U_j with "
+                         "sd s_j in place of R_j; not with --mfd-misfit")
     ap.add_argument('--all-positive', action='store_true',
                     help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
                          '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
     ap.add_argument('--mfd-monotonic', action='store_true',
-                    help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target is not above the next '
+                    help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target (with --mfd-bound, its '
+                         'bound U_j, the rise cap\'s sd from the bound\'s shoulder) is not above the next '
                          'lower bin\'s (neighbouring bins, counted up from --lowest-bin in steps of --bin-width; a bin '
                          'cleaning removed breaks the pair), its total rate is not above that bin\'s either, and where the '
                          'target rises the rise is capped (--mfd-rise-sd): a hard '
@@ -4091,6 +4197,7 @@ def main():
         ok &= selftest_split()
         ok &= selftest_mfdlog()
         ok &= selftest_mfdlog(b=0.5)
+        ok &= selftest_mfdbound()
         ok &= selftest_slipgeo()
         ok &= selftest_slipgeo(b=1.0)
         ok &= selftest_fold()
@@ -4102,6 +4209,27 @@ def main():
     report_to(a.out + '_log.txt')                        # everything printed below is also kept with the run
     P = load_problem(a.problem)
     n = P['G'].shape[1]
+    mfdb = None                                      # --mfd-bound: each bin's upper bound from a regional GR MFD
+    if a.mfd_bound:
+        if a.mfd_misfit != 'gaussian':
+            raise SystemExit('--mfd-bound replaces the bins\' targets with an upper bound: give it without --mfd-misfit')
+        if not a.rupture_set:
+            raise SystemExit('--mfd-bound needs --rupture-set (the ruptures\' magnitudes: Mmax, the largest)')
+        from cru_common import find_rupture_set, mfd_gr_bound
+        rd_b = find_rupture_set(a.rupture_set, search=False)
+        if rd_b is None:
+            raise SystemExit(f'--rupture-set {a.rupture_set}: no OpenSHA rupture set there (indices.csv, or ruptures/indices.csv)')
+        try:
+            mfdb = mfd_gr_bound(P, rd_b, a.mfd_bound, a.bins_block)
+        except ValueError as e:
+            raise SystemExit(f'--mfd-bound: {e}')
+        if not (mfdb['U'] > 0).all():
+            raise SystemExit('--mfd-bound: a bin lies wholly above the largest rupture\'s magnitude')
+        n5_, sn_, b0_, sb_ = mfdb['spec']
+        print(f'MFD bound (--mfd-bound): a Gutenberg-Richter MFD of N5 = {n5_:g} +- {sn_:g} per year (M >= 5) and b = {b0_:g} '
+              f'+- {sb_:g}, truncated at Mmax {mfdb["Mmax"]:.3f} (the largest rupture): bin rates U_j {mfdb["U"].min():.3g} to '
+              f'{mfdb["U"].max():.3g} per year (M{mfdb["lo"][0]:.1f} and up: {mfdb["U"].sum():.4g}), soft tops s_j '
+              f'{mfdb["s"].min():.3f}-{mfdb["s"].max():.3f} decades (its 84th percentile over U_j)')
     G_fit, d_fit, B_bal = P['G'], P['d'], None       # the rows the sampler fits: the data, and the balance term's rows
     if a.down_the_middle:
         B_bal, b_bal, A_bal, info_bal = balance_rows(P, a.slip_block, a.bins_block, weights=a.down_the_middle)
@@ -4148,6 +4276,13 @@ def main():
         Gb = sp.csr_matrix(P['G'])[mrows]
         members = [Gb.indices[Gb.indptr[k]:Gb.indptr[k + 1]] for k in range(len(mrows))]
         sig_b = Rm / (P['d'][mrows] / P['row_scale'][mrows])    # each bin's uncertainty, as cleaning left it
+        what_m = 'target'                          # the pattern the pairs follow: the bins' targets R_j (cru_D),
+        if mfdb is not None:                       # or, with --mfd-bound, the bounds U_j and their 1-sd shoulders
+            if not np.array_equal(np.asarray(mfdb['rows']), np.asarray(mrows)):
+                raise SystemExit('--mfd-monotonic with --mfd-bound: the bound\'s bins are not --mfd-monotonic\'s')
+            Rm = np.asarray(mfdb['U'], float)
+            sig_b = Rm * (10.0 ** np.asarray(mfdb['s'], float) - 1.0)
+            what_m = 'bound U_j (--mfd-bound)'
         adj = [(k, k + 1) for k in range(len(mrows) - 1) if origm[k + 1] == origm[k] + 1]
         flat = [(k, k1) for k, k1 in adj if Rm[k1] <= Rm[k]]
         rise = [(k, k1) for k, k1 in adj if Rm[k1] > Rm[k]] if a.mfd_rise_sd >= 0 else []
@@ -4169,13 +4304,13 @@ def main():
         mono = dict(pairs=pairs_m, rhos=rhos, members=members, mlo=mlo, eps=eps,
                     rows=np.arange(n_fit, n_fit + len(pairs_m)))
         name = lambda k: f'{mlo[k]:.2f}-{mlo[k] + a.bin_width:.2f}'
-        print(f'MFD monotonic: in every draw, a bin\'s total rate is not above the next lower bin\'s wherever its target is '
+        print(f'MFD monotonic: in every draw, a bin\'s total rate is not above the next lower bin\'s wherever its {what_m} is '
               f'not: {len(flat)} pairs of neighbouring bins (from {name(flat[0][0])} up)' if flat else
-              'MFD monotonic: no pair of neighbouring bins has a target that is not increasing')
+              f'MFD monotonic: no pair of neighbouring bins has a {what_m} that is not increasing')
         for k, k1 in rise:
-            print(f'   {name(k)} -> {name(k1)}: the target rises ({Rm[k]:.3e} -> {Rm[k1]:.3e}, a ratio of {Rm[k1] / Rm[k]:.3f}), '
-                  f'so the upper bin\'s total is at most {rhos[pairs_m.index((k, k1))]:.3f} times the lower\'s (the target '
-                  f'difference plus {a.mfd_rise_sd:g} sd of it, as a ratio at the lower bin\'s target)')
+            print(f'   {name(k)} -> {name(k1)}: the {what_m} rises ({Rm[k]:.3e} -> {Rm[k1]:.3e}, a ratio of {Rm[k1] / Rm[k]:.3f}), '
+                  f'so the upper bin\'s total is at most {rhos[pairs_m.index((k, k1))]:.3f} times the lower\'s (the '
+                  f'difference plus {a.mfd_rise_sd:g} sd of it, as a ratio at the lower bin\'s value)')
         if skipped:
             print('   pairs left free (' + ('the target increases, or ' if a.mfd_rise_sd < 0 else '')
                   + 'a bin cleaning removed lies between): ' + ', '.join(f'{name(k)} -> {name(k1)}' for k, k1 in skipped))
@@ -4244,6 +4379,8 @@ def main():
             top = str(parts[2] or 'soft').lower()        # 'soft' (default), 'hard', or a factor F for a hard top at F x R_j
         soft_top, F = (top == 'soft'), (1.0 if top in ('soft', 'hard') else float(top))
         Rb, rows = bin_targets(P, a.bins_block)
+        if mfdb is not None:                             # --mfd-bound: each rupture's top at the GR bound U_j, not R_j
+            Rb = np.asarray(mfdb['U'], float)
         bins = rupture_bins(P, rows, a.bins_block)
         if a.transfers:
             raise SystemExit('transfer moves are not implemented for binbox priors')
@@ -4251,11 +4388,13 @@ def main():
         nb = np.bincount(bins)
         edge = "soft lower edge, sd %g decades" % se if se > 0 else "hard lower edge"
         rel = 1.0 / P['d'][rows]                         # each bin row's relative uncertainty (it is normalized by it)
-        su = np.log10(1.0 + rel) if soft_top else np.zeros(len(rows))     # upper-edge sd per bin, decades
+        su = ((np.asarray(mfdb['s'], float) if mfdb is not None else np.log10(1.0 + rel)) if soft_top   # upper-edge sd per bin,
+              else np.zeros(len(rows)))                                                                 # decades
         if soft_top:                                     # soft top at R_j: Gaussian in log rate with the bin's own uncertainty
             ku_vec = np.ascontiguousarray((1.0 / (2.0 * (su * LN10) ** 2))[bins])
             hi_u = 10.0
-            edge += f'; soft top at R_j, sd log10(1 + sigma_j/R_j) = {su.min():.3f}-{su.max():.3f} decades'
+            edge += (f'; soft top at the GR bound U_j (--mfd-bound), sd s_j = {su.min():.3f}-{su.max():.3f} decades'
+                     if mfdb is not None else f'; soft top at R_j, sd log10(1 + sigma_j/R_j) = {su.min():.3f}-{su.max():.3f} decades')
         else:
             edge += f'; hard top at {F:g} x R_j'
 
@@ -4287,7 +4426,7 @@ def main():
             elif spike_mode:
                 slab = 'rate uniform in sqrt(rate)' if a.slab == 'sqrt' else 'log-uniform rate'
                 print(f'prior: spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a {slab} from '
-                      f'the slab floor 1e{W:g} up to R_j ({Wj.min():.2f} to {Wj.max():.2f} decades; {edge}); the fraction on in '
+                      f'the slab floor 1e{W:g} up to {"U_j" if mfdb is not None else "R_j"} ({Wj.min():.2f} to {Wj.max():.2f} decades; {edge}); the fraction on in '
                       f'each bin ~ Beta({ss_a:g}, {ss_b:g}), estimated')
             else:
                 print(f'prior: per-bin log-uniform boxes from R_j down to a common floor 1e{W:g} (depths {Wj.min():.2f} to '
@@ -4316,6 +4455,8 @@ def main():
     from cru_common import misfit_log_weight
     from paleo_misfit import PALEO_EPS
     b_s, b_m, b_p = (misfit_log_weight(a.slip_misfit), misfit_log_weight(a.mfd_misfit), misfit_log_weight(a.paleo_misfit))
+    if mfdb is not None:                           # --mfd-bound: the bins' rows out of the Gaussian, as with log10
+        b_m = 1.0
     lin_sc = lambda b_: 1.0 if b_ <= 0 else PALEO_EPS if b_ >= 1 else 1.0 / np.sqrt(2.0)   # each group's rows in G and d:
     lin_cut = lambda b_: 1.0 - PALEO_EPS ** 2 if b_ >= 1 else 0.5  # out of the Gaussian (log), or halved; the inner products'
     pm_rows = pm_tab = None                        # --paleo-misfit: the paleo rows, scaled out of the Gaussian (or halved)
@@ -4351,7 +4492,7 @@ def main():
         d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
         G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
     mf_rows = mf_s = None                          # --mfd-misfit log10: the bins' rows, scaled out of the Gaussian (or halved)
-    if a.mfd_misfit != 'gaussian':
+    if a.mfd_misfit != 'gaussian' or mfdb is not None:
         if not spike_mode or a.transfers:
             raise SystemExit('--mfd-misfit log10 needs spike-and-slab, without --transfers')
         if a.log_band is not None:
@@ -4364,6 +4505,11 @@ def main():
         if not (dmf > 0).all():
             raise SystemExit('--mfd-misfit log10: every bin needs a positive target')
         mf_s = np.log10(1.0 + 1.0 / dmf)               # s_j = log10(1 + sigma_j / R_j); a bin's row is R_j / sigma_j
+        if mfdb is not None:                       # --mfd-bound: the GR's spread, and the bound in the rows' units
+            if not np.array_equal(mfdb['rows'], mf_rows):
+                raise SystemExit('--mfd-bound: the bound\'s bins are not the --bins-block rows')
+            mf_s = np.asarray(mfdb['s'], float)
+            mf_ratio = mfdb['U'] / bin_targets(P, a.bins_block)[0]   # U_j / R_j: the row's d times it is the bound
         rs_ = np.ones(G_fit.shape[0])
         rs_[mf_rows] = lin_sc(b_m)
         if pm_rows is None:
@@ -4590,6 +4736,10 @@ def main():
             if sm_have != sm_want:
                 raise SystemExit(f'--init fitted: {f_fit} was fitted with the slip misfit {sm_have}, this run uses {sm_want}; run '
                                  'best_fit_as_fitted.py again, or use --init nnls')
+            mb_have = str(zf['mfd_bound']) if 'mfd_bound' in zf.files else ''
+            if mb_have != (a.mfd_bound or ''):
+                raise SystemExit(f'--init fitted: {f_fit} was fitted with --mfd-bound {mb_have or "(none)"}, this run uses '
+                                 f'{a.mfd_bound or "(none)"}; run best_fit_as_fitted.py again, or use --init nnls')
             if (str(zf['paleo_misfit']), str(zf['mfd_misfit'])) != (a.paleo_misfit, a.mfd_misfit):
                 raise SystemExit(f'--init fitted: {f_fit} was fitted with --paleo-misfit {zf["paleo_misfit"]} and --mfd-misfit '
                                  f'{zf["mfd_misfit"]}, this run uses {a.paleo_misfit} and {a.mfd_misfit}; run '
@@ -4763,15 +4913,28 @@ def main():
         T.lw['W'] = np.array(T.lw['W'], np.float64)
         T.lw['LD'] = np.array(T.lw['LD'], np.float64)
         T.lw['W'][mf_rows] = b_m / (2.0 * (mf_s * LN10) ** 2)   # 1/2 (ln(y / R) / (s ln 10))^2 = 1/2 (log10(y / R) / s)^2, x b
-        T.lw['LD'][mf_rows] = np.log(T.d[mf_rows])
+        T.lw['LD'][mf_rows] = np.log(T.d[mf_rows] * (mf_ratio if mfdb is not None else 1.0))   # --mfd-bound: centred on U_j
         T.lw['W'], T.lw['LD'] = np.ascontiguousarray(T.lw['W']), np.ascontiguousarray(T.lw['LD'])
-        if T.lw.get('WL') is not None:             # with --slip-misfit split+log10's sided weights: the bins' the same both sides
-            T.lw['WL'] = np.array(T.lw['WL'], np.float64)
-            T.lw['WL'][mf_rows] = T.lw['W'][mf_rows]
-        T.lw['MF'] = dict(rows=mf_rows, s=mf_s, eps=lin_sc(b_m), d_data=d_data, b=b_m)
+        if mfdb is not None and T.lw.get('WL') is None:   # --mfd-bound: sided weights, the other rows' the same both sides
+            T.lw['WL'] = T.lw['W'].copy()
+        if T.lw.get('WL') is not None:             # with --slip-misfit split+log10's sided weights: the bins' the same both sides,
+            T.lw['WL'] = np.array(T.lw['WL'], np.float64)   # or, with --mfd-bound, nothing below the bound
+            T.lw['WL'][mf_rows] = 0.0 if mfdb is not None else T.lw['W'][mf_rows]
+            T.lw['WL'] = np.ascontiguousarray(T.lw['WL'])
+        T.lw['MF'] = dict(rows=mf_rows, s=mf_s, eps=lin_sc(b_m), d_data=d_data, b=b_m,   # ctr: the centre in the rows' units
+                          ctr=T.d[mf_rows] * mf_ratio if mfdb is not None else np.array(T.d[mf_rows], np.float64))
+        if mfdb is not None:
+            T.lw['MF'].update(bound=True, U=np.asarray(mfdb['U'], float), q=np.asarray(mfdb['q'], float),
+                              Mmax=mfdb['Mmax'], spec=np.asarray(mfdb['spec'], float))
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, mf_rows]
-        f0 = float(np.sum((np.log10(np.maximum(y0, 1e-300) / T.d[mf_rows]) / mf_s) ** 2))
-        print(f'MFD misfit ({a.mfd_misfit}): {len(mf_rows)} bin rows '
+        lq0 = np.log10(np.maximum(y0, 1e-300) / T.lw['MF']['ctr'])
+        f0 = float(np.sum((np.maximum(lq0, 0.0) if mfdb is not None else lq0) ** 2 / mf_s ** 2))
+        if mfdb is not None:
+            print(f'MFD bound (--mfd-bound): the {len(mf_rows)} bin rows out of the Gaussian (scaled by {lin_sc(b_m):g}), each '
+                  f'bin\'s total scored by (log10(total / U_j) / s_j)^2 above U_j and not at all below ({int(np.sum(lq0 > 0))} '
+                  f'bins above at the start, {f0:.1f} on chi2\'s scale), kept by a Metropolis step, recorded apart from chi2')
+        else:
+          print(f'MFD misfit ({a.mfd_misfit}): {len(mf_rows)} bin rows '
               + (f'out of the Gaussian (scaled by {lin_sc(b_m):g}), ' if b_m >= 1 else 'with half their Gaussian (scaled by 1/sqrt 2) and half ')
               + f'scored by (log10(total / R_j) / s_j)^2 with s_j = log10(1 + sigma_j / R_j) ({mf_s.min():.3f}-{mf_s.max():.3f} decades), '
               f'kept by a Metropolis step; the start\'s {f0:.1f} (on chi2\'s scale, weighted {b_m:g})')
@@ -4843,7 +5006,11 @@ def main():
             m_ += SM_['E'] - SM_['t2']
             v_ += SM_['V'] - 2.0 * SM_['t4']
         parts_ = []
-        if mf_rows is not None and b_m < 1:        # the bins half and half: each bin's curve (in log10 alone: 1 and 2, kept)
+        if mf_rows is not None and mfdb is not None:   # --mfd-bound: the bins not data, out of the fit check
+            m_ -= len(mf_rows)
+            v_ -= 2.0 * len(mf_rows)
+            parts_.append(f'the {len(mf_rows)} bins left out (--mfd-bound: an upper bound, recorded apart)')
+        elif mf_rows is not None and b_m < 1:        # the bins half and half: each bin's curve (in log10 alone: 1 and 2, kept)
             from cru_common import geo_moments
             Em_, Vm_ = geo_moments(P, mf_rows, b_m, 'mfd')[:2]
             T.lw['MF']['E'], T.lw['MF']['V'] = Em_, Vm_  # recorded, for block_fit.py

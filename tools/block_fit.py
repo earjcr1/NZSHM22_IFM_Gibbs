@@ -51,6 +51,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
     PAL = {}                                                          # --paleo-misfit: each row's site curve, by row
     GEO = None                                                        # --slip-misfit: (b, fit-check mean, variance)
     B_M, B_P, MEX = 1.0, 1.0, None                                    # the bins' and paleo rows' log weights; the bins' moments
+    BND = None                                                        # --mfd-bound: the bins an upper bound, not data
+    bnd_runs = []
     def mfd_rows_misfit(rows, yy):                                  # the bins as fitted: (1 - b) Gaussian + b log10
         sl = np.array([LOG[int(i)] for i in rows])
         with np.errstate(divide='ignore'):
@@ -67,6 +69,14 @@ def block_stats(P, runs, first=('S', 'MFD')):
         if y.shape[1] < 4:
             raise SystemExit(f'{r} recorded {y.shape[1]} draws after burn-in; the report needs more')
         c = {}
+        if 'mfd_bound_rows' in z.files:                               # the run had the bins as an upper bound (gibbs.py --mfd-bound)
+            from cru_common import bin_targets
+            br_ = np.asarray(z['mfd_bound_rows'])
+            BND = dict(rows=br_, s=np.asarray(z['mfd_bound_s'], float),
+                       ctr=d[br_] * np.asarray(z['mfd_bound_U'], float) / bin_targets(P, first[1])[0],
+                       spec=np.asarray(z['mfd_bound_spec'], float), Mmax=float(z['mfd_bound_Mmax']))
+            q_ = np.maximum(np.log10(np.maximum(y[:, :, br_].astype(np.float64), 1e-300) / BND['ctr']), 0.0) / BND['s']
+            bnd_runs.append((np.sum(q_ ** 2, axis=2), np.sum(q_ > 0, axis=2)))
         if 'mfd_log_s' in z.files:                                    # the run scored the bins in log10 (gibbs.py --mfd-misfit)
             LOG.update(zip(z['mfd_log_rows'].tolist(), z['mfd_log_s'].tolist()))
             B_M = float(z['mfd_log_b']) if 'mfd_log_b' in z.files else 1.0
@@ -81,6 +91,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
             GEO = (float(z['slip_geo_b']) if 'slip_geo_b' in z.files else 0.5, float(z['slip_geo_expect'][0]),
                    float(z['slip_geo_expect'][1]))
         for m in meas:
+            if BND is not None and np.isin(m['rows'], BND['rows']).all():   # --mfd-bound: not data, reported apart
+                continue
             if GEO and m['name'] == first[0]:                         # (1 - b) x the split normal + b x the log10 Gaussian
                 c[m['name']] = np.sum(slip_geo_rows(P, m['rows'], y[:, :, m['rows']].astype(np.float64), GEO[0]), axis=2)
                 continue
@@ -132,6 +144,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
                        else float(allx.mean()) - mm)
         return out
 
+    if BND is not None:                                               # --mfd-bound: the bins out of the fit check
+        meas = [m for m in meas if not np.isin(m['rows'], BND['rows']).all()]
     stats = {}
     for m in meas:
         if GEO and m['name'] == first[0]:                             # each slip section's share, from its own curve
@@ -152,6 +166,11 @@ def block_stats(P, runs, first=('S', 'MFD')):
     tot.update(rows=len(allrows), measurements=sum(m['expect'] for m in meas),
                meas_sd=float(np.sqrt(sum(m['sd'] ** 2 for m in meas))))
     wt_ = lambda b_: 'in log10' if b_ >= 1 else f'{1 - b_:g} Gaussian + {b_:g} log10'
+    if BND is not None:
+        bt = np.concatenate([b_[0].ravel() for b_ in bnd_runs])
+        bo = np.concatenate([b_[1].ravel() for b_ in bnd_runs])
+        tot['bound'] = dict(mean=float(bt.mean()), lo=float(np.quantile(bt, 0.05)), hi=float(np.quantile(bt, 0.95)),
+                            over=float(bo.mean()), nbins=len(BND['rows']), spec=BND['spec'], Mmax=BND['Mmax'])
     tot['fitted'] = [w_ for w_, on_ in ((f'the slip rates {wt_(GEO[0])}, with the same sds' if GEO else '', GEO),
                                         (f'the MFD bins {wt_(B_M)}', LOG),
                                         ('the paleo sites by -2 ln of their recurrence-interval PDFs' + ('' if B_P >= 1 else
@@ -183,6 +202,13 @@ def table(stats, tot, labels):
         lines.append(f'{lab:{w}s} {s["rows"]:5d} {s["measurements"]:12.1f} {s["mean"]:9.1f} +- {s["sd"]:6.1f} {s["mcse"]:8.2f} '
                      f'{s["rhat"]:6.3f} {s["mean"] / s["measurements"]:9.2f} {(s["mean"] - s["measurements"]) / s["meas_sd"]:+5.1f} '
                      f'{s["mean_model"]:10.1f} {s["spread"]:7.1f}')
+    if tot.get('bound'):
+        b_ = tot['bound']
+        lines.append(f'MFD bins: an upper bound only (--mfd-bound: a Gutenberg-Richter MFD, N5 = {b_["spec"][0]:g} +- '
+                     f'{b_["spec"][1]:g} per year, b = {b_["spec"][2]:g} +- {b_["spec"][3]:g}, truncated at Mmax {b_["Mmax"]:.3f}), not '
+                     f'data, so not in the table or the fit check: its term (log10(total / U_j) / s_j)^2 over the bins above '
+                     f'their bounds, {b_["mean"]:.1f} on average (5-95% {b_["lo"]:.1f}-{b_["hi"]:.1f}); bins above their bound: '
+                     f'{b_["over"]:.1f} per draw of {b_["nbins"]}')
     if tot.get('fitted'):
         lines.append(f'chi2 as fitted: each block scored as the runs\' likelihood scores it ({" and ".join(tot["fitted"])}); fit check as fitted '
                      f'{tot["measurements"]:.1f} +- {tot["meas_sd"]:.1f}')

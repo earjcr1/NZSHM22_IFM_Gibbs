@@ -162,15 +162,37 @@ def main():
         head.append(f'order check skipped: no row block named {a.slip_block!r}')
 
     cfg_ = run_config(a.config, a.problem) or {}
-    from cru_common import misfit_log_weight, misfit_parts, misfit_text
+    from cru_common import misfit_log_weight, misfit_parts, misfit_text as misfit_text_
+    misfit_text = lambda c_, *a_, **k_: c_ if isinstance(c_, str) else misfit_text_(c_, *a_, **k_)
     mmode = cfg_.get('mfd_misfit') or 'gaussian'
     mlog = mmode != 'gaussian'                         # the bins scored in log10 (gibbs.py --mfd-misfit log10, gaussian+log10)
     b_m = misfit_log_weight(mmode)
     s_log = np.log10(1.0 + 1.0 / P['d'][rows])         # s_j = log10(1 + sigma_j / R_j), as gibbs.py has it
 
+    BD = None                                          # MFD_BOUND (gibbs.py --mfd-bound): the bins an upper bound U_j
+    if cfg_.get('mfd_bound'):
+        from cru_common import mfd_gr_bound
+        rd_ = cfg_.get('rupture_dir')
+        if rd_ and os.path.isdir(rd_):
+            BD = mfd_gr_bound(P, rd_, cfg_['mfd_bound'], a.bins_block, a.lowest_bin, w)
+            if not np.array_equal(BD['rows'], rows):
+                BD = None
+    if BD is not None:                                 # the figure's lines and ratios against the bound, R_j drawn faintly
+        R_t, R = R, np.asarray(BD['U'], float)
+        rel = 10.0 ** np.asarray(BD['s']) - 1.0        # the bound's 1-sd shoulder above it, relative
+        head.append(f'MFD bound (MFD_BOUND, gibbs.py --mfd-bound {cfg_["mfd_bound"]}): a Gutenberg-Richter MFD truncated at '
+                    f'Mmax {BD["Mmax"]:.3f}; each bin\'s U_j is drawn and used for the ratios in place of its target R_j '
+                    f'(the inputs\', drawn faintly); the 1-sd shoulder above U_j {BD["s"].min():.3f}-{BD["s"].max():.3f} decades')
+    ctr_ = None if BD is None else P['d'][rows] * R / R_t   # the bound in the rows' units
+
     def bins_fit(m_):
         """The misfit over the bin rows as the likelihood scores them, (1 - b) x the Gaussian + b x
-        (log10(total / R_j) / s_j)^2, and its two parts (cru_common.misfit_parts)."""
+        (log10(total / R_j) / s_j)^2, and its two parts (cru_common.misfit_parts); with the bound, its term and the bins above
+        it, as text."""
+        if BD is not None:
+            yb_ = np.maximum(Gr[rows] @ m_, 1e-300)
+            qb_ = np.maximum(np.log10(yb_ / ctr_), 0.0) / BD['s']
+            return f'the bound\'s term {np.sum(qb_ ** 2):.1f} ({int(np.sum(qb_ > 0))} of {B} bins above their bound U_j)'
         y_ = Gr[rows] @ m_
         with np.errstate(divide='ignore'):
             lg_ = (np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2
@@ -218,8 +240,8 @@ def main():
     if ref is not None:
         lines += ['', f'reference: {ref["label"]} ({ref["path"]}): its misfit over the {B} magnitude-bin rows ({mmode}), '
                   f'{misfit_text(ref["chi2"])}; bin totals; total rate {ref["tot"].sum():.4g} '
-                  f'against targets totalling {R.sum():.4g}' + (f'; {ref["note"]}' if ref['note'] else ''),
-                  f'{"bin":<11s} {"target R_j":>11s} {"total":>11s} {"ratio":>6s}']
+                  + (f'against bounds U_j totalling {R.sum():.4g}' if BD is not None else f'against targets totalling {R.sum():.4g}') + (f'; {ref["note"]}' if ref['note'] else ''),
+                  f'{"bin":<11s} {"bound U_j" if BD is not None else "target R_j":>11s} {"total":>11s} {"ratio":>6s}']
         for k in range(B):
             lines.append(f'{rng_name(k):<11s} {R[k]:11.3e} {ref["tot"][k]:11.3e} {ref["tot"][k] / R[k]:6.3f}')
     for D in data:
@@ -232,7 +254,7 @@ def main():
         lines += ['', f'{D["label"]} ({D["path"]}): the {"model" if single else "mean model"}\'s misfit over the {B} '
                   f'magnitude-bin rows, as the likelihood weights them ({mmode}), {misfit_text(D["chi2"])}; {D["pen"]:,} penalised ruptures '
                   f'(rate 0 by construction) not shown; {spread}',
-                  f'{"bin":<11s} {"ruptures":>8s} {"target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
+                  f'{"bin":<11s} {"ruptures":>8s} {"bound U_j" if BD is not None else "target R_j":>11s} {"total" if single else "total of means":>14s} {"ratio":>6s} '
                   f'{"total: 16%":>11s} {"50%":>10s} {"84%":>10s} '
                   f'{"log10 rate: 10%" if single else "log10 mean: 10%":>16s} {"50%":>7s} {"90%":>7s} {"max":>7s} '
                   f'{"below " + f"1e{floor:g}":>12s}']
@@ -298,8 +320,10 @@ def main():
     title_pt = 18.0 if tab and k_panels > 1 else 0.0     # several panels: the settings once, above each panel's title
     more_top = (max(0.0, 2 * len(tab) * 10.5 - 10.0) + title_pt) / 72 if tab else 0.0   # room for the settings table
     pens = sorted({D['pen'] for D in data})
-    foot = textwrap.fill('Bins counted up in the bin rows original order. Lower panel: each bin\'s total over its target, '
-                         'with the band within one uncertainty of it, at the level the likelihood gives the bins'
+    foot = textwrap.fill('Bins counted up in the bin rows original order. Lower panel: each bin\'s total over its '
+                         + ('bound U_j, with the shading the bound\'s 1-sd shoulder above it (MFD_BOUND: an upper bound '
+                            'only, from a Gutenberg-Richter MFD; the inputs\' targets R_j drawn faintly above)' if BD is not None else
+                            'target, with the band within one uncertainty of it, at the level the likelihood gives the bins')
                          + ('; bars: the posterior 16–84% of each bin total (one that reaches an axis continues beyond it)'
                             if bars else '')
                          + ('; x\'s: each kept draw\'s bin totals, faint, so that where the draws gather shows darkest '
@@ -309,10 +333,10 @@ def main():
                             if fixed else '')
                          + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
                             'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
-    n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low)     # the legend's entries
+    n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low) + int(BD is not None)     # the legend's entries
     lc = n_h if n_h <= 4 else 2 if k_panels == 1 else 3          # columns: two under a single panel
     more = 0.168 * max(1, foot.count('\n'))           # room for the footnote, two lines at least, in inches
-    leg_pt = legend_height(8, 2 if k_panels == 1 else 3) + 6   # room for the fullest legend, whichever entries this
+    leg_pt = legend_height(10, 2 if k_panels == 1 else 3) + 6  # room for the fullest legend (MFD_BOUND's entry included), whichever entries this
                                                          # one has, so that the panels keep their size
     sub_pt = 24.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
     top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top + (leg_pt + sub_pt) / 72, 1.3, 0.22, 3.9, 0.78 + more   # in inches
@@ -347,6 +371,8 @@ def main():
             ax.scatter(x[low], np.full(int(low.sum()), bottom), s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2,
                        clip_on=False)
         ax.hlines(np.log10(R), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
+        if BD is not None:                           # the inputs' targets, not used with the bound: faint
+            ax.hlines(np.log10(R_t), lo + 0.06 * w, lo + 0.94 * w, colors=MUTED, lw=0.8, ls=(0, (2, 2)), zorder=2.9)
         if D['xs'] is not None:                      # each kept draw's bin totals, spread across the bin
             jx = lo + w * np.random.default_rng(0).uniform(0.2, 0.8, D['xs'][:, :B].shape)
             draw_xs(ax, jx, lg(np.maximum(D['xs'][:, :B], 10.0 ** bottom)), ORANGE, zorder=3.5, alpha=0.1)
@@ -361,7 +387,10 @@ def main():
             ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=REF, edgecolors=SURFACE,
                        linewidths=1.0, zorder=4.2)
         ar.set_ylim(r_lo, r_hi)                      # the lower panel: the same, over each bin's target
-        ar.bar(lo + 0.5 * w, 2 * rel, bottom=1 - rel, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
+        if BD is not None:                           # the bound's 1-sd shoulder above it
+            ar.bar(lo + 0.5 * w, rel, bottom=1.0, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
+        else:
+            ar.bar(lo + 0.5 * w, 2 * rel, bottom=1 - rel, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
         ar.hlines(np.ones(B), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
         if D['q'] is not None and D['xs'] is None:
             ar.vlines(lo + 0.5 * w, np.clip(D['q'][0, :B] / R, r_lo, r_hi), np.clip(D['q'][2, :B] / R, r_lo, r_hi),
@@ -389,10 +418,10 @@ def main():
     axs[0][0].set_yticks(ticks)
     axs[0][0].set_yticklabels([log_label(t) for t in ticks])
     axs[0][0].set_ylabel('log10 of the ' + ('' if single else 'posterior mean ') + 'rate (per year)', color=INK2, fontsize=9)
-    axs[1][0].set_ylabel('bin total / target', color=INK2, fontsize=9)
+    axs[1][0].set_ylabel('bin total / bound' if BD is not None else 'bin total / target', color=INK2, fontsize=9)
     fig.align_ylabels(axs[:, 0])
     handles = [Line2D([], [], ls='none', marker='o', ms=4, mfc=BLUE, mec=BLUE, alpha=0.6, label=f'rupture: {mean_}rate'),
-               Line2D([], [], color=INK, lw=1.0, label='bin target R_j (total rate)'),
+               Line2D([], [], color=INK, lw=1.0, label='bin bound U_j (GR, total rate)' if BD is not None else 'bin target R_j (total rate)'),
                Line2D([], [], ls='none', marker='o', ms=6.5, mfc=ORANGE, mec=SURFACE, mew=1.0,
                       label='bin total' + ('' if single else ' of the means'))]
     if bars:
@@ -404,7 +433,10 @@ def main():
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=REF, mec=SURFACE, mew=1.0,
                               label=f'bin total of {ref["label"]}'))
-    handles.append(Patch(facecolor=BAND, edgecolor='none', label='lower panel: within one uncertainty of the target'))
+    handles.append(Patch(facecolor=BAND, edgecolor='none', label='lower panel: the bound\'s 1-sd shoulder above it' if BD is not None
+                         else 'lower panel: within one uncertainty of the target'))
+    if BD is not None:
+        handles.append(Line2D([], [], color=MUTED, lw=0.8, ls=(0, (2, 2)), label='the inputs\' bin target R_j (not used)'))
     handles.append(Line2D([], [], color=MUTED, lw=0.9, ls=(0, (4, 3)), label=f'slab floor (1e{floor:g})'))
     if any_low:
         handles.append(Line2D([], [], ls='none', marker='o', ms=4, mfc=BLUE, mec=BLUE, alpha=0.6,

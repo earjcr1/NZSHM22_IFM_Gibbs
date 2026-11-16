@@ -724,6 +724,20 @@ def main():
                  sections_by_fault=True if par_s is not None else None)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
+    if args.bins_block in bnames:                  # the bins' edges against the ruptures' magnitudes, when a rupture set is at hand
+        from cru_common import find_rupture_set, check_bin_magnitudes
+        try:
+            rd_m = find_rupture_set(args.rupture_set) if args.rupture_set else find_rupture_set(os.path.dirname(os.path.abspath(args.A)))
+        except ValueError:
+            rd_m = None
+        if rd_m is not None and os.path.exists(os.path.join(rd_m, 'properties.csv')):
+            try:
+                say('   magnitude-bin edges: ' + check_bin_magnitudes(load_problem(args.out), rd_m, args.bins_block,
+                                                                    args.lowest_bin, args.bin_width))
+            except ValueError as e:
+                raise SystemExit(f'magnitude bins: {e}')
+        else:
+            say('   magnitude-bin edges: not checked against the ruptures\' magnitudes (no rupture set with properties.csv)')
 
     # ---- scales
     cn = column_norms(G)

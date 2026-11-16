@@ -417,6 +417,34 @@ def magnitude_bins(P, block='MFD', lowest=6.8, width=0.1):
     return rows, R, orig, lowest + width * (orig - orig[0])
 
 
+def check_bin_magnitudes(P, rupture_dir, block='MFD', lowest=6.8, width=0.1, tol=1e-6):
+    """Every rupture of each magnitude-bin row against that bin's edges (magnitude_bins: lowest, width), from the rupture
+    set's properties.csv (rupture_magnitudes): a check that --lowest-bin and --bin-width describe this rupture set's bins
+    (added 2026-11-16; 211k and 630k: every rupture inside). Raises ValueError naming the first bin with ruptures outside
+    its edges (beyond tol); returns a one-line description otherwise."""
+    import scipy.sparse as sp_
+    rows, R, orig, lo = magnitude_bins(P, block, lowest, width)
+    mag_all = rupture_magnitudes(rupture_dir)
+    cols = np.asarray(P['keep_cols'])
+    if cols.max() >= len(mag_all):
+        raise ValueError(f'{rupture_dir}: properties.csv has {len(mag_all)} ruptures, fewer than the problem\'s columns '
+                         f'({cols.max() + 1})')
+    mag = mag_all[cols]
+    Gb = sp_.csr_matrix(P['G'])[rows]
+    for k in range(len(rows)):
+        m = mag[Gb.indices[Gb.indptr[k]:Gb.indptr[k + 1]]]
+        if np.isnan(m).any():
+            raise ValueError(f'{rupture_dir}: properties.csv gives no magnitude for some ruptures of the bin '
+                             f'{lo[k]:.2f}-{lo[k] + width:.2f}')
+        out = (m < lo[k] - tol) | (m > lo[k] + width + tol)
+        if out.any():
+            raise ValueError(f'the bin row taken as {lo[k]:.2f}-{lo[k] + width:.2f} (original row {orig[k]}) holds {int(out.sum())} '
+                             f'of its {len(m)} ruptures outside it (M{m.min():.3f}-{m.max():.3f} in the rupture set\'s '
+                             'properties.csv): --lowest-bin or --bin-width does not describe these bins')
+    return (f'every rupture of the {len(rows)} bins ({lo[0]:.2f}-{lo[-1] + width:.2f}) inside its bin\'s edges by the '
+            f'rupture set\'s magnitudes (M{mag.min():.3f}-{mag.max():.3f})')
+
+
 def mfd_implied(R, rel, lo, width):
     """What the bin rows alone say about the MFD as a whole, if each bin's total is a measurement with relative
     uncertainty rel (independent): the relative sd of the bins' total rate, and the sd of their slope in log10 rate
@@ -655,6 +683,79 @@ def bin_targets(P, block='MFD'):
     return np.array([P['d'][j] / G.data[G.indptr[j]] for j in rows]), rows
 
 
+MFD_BOUND_Q = 0.8413447460685429                  # the bound's upper spread: its 1-sd point above the central GR (Phi(1))
+
+
+def parse_mfd_bound(spec):
+    """--mfd-bound N5,SD_N5,B,SD_B (the notebook's MFD_N5 and MFD_B) -> (n5, sd_n5, b, sd_b), checked."""
+    try:
+        v = [float(x) for x in str(spec).split(',')]
+    except ValueError:
+        v = []
+    if len(v) != 4 or not (v[0] > 0 and v[1] >= 0 and v[2] > 0 and v[3] >= 0):
+        raise ValueError(f'--mfd-bound {spec}: give N5,SD_N5,B,SD_B (the rate of M>=5 per year and its sd, the b-value '
+                         'and its sd), e.g. 4,1,0.96,0.1')
+    return tuple(v)
+
+
+def rupture_magnitudes(rupture_dir):
+    """Each rupture's magnitude, from the OpenSHA rupture set's properties.csv, by rupture index."""
+    f = os.path.join(rupture_dir, 'properties.csv')
+    with open(f) as fh:
+        head = fh.readline().strip().split(',')
+    if 'Magnitude' not in head:
+        raise ValueError(f'{f}: no Magnitude column')
+    idx, mag = np.loadtxt(f, delimiter=',', skiprows=1, usecols=(0, head.index('Magnitude')), unpack=True, ndmin=2)
+    out = np.full(int(idx.max()) + 1, np.nan)
+    out[idx.astype(np.int64)] = mag
+    return out
+
+
+def mfd_gr_bound(P, rupture_dir, spec, block='MFD', lowest=6.8, width=0.1, m_ref=5.0):
+    """MFD_BOUND: each magnitude bin's upper bound from a Gutenberg-Richter MFD for the whole region, truncated at the
+    largest kept rupture's magnitude Mmax: incremental rates N5 b ln10 10^(-b (M - 5)) / (1 - 10^(-b (Mmax - 5))) up to
+    Mmax and 0 above (so the cumulative tapers to 0 at Mmax), N5 the rate of M >= 5. spec: --mfd-bound's
+    N5,SD_N5,B,SD_B (parse_mfd_bound). The bins are counted up from lowest in steps of width in their rows' order, as
+    plot_rate_magnitude.py counts them (the bin holding Mmax only up to Mmax). Each bin's rate is N5 g_j(b); with N5
+    ~ Normal(n5, sd_n5) above 0 and b ~ Normal(b, sd_b), independent, U_j is the central GR's (n5, b), and s_j =
+    log10(q_j / U_j) with q_j that rate's MFD_BOUND_Q point (its 84th percentile; exact: Gauss-Hermite over b, the
+    truncated normal over N5), the soft top's width in decades. Returns dict(U, s, q, lo, hi, Mmax, rows, spec)."""
+    from scipy.optimize import brentq
+    from scipy.stats import norm
+    n5, sn, b0, sb = parse_mfd_bound(spec)
+    rows = np.flatnonzero(P['block'] == P['block_names'].index(block))
+    lo = lowest + width * np.arange(len(rows))
+    hi = lo + width
+    mag = rupture_magnitudes(rupture_dir)
+    kc = np.asarray(P['keep_cols'])
+    if len(mag) < kc.max() + 1:
+        raise ValueError(f'{rupture_dir}: properties.csv has {len(mag)} ruptures; the problem has {kc.max() + 1}')
+    mmax = float(np.nanmax(mag[kc]))
+    if not (lo[0] < mmax <= hi[-1] + 1e-9):
+        raise ValueError(f'the largest rupture magnitude {mmax:.3f} is outside the bins ({lo[0]:.2f}-{hi[-1]:.2f})')
+
+    def g(b):                                            # each bin's share of N5 at b-value b (b broadcasts)
+        b = np.asarray(b, float)[..., None]
+        t = 10.0 ** (-b * (mmax - m_ref))
+        up = np.minimum(hi, mmax)
+        return np.where(lo < mmax, (10.0 ** (-b * (lo - m_ref)) - 10.0 ** (-b * (up - m_ref))) / (1.0 - t), 0.0)
+    U = n5 * g(b0)
+    z, w = np.polynomial.hermite_e.hermegauss(120)
+    w = w / w.sum()
+    gb = g(b0 + sb * z) if sb > 0 else g(np.full(1, b0))     # nodes x bins
+    wb = w if sb > 0 else np.ones(1)
+    p0 = norm.cdf(-n5 / sn) if sn > 0 else 0.0
+
+    def cdf(x, j):                                       # P(N5 g_j(b) <= x)
+        y = x / np.maximum(gb[:, j], 1e-300)
+        pn = (norm.cdf((y - n5) / sn) - p0) / (1.0 - p0) if sn > 0 else (y >= n5).astype(float)
+        return float(wb @ np.clip(pn, 0.0, 1.0))
+    q = np.array([brentq(lambda x: cdf(x, j) - MFD_BOUND_Q, U[j] * 1e-6, U[j] * 1e3, xtol=U[j] * 1e-12)
+                  if U[j] > 0 else 0.0 for j in range(len(rows))])
+    s = np.where(U > 0, np.log10(np.maximum(q, 1e-300) / np.maximum(U, 1e-300)), 0.0)
+    return dict(U=U, s=s, q=q, lo=lo, hi=hi, Mmax=mmax, rows=rows, spec=(n5, sn, b0, sb))
+
+
 def average_data_rate(P, block='MFD'):
     """Average data-imposed rupture rate: the sum of the magnitude-bin target rates divided by the number of ruptures."""
     return float(bin_targets(P, block)[0].sum() / P['G'].shape[1])
@@ -777,9 +878,9 @@ def balance_rows(P, slip_block='S', bins_block='MFD', weights='equal'):
 
 def find_rupture_set(folder, search=True):
     """The OpenSHA rupture set (a folder holding indices.csv, properties.csv, ...) at folder: the folder itself, its
-    ruptures/ if it is an OpenSHA solution folder, or, with search, the ruptures/ of the one OpenSHA solution folder
-    inside it (NZSHM22_InversionSolution-211k/ in a data folder, say). None if there is none; an error if there are
-    several, which have to be told apart by name."""
+    ruptures/ if it is an OpenSHA rupture-set or solution folder, or, with search, the ruptures/ of the one such folder
+    inside it (NZSHM22_InversionSolution-211k/ or NZSHM22_RuptureSet-.../ in a data folder, say: no inversion solution is
+    needed). None if there is none; an error if there are several, which have to be told apart by name."""
     folder = os.path.abspath(os.path.expanduser(str(folder)))
     for cand in (folder, os.path.join(folder, 'ruptures')):
         if os.path.isfile(os.path.join(cand, 'indices.csv')):
@@ -789,7 +890,7 @@ def find_rupture_set(folder, search=True):
     found = sorted(os.path.join(folder, d, 'ruptures') for d in os.listdir(folder)
                    if os.path.isfile(os.path.join(folder, d, 'ruptures', 'indices.csv')))
     if len(found) > 1:
-        raise ValueError(f'{len(found)} OpenSHA solution folders in {folder} '
+        raise ValueError(f'{len(found)} OpenSHA rupture-set or solution folders in {folder} '
                          f'({", ".join(os.path.basename(os.path.dirname(f)) for f in found)}): name the one to use')
     return found[0] if found else None
 
@@ -853,14 +954,14 @@ def reference_rates(spec, P):
 
 FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
-                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_BOUND', 'mfd_bound'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
                    ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
                    ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 5                                          # the table's columns per line: 'model' and these 14 in 3 lines
+SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 15 in 3 lines
 
 
 def run_config(config, problem):
@@ -899,6 +1000,13 @@ def run_settings(config, problem):
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
     if fixed_ and 'preset' in cfg:
         cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
+    if 'mfd_bound' in cfg:                               # MFD_BOUND (2026-11-16): N5 +- sd, b +- sd, or False
+        if cfg['mfd_bound']:                             # the bins scored by the bound alone, not by MISFIT_MFD
+            n5_, sn_, b_, sb_ = parse_mfd_bound(cfg['mfd_bound'])
+            cfg['misfit_mfd'] = 'bound'
+            cfg['mfd_bound'] = f'N5 {n5_:g}±{sn_:g} b {b_:g}±{sb_:g}'
+        else:
+            cfg['mfd_bound'] = 'False'
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
         name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))
         cfg['rupture_set'] = name if len(name) <= 20 else name[:19] + '…'
