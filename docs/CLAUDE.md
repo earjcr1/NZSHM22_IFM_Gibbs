@@ -176,7 +176,7 @@ trying to do; --slip-log-band stays in gibbs.py). Column passes (2026-11-09, the
 column's likelihood passes end before the constraint rows, n_fit on; band_bounds and the residual updates still use the whole
 column) and T.ss_fold (the --slip-sum rows, n_bal..n_fit, folded: B G must equal them to 1e-12 of their largest entry, else
 not folded; the kernel keeps U = B^T r_ss per chain (K x N, recomputed at each gibbs_run call), sums G_i.U in col_split's pass
-(fused when the bound sums share it) or col_udots, adds 2 m G_i.U + m^2 NSS_i to DQ, dt, sp_change and sp_lik, and updates U on
+(on every branch since 2026-11-17, 83dbf00; col_udots only on the non-split path), adds 2 m G_i.U + m^2 NSS_i to DQ, dt, sp_change and sp_lik, and updates U on
 changes); main builds B from slip_sum_rows' info (scale x W x proj x sig_i / (row_scale x lin_sc)). The NumPy backend reads
 whole columns. Bit-identical in fixed-seed tests at 211k (192 and 1,600 sweeps), 20-25% less time per sweep; selftest_fold
 (C skip, C fold, NumPy) in both sets. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
@@ -279,7 +279,12 @@ the misfit sum w(e) e^2, w = split_lo2 below the target and split_hi2 above, con
 the exact likelihood (lbctx's sp fields, sp_lik; lb_floor's endpoint bound still holds), off chains draw their slab
 value first and get their exact change in one pass over the column (col_split, with the soft band's bound sums), the
 on/off decisions use sp_change, the swaps sp_swap; each chain's rows' current terms sp_w2(r_j) are cached (WC, refilled at
-the start of each gibbs_run call and updated as rows change), so a column pass computes only the new ones, bit-identical; recorded chi2 is the split misfit; NumPy twins; selftest_split (both
+the start of each gibbs_run call and updated as rows change), so a column pass computes only the new ones, bit-identical;
+since 2026-11-17 each full group of 4 chains also keeps an interleaved copy RW (rw4: each row's r, WC and U for the 4
+chains side by side, 96 bytes; SL2/SH2 as pairs, SLH), filled at each gibbs_run call and written wherever R, WC or U change,
+which col_split4i reads in place of col_split4's no-bound-sums branches (about 2 cache lines an entry instead of 14; the
+compiler vectorizes it across chains; each chain's sums in the same order, so bit-identical; groups of fewer than 4 chains
+and the soft band's fused branch keep the old pass); recorded chi2 is the split misfit; NumPy twins; selftest_split (both
 backends, with and without the soft band, against a grid integral) in the full set; block_fit.py and plot_slip_rates.py
 weigh residuals by side; without it every run is bit-identical (REPORT.md, "Slip rates from the CFM").
 --band F (the notebook's BAND = 10 until November 4th, 2026; its default for a few days in early November 2026, when DOWN_THE_MIDDLE = False and

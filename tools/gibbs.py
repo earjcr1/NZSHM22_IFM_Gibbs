@@ -740,6 +740,45 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
     DQ[2] = d2; s1[2] = a2; s2[2] = b2; s3[2] = c2;
     DQ[3] = d3; s1[3] = a3; s2[3] = b3; s3[3] = c3;
 }
+/* A group of 4 chains' rows interleaved (gibbs_run's RW): each row's residuals, current split-misfit terms (WC) and
+   --slip-sum U for the 4 chains side by side (96 bytes), and each row's SL2/SH2 as a pair, so an entry of a column reads
+   about 2 cache lines instead of 14; a copy of R, WC and U kept current where they change. */
+typedef struct { double r[4], w[4], u[4]; } rw4;
+typedef struct { double l, h; } lh2;
+/* col_split4's branches without the bound sums (A NULL), over the interleaved copy: the same sums for each chain, in the
+   same order, so the same results bit for bit (the compiler vectorizes them across chains) */
+static void col_split4i(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const rw4 *RW,
+                        const lh2 *SLH, const int *pre, const double *mq, double *DQ, double *s1, double *s2, double *s3,
+                        int with_u, double *uq) {
+    const double m0 = pre[0] ? mq[0] : 0.0, m1 = pre[1] ? mq[1] : 0.0, m2 = pre[2] ? mq[2] : 0.0, m3 = pre[3] ? mq[3] : 0.0;
+    double d0 = 0.0, d1 = 0.0, d2 = 0.0, d3 = 0.0;
+    if (with_u) {
+        double v0 = 0.0, v1 = 0.0, v2 = 0.0, v3 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const rw4 *x = RW + j; const double l2 = SLH[j].l, h2 = SLH[j].h;
+            { const double e1 = x->r[0] + g * m0; d0 += sp_w2(e1, l2, h2) - x->w[0]; }
+            { const double e1 = x->r[1] + g * m1; d1 += sp_w2(e1, l2, h2) - x->w[1]; }
+            { const double e1 = x->r[2] + g * m2; d2 += sp_w2(e1, l2, h2) - x->w[2]; }
+            { const double e1 = x->r[3] + g * m3; d3 += sp_w2(e1, l2, h2) - x->w[3]; }
+            v0 += g * x->u[0];
+            v1 += g * x->u[1];
+            v2 += g * x->u[2];
+            v3 += g * x->u[3];
+        }
+        uq[0] = v0; uq[1] = v1; uq[2] = v2; uq[3] = v3;
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const rw4 *x = RW + j; const double l2 = SLH[j].l, h2 = SLH[j].h;
+            { const double e1 = x->r[0] + g * m0; d0 += sp_w2(e1, l2, h2) - x->w[0]; }
+            { const double e1 = x->r[1] + g * m1; d1 += sp_w2(e1, l2, h2) - x->w[1]; }
+            { const double e1 = x->r[2] + g * m2; d2 += sp_w2(e1, l2, h2) - x->w[2]; }
+            { const double e1 = x->r[3] + g * m3; d3 += sp_w2(e1, l2, h2) - x->w[3]; }
+        }
+    DQ[0] = d0; DQ[1] = d1; DQ[2] = d2; DQ[3] = d3;
+    for (int64_t q = 0; q < 4; q++) s1[q] = s2[q] = s3[q] = 0.0;
+}
 static void col_split(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
                       double *s1, double *s2, double *s3, double *const *W0, double *const *u, double *uq) {
@@ -875,6 +914,23 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         for (int64_t k = 0; k < K; k++)
             for (int64_t j = 0; j < N; j++) WC[k * N + j] = sp_w2(R[k * N + j], SL2[j], SH2[j]);
     }
+    rw4 *RW = NULL;                                /* --cfm slip rates: each full group of 4 chains' rows interleaved (rw4),
+                                                      read by the split pass, written wherever R, WC or U change */
+    lh2 *SLH = NULL;
+    const int64_t G4 = K / 4;                      /* the full groups: chains 0 .. 4 G4 - 1 */
+    if (SL2 && pkind == 3 && G4 > 0) {
+        RW = (rw4 *)malloc(sizeof(rw4) * (size_t)G4 * (size_t)N);
+        SLH = (lh2 *)malloc(sizeof(lh2) * (size_t)N);
+        for (int64_t j = 0; j < N; j++) { SLH[j].l = SL2[j]; SLH[j].h = SH2[j]; }
+        for (int64_t g = 0; g < G4; g++)
+            for (int64_t j = 0; j < N; j++)
+                for (int64_t q = 0; q < 4; q++) {
+                    const int64_t k = 4 * g + q;
+                    RW[g * N + j].r[q] = R[k * N + j];
+                    RW[g * N + j].w[q] = WC[k * N + j];
+                    RW[g * N + j].u[q] = U ? U[k * N + j] : 0.0;
+                }
+    }
     double *AC = NULL, *ODD = NULL;                /* --log-band: each chain's rows' bound coefficients (lw_coef), 4 a row,
                                                       and each chain's odds pi / (1 - pi) of a rupture on, per bin */
     if (LW) {
@@ -922,7 +978,10 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 double *ug[4];                /* --slip-sum folded: each chain's U */
                 for (int64_t q = 0; q < 4; q++) ug[q] = U ? U + (k0 + (q < kg ? q : 0)) * N : NULL;
                 /* G_i.U summed in the split pass itself, whichever of its branches runs (no second pass over the column) */
-                if (AC && LWP) {              /* the bound sums over the weighted rows only (col_lwsums) */
+                if (RW && kg == 4 && (!AC || LWP)) {   /* a full group without the bound sums in the pass: the copy */
+                    col_split4i(data, indices, p0, pe, RW + (k0 / 4) * N, SLH, pre, mpre, DQ, S1, S2, S3, U != NULL, uq);
+                    if (AC) col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
+                } else if (AC && LWP) {       /* the bound sums over the weighted rows only (col_lwsums) */
                     col_split(kg, data, indices, p0, pe, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg, U ? ug : NULL, uq);
                     col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                 } else
@@ -1085,17 +1144,24 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 if (xn < lo[i]) xn = lo[i]; else if (xn > hi[i]) xn = hi[i];
                 const double dl = xn - xi;
                 if (dl != 0.0 && !empty) {
+                    rw4 *rw = (RW && k < 4 * G4) ? RW + (k / 4) * N : NULL;   /* this chain's group's copy, if any */
+                    const int64_t qk = k % 4;
                     for (int64_t p = p0; p < p1; p++) r[indices[p]] += data[p] * dl;
+                    if (rw)
+                        for (int64_t p = p0; p < p1; p++) rw[indices[p]].r[qk] = r[indices[p]];
                     if (U)                    /* the folded summed slip rates' rows: U = B^T r_ss, kept current */
                         for (int64_t p = pe; p < PC[i]; p++) {
                             const int64_t sr = indices[p] - NB;
                             const double drs = data[p] * dl;
                             for (int64_t t = SSP[sr]; t < SSP[sr + 1]; t++) U[k * N + SSJ[t]] += SSV[t] * drs;
+                            if (rw)
+                                for (int64_t t = SSP[sr]; t < SSP[sr + 1]; t++) rw[SSJ[t]].u[qk] = U[k * N + SSJ[t]];
                         }
                     if (WC)                   /* --cfm slip rates: the changed rows' cached terms (those the passes read) */
                         for (int64_t p = p0; p < pe; p++) {
                             const int32_t j = indices[p];
                             WC[k * N + j] = sp_w2(r[j], SL2[j], SH2[j]);
+                            if (rw) rw[j].w[qk] = WC[k * N + j];
                         }
                     if (AC)                   /* --log-band: the changed rows' bound coefficients (with LWP, the
                                                  weighted rows', the only ones with any) */
@@ -1118,6 +1184,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
     if (AC) { free(AC); free(ODD); }
     free(WC);
     free(U);
+    free(RW);
+    free(SLH);
     if (pkind == 3 && CNT)                         /* each chain's ruptures switched on, per bin, for the fractions on */
         for (int64_t k = 0; k < K; k++) {
             int64_t *cn = CNT + k * SB;
