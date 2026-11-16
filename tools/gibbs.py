@@ -504,6 +504,15 @@ static void col_split1(const double *data, const int32_t *indices, int64_t p0, i
             { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
             { const double *e = A0 + 4 * j; a0 += g * e[0]; b0 += gg * e[1]; c0 += gg * e[2]; }
         }
+    } else if (u) {       /* --slip-sum folded without the bound sums (no soft band, or col_lwsums gives them) */
+        const double *u0 = u[0]; double v0 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            v0 += g * u0[j];
+        }
+        uq[0] = v0;
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
@@ -546,6 +555,19 @@ static void col_split2(const double *data, const int32_t *indices, int64_t p0, i
             { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
             { const double *e = A1 + 4 * j; a1 += g * e[0]; b1 += gg * e[1]; c1 += gg * e[2]; }
         }
+    } else if (u) {       /* --slip-sum folded without the bound sums (no soft band, or col_lwsums gives them) */
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
@@ -600,6 +622,23 @@ static void col_split3(const double *data, const int32_t *indices, int64_t p0, i
             { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
             { const double *e = A2 + 4 * j; a2 += g * e[0]; b2 += gg * e[1]; c2 += gg * e[2]; }
         }
+    } else if (u) {       /* --slip-sum folded without the bound sums (no soft band, or col_lwsums gives them) */
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        const double *u2 = u[2]; double v2 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+            v2 += g * u2[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
+        uq[2] = v2;
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
@@ -666,6 +705,27 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
             { const double e1 = r3[j] + g * m3; d3 += sp_w2(e1, l2, h2) - W0[3][j]; }
             { const double *e = A3 + 4 * j; a3 += g * e[0]; b3 += gg * e[1]; c3 += gg * e[2]; }
         }
+    } else if (u) {       /* --slip-sum folded without the bound sums (no soft band, or col_lwsums gives them) */
+        const double *u0 = u[0]; double v0 = 0.0;
+        const double *u1 = u[1]; double v1 = 0.0;
+        const double *u2 = u[2]; double v2 = 0.0;
+        const double *u3 = u[3]; double v3 = 0.0;
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            const double l2 = SL2[j], h2 = SH2[j];
+            { const double e1 = r0[j] + g * m0; d0 += sp_w2(e1, l2, h2) - W0[0][j]; }
+            { const double e1 = r1[j] + g * m1; d1 += sp_w2(e1, l2, h2) - W0[1][j]; }
+            { const double e1 = r2[j] + g * m2; d2 += sp_w2(e1, l2, h2) - W0[2][j]; }
+            { const double e1 = r3[j] + g * m3; d3 += sp_w2(e1, l2, h2) - W0[3][j]; }
+            v0 += g * u0[j];
+            v1 += g * u1[j];
+            v2 += g * u2[j];
+            v3 += g * u3[j];
+        }
+        uq[0] = v0;
+        uq[1] = v1;
+        uq[2] = v2;
+        uq[3] = v3;
     } else
         for (int64_t p = p0; p < p1; p++) {
             const double g = data[p]; const int32_t j = indices[p];
@@ -683,7 +743,8 @@ static void col_split4(const double *data, const int32_t *indices, int64_t p0, i
 static void col_split(int64_t kg, const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *r,
                       double *const *A, const int *pre, const double *mq, const double *SL2, const double *SH2, double *DQ,
                       double *s1, double *s2, double *s3, double *const *W0, double *const *u, double *uq) {
-    /* u (with A; or NULL): --slip-sum folded, each chain's G_i.U summed in the same pass into uq (col_udots's sums) */
+    /* u (or NULL): --slip-sum folded, each chain's G_i.U summed in the same pass into uq (col_udots's sums), with or
+       without A */
     for (int64_t q = 0; q < 4; q++) DQ[q] = s1[q] = s2[q] = s3[q] = 0.0;
     if (kg >= 4)      col_split4(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
     else if (kg == 3) col_split3(data, indices, p0, p1, r, A, pre, mq, SL2, SH2, DQ, s1, s2, s3, W0, u, uq);
@@ -860,15 +921,14 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 }
                 double *ug[4];                /* --slip-sum folded: each chain's U */
                 for (int64_t q = 0; q < 4; q++) ug[q] = U ? U + (k0 + (q < kg ? q : 0)) * N : NULL;
-                const int fused = U && AC && !LWP;   /* G_i.U summed in the split pass itself */
+                /* G_i.U summed in the split pass itself, whichever of its branches runs (no second pass over the column) */
                 if (AC && LWP) {              /* the bound sums over the weighted rows only (col_lwsums) */
-                    col_split(kg, data, indices, p0, pe, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg, NULL, uq);
+                    col_split(kg, data, indices, p0, pe, rg, NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg, U ? ug : NULL, uq);
                     col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                 } else
                     col_split(kg, data, indices, p0, pe, rg, AC ? ag : NULL, pre, mpre, SL2, SH2, DQ, S1, S2, S3, wg,
-                              fused ? ug : NULL, uq);
+                              U ? ug : NULL, uq);
                 if (U) {                      /* the folded summed slip rates' rows: each off chain's Gaussian change */
-                    if (!fused) col_udots(kg, data, indices, p0, pe, ug, uq);
                     for (int64_t q = 0; q < kg; q++)
                         if (pre[q]) DQ[q] += mpre[q] * (2.0 * uq[q] + mpre[q] * NSS[i]);
                 }
