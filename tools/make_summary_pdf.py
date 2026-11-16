@@ -390,7 +390,8 @@ def main():
         pdfmetrics.registerFontFamily('DV', normal='DV', bold='DV-B', italic='DV-I', boldItalic='DV-BI')
     INK, INK2, MUTED, RULE = (colors.HexColor(c) for c in ('#0b0b0b', '#3d3c39', '#6f6e69', '#d6d5cd'))
     body = ParagraphStyle('body', fontName='DV', fontSize=9.6, leading=13.6, textColor=INK, spaceAfter=7)
-    h1 = ParagraphStyle('h1', fontName='DV-B', fontSize=12.5, leading=16, textColor=INK, spaceBefore=12, spaceAfter=5)
+    h1 = ParagraphStyle('h1', fontName='DV-B', fontSize=12.5, leading=16, textColor=INK, spaceBefore=12, spaceAfter=5,
+                        keepWithNext=1)   # a heading never ends a page alone
     title = ParagraphStyle('title', fontName='DV-B', fontSize=18, leading=23, textColor=INK, spaceAfter=6)
     sub = ParagraphStyle('sub', fontName='DV', fontSize=10, leading=14, textColor=INK2, spaceAfter=3)
     small = ParagraphStyle('small', fontName='DV', fontSize=8.3, leading=11.2, textColor=MUTED)
