@@ -550,7 +550,8 @@ RUN_MINUTES and TARGETS rows (older runs PRESET), the prediction beside the achi
 DISPERSED_STARTS (True, 2026-11-17, the user's choice: randomized fits, one per chain, noise x2): dispersed_starts.py writes
 starts.npy (chains x kept cols): rows 0..7 randomized_nnls.ensemble(noise=2) NNLS fits, rows 8..15 prior draws (--prior-share 0.5:
 per bin pi ~ U(0,1), on w.p. pi, log-uniform 2 floor..R_j, bin scaled to R_j); none from the unperturbed NNLS fit; each then
-polished by best_fit_as_fitted.py --max-iter 300 (--polish-iter) with the run's args (notebook _fit_args after --fit-args), in
+polished FOR FEASIBILITY by best_fit_as_fitted.py --max-iter 30 per AL round (--polish-iter; settling polishes collapsed the
+starts: bin totals 0.6% spread vs posterior 8%), prior draws' bins scaled to R_j exp(2 sig/R z); the dispersion reported; the calibration starts from starts.npy too; the run's args (notebook _fit_args after --fit-args), in
 parallel subprocesses one thread each (unpolished starts broke the monotonic MFD and the slab floor's snap left rows at 0);
 cell 11 makes it before the calibration (seed replicate_seed(1000)), gibbs_run(init='starts.npy'); calibration still from the
 NNLS fit. run_plan REPLICATES_MAX = 1 (no splitting). Smoke test pins DISPERSED_STARTS=False. best_fit_as_fitted.py removed

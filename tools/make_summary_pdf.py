@@ -1038,8 +1038,8 @@ def main():
             f'{start_chi2 or "n/a"}, no rows outside). ' if band else
             ('Every chain starts from its own draw (dispersed_starts.py): half from randomized best fits (the best fit to '
              'the data plus twice their stated noise), half from the prior (each bin\u2019s fraction on uniform, rates '
-             'log-uniform up to its target, the bin scaled to its target), each polished briefly in the sampler\u2019s own '
-             'model space so that it meets the hard constraints; the starts are over-dispersed, so R̂ across the chains '
+             'log-uniform up to its target, the bin scaled around its target), each polished for feasibility in the '
+             'sampler\u2019s own model space so that it meets the hard constraints while staying over-dispersed; the starts are over-dispersed, so R̂ across the chains '
              'tests whether the run has forgotten where it started' if cfg.get('dispersed_starts') else
              'The chains start from the best fit')
             + (f', with {fmt(pos_on)} ruptures switched on at twice the slab floor so that none of the {fmt(pos_rows)} '
