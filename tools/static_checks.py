@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'covariance.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'covariance.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -124,15 +124,23 @@ check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not Non
 check(argdefault(trees['gibbs.py'], '--slab') == 'log' and "choices=['log', 'sqrt']" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_spikeslab(gam=0.5)') == 1,
       f"gibbs.py --slab default {argdefault(trees['gibbs.py'], '--slab')!r} (log or sqrt), the square-root slab in the full self-test set")
-check(re.findall(r'^PRESET = (\S+)', cells[0][1], re.M) == ["'conservative'"], "notebook PRESET = 'conservative' (the default)")
-_pre = re.search(r'^PRESETS = \{.*?^\}', cells[0][1], re.M | re.S)
-_ns = {}
-if _pre:
-    exec(_pre.group(0), {'dict': dict}, _ns)
-_P = _ns.get('PRESETS', {})
-check(sorted(_P) == ['conservative', 'quick', 'very_conservative'] and all('hyper_every' in v for v in _P.values())
+_pl = src['run_plan.py']
+check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.findall(r'^TARGETS = (\S+)', cells[0][1], re.M) == ["'production'"]
+      and not re.search(r'^PRESETS? = ', cells[0][1], re.M) and 'run_minutes=RUN_MINUTES, targets=TARGETS' in cells[1][1]
+      and "TARGETS = {'exploratory': (100, 200, 1.01)," in _pl and "'production': (1000, 2000, 1.01)," in _pl
+      and "'precise': (10000, 20000, 1.005)}" in _pl and 'PRESET_TARGETS' in src['check_convergence.py']
+      and all(f'\ndef {f_}(' in _pl for f_ in ('plan', 'reference', 'run_record', 'calibration', 'post_estimate', 'needs'))
+      and "'RUN_PLAN'" in src['run_config.py'] and 'SH_SECONDS[0] += time.time() - t0_' in cells[1][1]
+      and any('PLAN = run_plan.plan(RUN_MINUTES, THREADS, SWEEP_S, SETUP_S, SH_SECONDS[0], _post, TARGETS, _ref, _diff,' in c
+              and "MAIN = [gibbs_run(f'main_rep{r}', seed=replicate_seed(r), plan=P)" in c for _, c in cells)
+      and "json.dump(TIMINGS, open('timings.json', 'w'), indent=1)" in cells[-1][1]
+      and 'convergence_summary.json' in src['check_convergence.py']
       and not any("'--slab'" in c for _, c in cells),
-      'notebook: one set of spike-and-slab run lengths per preset; the other priors are gibbs.py options')
+      "notebook RUN_MINUTES = 240 and TARGETS = 'production' (2026-11-17, in place of the presets): the runs planned just before "
+      'sampling (run_plan.py: the time spent, sh() measured, a calibration run, the latest run\'s post-processing, 10% margin; '
+      '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each meets TARGETS), with a '
+      'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
+      'for later plans; the other priors are gibbs.py options')
 check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_linear()') == 1,
       "gibbs.py --prior linear (command line only), with its exact test in the full self-test set")
 check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
@@ -331,8 +339,8 @@ check(any("spikeslab:{FLOOR}:soft" in c for _, c in cells), 'notebook uses spike
 check(re.search(r'clip = 10\.0 \*\* floor\b', src['check_convergence.py']) is not None and not any('clip = 10.0 **' in c for _, c in cells),
       'check_convergence.py clips the convergence diagnostics at 10 ** --diag-floor (the notebook passes FLOOR); the notebook computes none itself')
 cc = [i for i, c in cells if 'sh(' in c and "'check_convergence.py'" in c]
-check(len(cc) == 1 and all("'--preset', PRESET" in c for i, c in cells if i in cc) and any("'make_tables.py'" in c for _, c in cells),
-      f'notebook runs check_convergence.py once with its PRESET (cells {cc}), then make_tables.py')
+check(len(cc) == 1 and all("'--targets', TARGETS, '--plan', 'run_plan.json'" in c for i, c in cells if i in cc) and any("'make_tables.py'" in c for _, c in cells),
+      f'notebook runs check_convergence.py once with its TARGETS and the run plan (cells {cc}), then make_tables.py')
 keys = None
 for i, c in cells:
     for n in ast.walk(ast.parse(c)):
@@ -381,8 +389,9 @@ check('plot_rate_magnitude.py' in SCRIPTS and not re.search(r'^def magnitude_bin
 check(argdefault(trees['gibbs.py'], '--target') == 'MISSING' and argdefault(trees['gibbs.py'], '--chi2max') == 'MISSING'
       and 'chi2max' not in src['gibbs.py'] and 'eps2' not in src['gibbs.py'],
       'gibbs.py has no --target or --chi2max option and no acceptable-set mode (the Gaussian likelihood is the only one)')
-check(not any('TARGET' in c or "'--target'" in c for _, c in cells) and keys is not None and 'target' not in keys,
-      'notebook has no TARGET setting, passes no --target, and records no target')
+check(not any(re.search(r'\bTARGET\b', c) or "'--target'" in c for _, c in cells) and keys is not None and 'target' not in keys,
+      'notebook has no TARGET setting (the acceptable-set mode; TARGETS, the verdict\'s targets, is another thing), passes no '
+      '--target, and records no target')
 pre_opts = {a.value for n in ast.walk(trees['preliminaries.py']) if isinstance(n, ast.Call) and getattr(n.func, 'attr', '') == 'add_argument'
             for a in n.args if isinstance(a, ast.Constant)}
 check('--keep-soft-penalties' in pre_opts and '--no-nnls' not in pre_opts,
@@ -415,7 +424,7 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = ['MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
                   'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_STEP_SD', 'SLIP_ALONG_RUPTURE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
-                  'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'PRESET', 'FLOOR']
+                  'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'RUN_MINUTES', 'FLOOR']
 _rc = src['run_config.py']
 check('globals().update(derived_settings(globals()))' in cells[0][1]
       and cells[0][1].index('derived_settings(globals())') > cells[0][1].index('RUN_SELFTESTS = ')
@@ -445,9 +454,9 @@ for s_ in MODEL_SETTINGS:
         _gaps.append(f'{s_}: not ' + ', '.join(miss))
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
-_pin = re.search(r'PIN=\((.*?)\)', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
+_pin = re.search(r'PIN=\((.*?)\)\s+#', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
 _unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_STEP_SD', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
-                            'DOWN_THE_MIDDLE', 'FLOOR', 'PRESET')
+                            'DOWN_THE_MIDDLE', 'FLOOR', 'RUN_PLAN', 'TARGETS')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'
       + (f': not {_unpinned}' if _unpinned else ''))

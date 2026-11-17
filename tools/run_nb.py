@@ -4,8 +4,9 @@
     python tools/run_nb.py NOTEBOOK RUN_DIR DATA_DIR RUN_SELFTESTS(0/1) [NAME=VALUE ...] [CELLS=n]
 
 RUN_DIR and DATA_DIR are best given as absolute paths (the notebook resolves relative ones from its own folder).
-NAME=VALUE replaces a configuration value, e.g. "PRESET='quick'" or "MFD_UNCERTAINTY='two-measurements'"; the
-settings fixed in tools/run_config.py (SLIP_SECTIONS, BLOCKS, CFM_SLIPRATES, ...) and RUN_DIR, no longer in the
+NAME=VALUE replaces a configuration value, e.g. "RUN_MINUTES=10" or "MFD_UNCERTAINTY='two-measurements'"; the
+settings fixed in tools/run_config.py (SLIP_SECTIONS, BLOCKS, CFM_SLIPRATES, ...), RUN_DIR and RUN_PLAN (a fixed plan in
+place of RUN_MINUTES's, e.g. "RUN_PLAN=dict(chains=4, sweeps=2400, burn=400, thin=8, replicates=1)"), not in the
 configuration cell, are passed to it as _OVERRIDES;
 CELLS=n stops after the first n code cells.
 

@@ -212,7 +212,21 @@ def main():
     l0 = cfg.get('slip_sum_l0', 8.5)
     dtm = cfg.get('down_the_middle')                   # the balance term: False, True or 'zero-model'
     floor = cfg.get('floor', -10)
-    preset = cfg.get('preset', 'n/a')
+    preset = cfg.get('preset', 'n/a')                  # a run before 2026-11-17: its preset
+    rmin, targets = cfg.get('run_minutes'), cfg.get('targets')   # since: RUN_MINUTES, its plan, and TARGETS
+    if targets is None:
+        targets = {'quick': 'exploratory', 'conservative': 'production', 'very_conservative': 'precise'}.get(preset)
+    plan = {}
+    for f_ in ((cfg.get('run_plan') or ''), os.path.join(RUN, 'run_plan.json')):
+        if f_ and os.path.exists(f_):
+            with open(f_) as fh:
+                plan = json.load(fh)
+            break
+    csum = {}                                          # check_convergence.py's summary, for the plan's prediction
+    if os.path.exists(os.path.join(PR, 'convergence_summary.json')):
+        with open(os.path.join(PR, 'convergence_summary.json')) as fh:
+            csum = {r_['run']: r_ for r_ in json.load(fh).get('runs', [])}
+    length = f'{rmin:g} min' if rmin is not None else preset
     reps = cfg.get('representatives')
     sb, bb = cfg.get('slip_block', 'S'), cfg.get('bin_block', 'MFD')
     ref_path = cfg.get('reference')
@@ -417,7 +431,7 @@ def main():
     M = 1.5 * cm
     FW, LW = P_W - 2 * M, L_W - 2 * M
     tt = lambda s: f'<font name="DVM" size="8.4">{s}</font>'
-    short = (f'cru_workflow run summary: {data_name}, {preset}' + (f', band {band:g}' if band else ', positivity' if positive
+    short = (f'cru_workflow run summary: {data_name}, {length}' + (f', band {band:g}' if band else ', positivity' if positive
                                                                    else '') + (f', soft band {tau:g}' if tau else ''))
     # the constraints and soft terms in words, for the subtitle
     parts = ((([f'positivity on the {" and ".join(pos_g)} rows'] if pos_g else [])
@@ -756,9 +770,15 @@ def main():
                + ('; PLATE_RATE = True: at SLIP_RATE_FACTOR' if 'misfit' in cfg else '') + ')']] if plate else [])
           + [['DOWN_THE_MIDDLE', str(dtm), dtm_txt]]
           + [['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
-           ['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
+          ] + ([['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
                                      if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '
-            f'every {th})'],
+            f'every {th})']] if rmin is None else
+               [['RUN_MINUTES', f'{rmin:g}', ('the run\u2019s length; ' if not plan.get('fixed') else 'a fixed plan (a test): ')
+                 + f'{nrep} replicate' + ('s' if nrep != 1 else '') + (f' (of the plan\u2019s {st["replicates"]}; stopped early)'
+                 if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in '
+                 f'{fmt(bu)}, a draw kept every {th})' + (f', planned from a calibration ({plan["sweep_s"]:.3f} s per sweep) '
+                 f'to take about {plan["expected_min"]:.0f} min in all' if plan.get('sweep_s') else '')],
+                ['TARGETS', repr(targets), 'the convergence verdict\u2019s targets (check_convergence.py)']]) + [
            ['REPRESENTATIVES', str(reps), 'weighted representative models selected for hazard']],
           [3.7 * cm, 3.3 * cm, FW - 7.0 * cm])
 
@@ -999,11 +1019,20 @@ def main():
     ess_t = [float(crow[n][4]) for n in names]
     on_n = [on[n][0] for n in names if n in on]
     sl = [slow[n] for n in names if n in slow]
-    para(f'{tt("check_convergence.py")} judges each replicate against the targets of its preset: '
+    pred = plan.get('predicted') or {}
+    pred_txt = ''
+    if pred and csum:                                  # the plan's prediction against what was achieved
+        got = [(lab, pred[m], csum[n][m]) for n in names if n in csum for m, lab in
+               (('ess_rate_5pct', '95% of ruptures'), ('ess_total', 'the total rate'), ('ess_pi_min', 'each bin\u2019s fraction on'))
+               if m in pred and m in csum[n]]
+        pred_txt = ('The run plan predicted, from an earlier run\u2019s autocorrelation times, ' + '; '.join(
+            f'{p_:,.0f} effective draws for {lab} ({g_:,.0f} achieved)' for lab, p_, g_ in got) + '. ') if got else ''
+    para(f'{tt("check_convergence.py")} judges each replicate against '
+         + (f'the targets of its preset: ' if rmin is None else f'TARGETS {targets!r}: ')
          + (f'all {len(names)} <b>pass</b>. ' if passes and all(p == 'PASS' for p in passes) else
             'verdicts ' + ', '.join(n.split('/')[-1] + ' ' + verdict.get(n, 'n/a') for n in names) + ' ('
             + ('; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check) or
-               f'see {tt("convergence_report.txt")} for the reasons') + '). ')
+               f'see {tt("convergence_report.txt")} for the reasons') + '). ') + pred_txt
          + f'For χ² and the total rate the effective sample sizes are {rng(ess_c)} and {rng(ess_t)} per replicate, and '
          f'for the rupture rates the 5th percentile is {rng([float(crow[n][9]) for n in names])}. About {rng(on_n)} '
          'ruptures are on in each draw. With so many rates even perfectly independent draws give a worst R̂ above 1, so '

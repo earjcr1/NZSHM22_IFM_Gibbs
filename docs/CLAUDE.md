@@ -65,8 +65,9 @@ and the rates-by-magnitude figure gives the chi2 over the bin rows.
 paleo_misfit.py (the paleo rows' curves for --paleo-misfit, from the rupture set's paleo_constraint_data.json: a report of their fit with python paleo_misfit.py RUPTURE_SET). cfm_sliprates.py (preliminaries.py --cfm-sliprates: the slip-rate rows rebuilt from the NZ CFM's SR_pref/SR_min/SR_max; a report with python cfm_sliprates.py CFM_CSV RUPTURE_SET --A --d). rhmc.py (log-space HMC cross-check), evidence.py (evidence by stepping-stone sampling) and build_transfers.py (transfer
 moves, single box only) are set aside in cru_retired_scripts.zip; restore them only if that work resumes.
 Development tools, also in tools/ and not run by the notebook: run_nb.py (runs the notebook headless, cell by cell,
-with configuration values overridden from the command line: "PRESET='quick'", CELLS=5, ...), run_quick_checks.sh
-DATA_DIR RUNS_DIR (the quick-preset smoke test of docs/TESTING.md, one notebook run at a time, resumable),
+with configuration values overridden from the command line: "RUN_MINUTES=10", CELLS=5, "RUN_PLAN=dict(chains=4, sweeps=2400,
+burn=400, thin=8, replicates=1)" through _OVERRIDES, ...), run_quick_checks.sh
+DATA_DIR RUNS_DIR (the smoke test of docs/TESTING.md at the old quick lengths, RUN_PLAN fixed; one notebook run at a time, resumable),
 static_checks.py (inventory, parsing, leftovers, defaults, options and imports of the code set: update it whenever a
 default, a setting or the file list changes), compare_mfd.py (two result sets compared on fit, bins, total rate, MFD
 slope, population and products, with replicate noise for scale), fig_mfd_levels.py (bin totals against targets under
@@ -528,7 +529,22 @@ gibbs.py --init fitted prints a note when terms differ (not a refusal). gibbs.py
 cru_common.mfd_monotonic (bit-identical). Without the new options the fit is identical to before. The notebook's best-fit cell is to
 pass the run's flags and --snap-floor (after the user's 630k run of 2026-11-17).
 
-Presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
+RUN_MINUTES (240) and TARGETS ('production') replaced PRESET/PRESETS on 2026-11-17 (the user's request; one scheme, not two). tools/run_plan.py:
+plan() at the top of the sampler's cell (cell 11), after cleaning and the best fit: spent = SH_SECONDS (cell 2's sh() times
+every script; idle time not counted); post = the latest DATA_DIR run's timings.json post_s (the last cell writes it) or = spent;
+budget = 0.9 x RUN_MINUTES x 60 - spent - post; calibration gibbs run (CALIB_SWEEPS 60, burn 20, CALIB_THIN 4, the run's settings
+and chains, quiet, deleted) -> sweep_s, setup_s (wall - npz 'seconds'); chains 4 x THREADS; replicates > 1 only if each gets
+>= 50,000 sweeps and is predicted to meet TARGETS (max 4); sweeps rounded down; burn 5,000 or 20%; thin for ~3,000 kept draws.
+Prediction: reference() = latest DATA_DIR run with convergence_summary.json (check_convergence.py writes it) or the report's
+tables (older runs; thin from workflow_config), preferring identical MODEL_KEYS; tau = chains x draws x thin / ESS per metric
+(ess_rate_5pct, ess_total, ess_pi_min = fifth of the total's target); minutes needed for TARGETS. run_plan.json (RUN_DIR),
+CONFIG settings/run_plan updated and workflow_config.json rewritten; check_convergence.py --targets (TARGETS dict:
+exploratory 100/200/1.01, production 1000/2000/1.01, precise 10000/20000/1.005) --plan; --preset for older runs
+(PRESET_TARGETS). RUN_PLAN: run_config OVERRIDABLE only (tests; run_quick_checks pins the old quick 4 x 2,400, burn 400,
+thin 8, and TARGETS 'exploratory'). FIGURE_SETTINGS RUN_MINUTES ('240 (16x56,000)'; older runs 'preset ...'); summary PDF
+RUN_MINUTES and TARGETS rows (older runs PRESET), the prediction beside the achieved draws; RUN_NAME _{RUN_MINUTES}min.
+630k very conservative run: tau 37 / 73 / ~2,100 sweeps -> 'production' ~245 min on 4 threads.
+The old presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
 8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
 
 Conventions that every new option follows (static_checks.py enforces the first): a model setting in the notebook is

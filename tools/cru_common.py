@@ -923,7 +923,7 @@ FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
                    ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
-                   ('PRESET', 'preset'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
+                   ('RUN_MINUTES', 'run_minutes'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
                                                                 # one in every figure's table, whatever its value
 SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 17 in 3 lines
 
@@ -944,7 +944,8 @@ def run_config(config, problem):
 
 def run_settings(config, problem):
     """The settings that tell runs apart (the notebook's, MFD_UNCERTAINTY to FLOOR; SLIP_SECTIONS and CROSS_SECTIONS, fixed since
-    2026-11-09, beside PRESET when not 'auto' and 'all'), as (name, value) pairs for the fit
+    2026-11-09, beside RUN_MINUTES when not 'auto' and 'all'; RUN_MINUTES with the plan's chains and sweeps, or for a run
+    before it (2026-11-17) its preset), as (name, value) pairs for the fit
     figures' settings table: every one of FIGURE_SETTINGS, whatever its value, so that every figure's table has the same
     size ('—' for one the configuration does not record; MISFIT_SLIP, _MFD, _PALEO, for a run before them, from its groups'
     modes, misfit_settings): from
@@ -962,8 +963,13 @@ def run_settings(config, problem):
             cfg[k_] = 'no CFM'
     fixed_ = [f'{n_} {cfg[k_]}' for n_, k_, v_ in (('SLIP_SECTIONS', 'slip_sections', 'auto'), ('CROSS_SECTIONS', 'cross_sections', 'all'))
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
-    if fixed_ and 'preset' in cfg:
-        cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
+    if 'run_minutes' in cfg:                             # RUN_MINUTES (2026-11-17): with the plan's chains x sweeps
+        st_ = cfg.get('settings') or {}
+        cfg['run_minutes'] = (f"{cfg['run_minutes']:g}" + (f" ({st_['chains']}\u00d7{st_['sweeps']:,})" if st_.get('sweeps') else ''))
+    elif 'preset' in cfg:                                # before it: the preset
+        cfg['run_minutes'] = f"preset {cfg['preset']}"
+    if fixed_ and 'run_minutes' in cfg:
+        cfg['run_minutes'] = f"{cfg['run_minutes']} ({', '.join(fixed_)})"
     if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' PDFs from (b, N) pairs and the N
         if cfg['mfd_gr']:                                # scaling (8 values), or, earlier that day, N5 and b triples (6)
             v_ = str(cfg['mfd_gr']).split(',')
@@ -973,9 +979,9 @@ def run_settings(config, problem):
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'
-    if 'mfd_step_sd' not in cfg and 'preset' in cfg:     # MFD_STEP_SD (2026-11-17): a run from before it had no such term
+    if 'mfd_step_sd' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):     # MFD_STEP_SD (2026-11-17): a run from before it had no such term
         cfg['mfd_step_sd'] = None
-    if 'slip_along' not in cfg and 'preset' in cfg:      # SLIP_ALONG_RUPTURE (2026-11-17): before it, always the inputs' uniform
+    if 'slip_along' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):      # SLIP_ALONG_RUPTURE (2026-11-17): before it, always the inputs' uniform
         cfg['slip_along'] = 'uniform'
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened
         name = os.path.basename(str(cfg['rupture_set']).rstrip('/'))

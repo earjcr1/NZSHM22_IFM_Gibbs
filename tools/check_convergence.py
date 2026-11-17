@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Convergence checks of a result set's replicate runs, with the verdict, PASS or CHECK, against the preset's targets.
+"""Convergence checks of a result set's replicate runs, with the verdict, PASS or CHECK, against TARGETS.
 
-    python check_convergence.py RUN [RUN ...] --preset quick|conservative|very_conservative [--problem cru_clean.npz]
-                                [--diag-floor -10] [--out REPORT] [--save STATS]
+    python check_convergence.py RUN [RUN ...] --targets exploratory|production|precise [--plan run_plan.json]
+                                [--problem cru_clean.npz] [--diag-floor -10] [--out REPORT] [--save STATS]
+
+(--preset quick|conservative|very_conservative, for runs made before November 17th, 2026, takes the targets of that preset:
+exploratory, production and precise.)
 
 RUN is a gibbs.py run (its --out, e.g. spikeslab/main_rep0), one per replicate of the result set. Each run is read from
 its stored draws (<run>_samples.npy) when it has them, otherwise from the running summaries it wrote
@@ -19,21 +22,24 @@ Prints, and writes to REPORT (default: convergence_report.txt next to the first 
   draws);
 - the fit check: each run's chi2 against the value a model matching the truth would have (as fitted, from the run;
   for older runs from cleaning);
-- the verdict against the targets of --preset (docs/TESTING.md, "Convergence"), with the targets missed;
+- the verdict against --targets (tools/run_plan.py; docs/TESTING.md, "Convergence"), with the targets missed;
+- with --plan (the notebook's run_plan.json), the effective draws the plan predicted against those achieved;
 - the slow-mixing minority: ruptures whose R-hat exceeds 1.01, or the noise baseline if higher, with their share of the
   total rate; reported apart from the verdict;
 - the replicates' agreement, rupture by rupture: standardized differences of mean log rate against the first run.
 STATS (default: convergence.npz next to REPORT) keeps each run's per-rupture R-hat and effective draws and its
-slow-mixing threshold, for the rupture table that make_tables.py writes.
+slow-mixing threshold, for the rupture table that make_tables.py writes; convergence_summary.json beside it each run's
+row of the table with its thin and burn-in, for later runs' plans (run_plan.run_record).
 """
 import argparse
+import json
 import os
 
 import numpy as np
 
 from cru_common import load_problem, split_rhat, ess, ess_many, load_stream, stream_rhat, stream_ess, report_to
+from run_plan import TARGETS, PRESET_TARGETS, METRICS
 
-NEED = {'quick': (100, 200, 1.01), 'conservative': (1000, 2000, 1.01), 'very_conservative': (10000, 20000, 1.005)}
 SS_KEYS = ('on', 'rhat_on', 'worst_rhat_pi', 'ess_pi_min')
 _RHAT_NOISE = {}
 
@@ -95,6 +101,7 @@ def convergence(name, floor, stats):
     base = rhat_noise(K, D, nn)
     stats[name]['slow_at'] = max(1.01, base)            # slow mixing: R-hat above 1.01, or above the noise baseline if higher
     stats[name]['chi2'] = (float(chi.mean()), float(chi.std()))
+    stats[name]['thin'], stats[name]['burn'] = int(z['thin']), int(z['burn'])
     row = dict(run=name, chains=K, draws=D, chi2=float(chi.mean()), ess_chi2=float(ess(chi)), ess_total=float(ess(tot)),
                worst_rhat=float(np.nanmax(rh)), noise_rhat=base, rates_above_noise=int(np.sum(rh > base)),
                ess_rate_median=float(np.nanmedian(es)), ess_rate_5pct=float(np.nanpercentile(es, 5)),
@@ -123,8 +130,12 @@ def agreement(a, b, stats):
 def main():
     ap = argparse.ArgumentParser(description='Convergence checks of replicate runs (see the module docstring).')
     ap.add_argument('runs', nargs='+', metavar='RUN', help='the result set\'s replicate runs (gibbs.py --out)')
-    ap.add_argument('--preset', required=True, choices=list(NEED), help='the run lengths the runs were made with, for the '
-                    'verdict\'s targets')
+    tg = ap.add_mutually_exclusive_group(required=True)
+    tg.add_argument('--targets', choices=list(TARGETS), help='the verdict\'s targets (the notebook\'s TARGETS; run_plan.py)')
+    tg.add_argument('--preset', choices=list(PRESET_TARGETS), help='a run from before November 17th, 2026: its preset\'s '
+                    'targets (quick: exploratory, conservative: production, very_conservative: precise)')
+    ap.add_argument('--plan', default=None, help='the run plan (the notebook\'s run_plan.json): its predicted effective '
+                    'draws reported against those achieved')
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem the runs sampled, for the fit check')
     ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as equal in R-hat '
                     'and effective draws (default -10; the notebook passes its FLOOR)')
@@ -154,8 +165,9 @@ def main():
             asf = ' as fitted' if STATS[r]['fitted'] else ''
             print(f'{r}: fit check: chi2{asf} {c_[0]:.0f} +- {c_[1]:.0f} against {F_[0]:.0f} +- {F_[1]:.0f} expected if the '
                   f'uncertainties are right ({(c_[0] - F_[0]) / F_[1]:+.1f} sd)')
-    need_rate, need_sum, rhat_sum = NEED[a.preset]     # effective draws: 95% of ruptures, the total rate; R-hat of chi2 and the total
-    print()
+    targets = a.targets or PRESET_TARGETS[a.preset]
+    need_rate, need_sum, rhat_sum = TARGETS[targets]   # effective draws: 95% of ruptures, the total rate; R-hat of chi2 and the total
+    print(f'\nthe verdict against TARGETS {targets!r}' + (f' (preset {a.preset!r})' if a.preset else '') + ':')
     for r in rows:
         why, modes = [], False
         if r['ess_rate_5pct'] < need_rate:
@@ -172,6 +184,18 @@ def main():
                 why.append(f"each bin's fraction on needs {need_sum / 5:,.0f} effective draws (fewest {r['ess_pi_min']:,.0f})")
         print(f"{r['run']}: " + ('PASS' if not why else 'CHECK: ' + '; '.join(why) + ': run longer (more sweeps)'
                                  + ('; if this persists, start chains from dispersed models (gibbs.py --init FILE.npy) to look for separate modes' if modes else '')))
+    if a.plan and os.path.exists(a.plan):                # the plan's prediction against what the runs achieved
+        pl = json.load(open(a.plan))
+        if pl.get('predicted'):
+            print(f"\nthe plan's prediction (from {os.path.basename(str(pl.get('reference')))}"
+                  + (', whose settings differ in ' + ', '.join(pl['reference_differs']) if pl.get('reference_differs') else '')
+                  + '), effective draws per replicate:')
+            for r in rows:
+                print(f"{r['run']}: " + '; '.join(f'{lab} predicted {pl["predicted"][m]:,.0f}, achieved {r[m]:,.0f} '
+                                                 f'({r[m] / pl["predicted"][m]:.2f} x)' for m, lab in METRICS
+                                                 if m in pl['predicted'] and m in r))
+        else:
+            print('\nthe plan made no prediction (no earlier run in DATA_DIR with a convergence report)')
     print()
     pct = lambda x: f'{100 * x:.2g}%' if 100 * x < 10 else f'{100 * x:.0f}%'
     for r in runs:                                        # the slow-mixing minority, reported apart from the verdict
@@ -194,7 +218,11 @@ def main():
     save = a.save or os.path.join(os.path.dirname(out), 'convergence.npz')
     np.savez(save, runs=np.array(runs), rhat=np.array([STATS[r]['rhat'] for r in runs]),
              ess=np.array([STATS[r]['ess'] for r in runs]), slow_at=np.array([STATS[r]['slow_at'] for r in runs]))
-    print(f'\nwrote {out} and {save} (per-rupture R-hat and effective draws, for make_tables.py)')
+    summ = os.path.join(os.path.dirname(save), 'convergence_summary.json')    # for later runs' plans (run_plan.run_record)
+    json.dump(dict(targets=targets, runs=[dict({k: (float(v) if isinstance(v, (float, np.floating)) else v)
+                                                for k, v in r.items()}, thin=STATS[r['run']]['thin'], burn=STATS[r['run']]['burn'])
+                                           for r in rows]), open(summ, 'w'), indent=1)
+    print(f'\nwrote {out}, {save} (per-rupture R-hat and effective draws, for make_tables.py) and {summ}')
 
 
 if __name__ == '__main__':

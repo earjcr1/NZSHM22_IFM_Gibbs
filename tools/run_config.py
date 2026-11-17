@@ -7,6 +7,7 @@ configuration cell on 2026-11-17, at the user's request).
 derived_settings(g) reads the configuration cell's settings from g and returns: each data group's misfit mode for
 gibbs.py (SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT) and MISFIT, their common setting or 'mixed'; the fixed settings below
 (or the overrides tools/run_nb.py passes in g['_OVERRIDES'], for sensitivity tests); SD_MULTIPLIER_; the start time _T0;
+RUN_PLAN (None: the runs planned from RUN_MINUTES, tools/run_plan.py; or, through _OVERRIDES only, a fixed plan for tests);
 RUN_NAME and RUN_DIR.
 """
 import os
@@ -40,7 +41,9 @@ CFM_SLIPRATES = True                           # the slip rates from the NZ Comm
                                                # follow. False only for sensitivity tests (tools/run_nb.py CFM_SLIPRATES=False): the inputs' Gaussians
 # CFM_RATE_LINKS = CFM_TEMPLATE_RHO is not None: the CFM's borrowed rates correlated with their sources whenever CFM_TEMPLATE_RHO is on
 FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS')
-OVERRIDABLE = FIXED + ('RUN_DIR',)            # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder)
+OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
+                                               # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
+PLAN_KEYS = ('chains', 'sweeps', 'burn', 'thin', 'replicates')
 
 
 def derived_settings(g):
@@ -68,6 +71,11 @@ def derived_settings(g):
     # (since 2026-11-09, nor SR_pref's reading or the CFM's rounding): the CFM's slip rates (timeframe-corrected or not) with
     # each sd as given, SR_pref the mode, no rounding; the inputs' Gaussians as NZSHM22 gives them (sd 2.5 x 0.8 x SD = 2 SD),
     # scaled by SLIP_RATE_FACTOR
+    out['RUN_PLAN'] = ov.get('RUN_PLAN')           # None: planned from RUN_MINUTES just before sampling (tools/run_plan.py)
+    if out['RUN_PLAN'] is not None:
+        if not (isinstance(out['RUN_PLAN'], dict) and set(PLAN_KEYS) <= set(out['RUN_PLAN'])):
+            raise ValueError(f"RUN_PLAN = {out['RUN_PLAN']!r}: give dict({', '.join(k + '=...' for k in PLAN_KEYS)})")
+        out['RUN_PLAN'] = dict(dict(hyper_every=1), **out['RUN_PLAN'])
     out['_T0'] = int(time.time())                  # the start time: the run's name and, with SEED None, its seed
     out['RUN_NAME'] = run_name(g, out)
     out['RUN_DIR'] = ov.get('RUN_DIR', os.path.join(g['DATA_DIR'], out['RUN_NAME']))   # everything the workflow writes:
@@ -81,7 +89,7 @@ def run_name(g, d):
     S.update(d)
     return (('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')
             + f"MFD_UNCERTAINTY{S['MFD_UNCERTAINTY']}_DOWN_THE_MIDDLE_{S['DOWN_THE_MIDDLE']}"
-            + f"_preset_{S['PRESET']}_floor{S['FLOOR']}"
+            + f"_{S['RUN_MINUTES']:g}min_floor{S['FLOOR']}"
             + (f"_misfit{S['MISFIT']}" if S['MISFIT'] != 'mixed' else
                f"_misfit_slip{S['MISFIT_SLIP']}_mfd{'pdf' if S['MFD_GR'] else S['MISFIT_MFD']}_paleo{S['MISFIT_PALEO']}")
             + ('_mfdmonotonic' if S['MFD_MONOTONIC'] else '')
