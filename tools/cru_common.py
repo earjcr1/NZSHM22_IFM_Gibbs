@@ -967,8 +967,9 @@ def run_settings(config, problem):
     if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' PDFs from (b, N) pairs and the N
         if cfg['mfd_gr']:                                # scaling (8 values), or, earlier that day, N5 and b triples (6)
             v_ = str(cfg['mfd_gr']).split(',')
-            cfg['mfd_gr'] = (f'b {"/".join(v_[0:3])} N {"/".join(v_[3:6])} s {"-".join(v_[6:8])}' if len(v_) == 8 else
-                             f'N5 {"/".join(v_[0:3])} b {"/".join(v_[3:6])}')
+            cfg['mfd_gr'] = (f'b {"/".join(v_[0:3])} N {"/".join(v_[3:6])} s {"-".join(v_[6:8])}'
+                             + (f' m {"/".join(v_[8:11])}' if len(v_) == 11 else '') if len(v_) in (8, 11) else
+                             f'N5 {"/".join(v_[0:3])} b {"/".join(v_[3:6])}')   # m: RECONSIDER_MAGUNCERT (11 values)
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'

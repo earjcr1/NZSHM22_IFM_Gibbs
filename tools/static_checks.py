@@ -173,10 +173,15 @@ check(all(o_ in src['best_fit_as_fitted.py'] for o_ in ("'--down-the-middle'", "
       'best_fit_as_fitted.py takes the sampler\'s other terms and constraints as gibbs.py does (balance, summed slip rates, '
       'monotonic MFD through cru_common.mfd_monotonic, plate rate; augmented Lagrangian, polish, --snap-floor), and gibbs.py '
       '--init fitted notes a fit made with other terms')
+_md_all = '\n'.join(''.join(c_['source']) for c_ in nb['cells'] if c_['cell_type'] == 'markdown')
 check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.823, 0.959, 1.089)']
       and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(2.65, 3.40, 4.57)']
       and re.findall(r'^MFD_GR_NSCALE = (\(.*?\))', cells[0][1], re.M) == ['(0.66, 1.41)'] and 'mfd_gr' in _cfg_keys
+      and re.findall(r'^RECONSIDER_MAGUNCERT = (\S+)', cells[0][1], re.M) == ['True']
+      and 'MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))' in src['mfd_gr.py'] and '_MAGRATIO = 3.92 / 3.40' in src['mfd_gr.py']
+      and 'tuple(MFD_GR_NSCALE) + tuple(_mag)' in cells[0][1] and "S['RECONSIDER_MAGUNCERT']" in src['run_config.py']
+      and 'RECONSIDER_MAGUNCERT' in _md_all and 'RECONSIDER_MAGUNCERT' in open(f'{ROOT}/docs/REPORT.md').read()
       and '\ndef parse_knobs(' in src['mfd_gr.py'] and '\ndef n_of_b(' in src['mfd_gr.py'] and "q84=q84" in src['mfd_gr.py']
       and 'mfd_pdf_q84=' in src['preliminaries.py'] and "P.get('mfd_pdf_q84')" in src['gibbs.py']
       and 'MFD_GR_SPREAD' not in cells[0][1] and "out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'" in src['run_config.py']
@@ -189,7 +194,8 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       'notebook MFD_GR = False (2026-11-17: each bin scored by its own target PDF, propagated through NZSHM22\'s partitioning, '
       'mfd_gr.py; cru_D\'s bins by default) from NZSHM22\'s upper-plate knobs: MFD_GR_B (0.823, 0.959, 1.089) b\'s 10th '
       'percentile, mean and 90th, MFD_GR_N5 (2.65, 3.40, 4.57) the mean N conditioned on each (correlated), MFD_GR_NSCALE '
-      '(0.66, 1.41) the N scaling\'s 2-sigma values; the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
+      '(0.66, 1.41) the N scaling\'s 2-sigma values, RECONSIDER_MAGUNCERT = True a further factor on N, 1 / 3.92/3.40 / '
+      '1 + 2(3.92/3.40 - 1) as -2 sigma, mean, +2 sigma (mfd_gr.MAGUNCERT); the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
       'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
       'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys

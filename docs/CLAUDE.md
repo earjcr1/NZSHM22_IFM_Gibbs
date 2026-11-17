@@ -479,7 +479,13 @@ preliminaries.py --mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI --rupture-set DIR (MFD_G
 MFD_GR_N5 = (2.65, 3.40, 4.57), MFD_GR_NSCALE = (0.66, 1.41); the user's revision 2026-11-17 from Rollins et al. 2024 BSSA Table 1,
 upper-plate IFM, replacing independent N5/b triples): b a split normal through its 10th percentile, mean, 90th (sd = distance / 1.2816);
 N(b) the conditional mean, a quadratic in log10 N through the three pairs (mfd_gr.n_of_b; N and b correlated); the N scaling s a split
-normal in ln s, mode 1, each side's sd half the log of its 2-sigma value; target = s N(b) f_j(b) (parse_knobs). tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
+normal in ln s, mode 1, each side's sd half the log of its 2-sigma value; target = s N(b) f_j(b) (parse_knobs). RECONSIDER_MAGUNCERT
+(2026-11-17, True by default; True, False or a triple): a further factor m on N for the catalogue's magnitude uncertainties (3.40 assumes
+them downward-skewed, Rhoades 1996; half the skew gives 3.92; Gaussian ~+25-30%): mfd_gr.MAGUNCERT = (1, 3.92/3.40, 1 + 2(3.92/3.40 - 1))
+as -2 sigma, mean, +2 sigma (the user's values, to be revised after the catalogue's reanalysis), a split normal in m (normal when
+symmetric); the spec gains ,M_LO,M,M_HI (11 values); bin_pdfs convolves ln s's density with ln m's (dv 2e-4) for ln(s m); the row target
+uses m's mean (central targets = cru_D's at 630k); RUN_NAME _mfdgr...m1-1.15294-1.30588; cru_common/make_summary_pdf show 'm'. The user
+framed it as the 3x3 matrix [0.66, 1, 1.41] x [1, 1.13, 1.26]; the continuous convolution stands in for the nine points. tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
 NZSHM22_CrustalInversionTargetMFDs.RegionalTargetMFDs.init, NZSHM22_FaultSystemRupSetCalc): total GR 10^-bM at bin centres
 5.05..ci(min(Mmax, maxMag)) summing to N5; sub-seismogenic = sum over sections of GR(pdf_s N5) up to max(ci(minmag_s), ci(6.8001)) - 1;
 off-fault tri-linear (kink = moment-weighted mean section min mag as a bin, read from the stored off-fault MFD; 0.98/1.01 corrections;

@@ -364,13 +364,14 @@ def main():
                     "section's measurement, so its k rows are divided by sqrt(k); rows unlike their neighbours are "
                     "unchanged; 'none': every row its own measurement (the inputs as given; a sensitivity test); or a file "
                     "of 'original_row section' lines giving every slip-rate row's section")
-    ap.add_argument('--mfd-gr', default=None, metavar='B10,B,B90,N10,N,N90,S_LO,S_HI',
+    ap.add_argument('--mfd-gr', default=None, metavar='B10,B,B90,N10,N,N90,S_LO,S_HI[,M_LO,M,M_HI]',
                     help='the magnitude bins\' targets replaced by PDFs: the on-fault supra-seismogenic MFD that NZSHM22\'s '
                     'OpenSHA code derives from a regional rate of M>=5 earthquakes N and a b-value, propagated from b (its 10th '
                     'percentile, mean and 90th percentile, a split normal), the mean N conditioned on each of those (N and b '
-                    'correlated) and the N scaling (its 2-sigma values about 1, a factor on the whole MFD) (mfd_gr.py; MFD_GR in '
+                    'correlated), the N scaling (its 2-sigma values about 1, a factor on the whole MFD) and optionally a further factor on N for the '
+                    'catalogue\'s magnitude uncertainties (its -2 sigma, mean and +2 sigma, a normal; RECONSIDER_MAGUNCERT) (mfd_gr.py; MFD_GR in '
                     'the notebook), with the rupture set\'s sections from an inversion solution (--rupture-set, or the one beside '
-                    '--A); each bin\'s row its target at b\'s mean and s = 1 over its propagated sd, its curve saved for gibbs.py '
+                    '--A); each bin\'s row its target at b\'s mean, s = 1 and m\'s mean over its propagated sd, its curve saved for gibbs.py '
                     '--mfd-misfit pdf and its 84.135%% point for the prior\'s soft top; the inputs\' bins otherwise')
     ap.add_argument('--mfd-uncertainty', default='as-given',
                     help="the magnitude bins' uncertainty level, their bin-to-bin shape kept as the inputs give it: "
@@ -607,7 +608,7 @@ def main():
             say(line)
         say(f'   the inputs\' bins against the solution\'s stored target: ratio {np.min(R_in / st_b):.6f}-{np.max(R_in / st_b):.6f}'
             + ('' if np.allclose(R_in, st_b, rtol=1e-9) else ' (not the same: cru_D was not built with this solution\'s MFDs)'))
-        say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets (at b\'s mean, N(b) and s = 1) '
+        say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets (at b\'s mean, N(b), s = 1 and m\'s mean) '
             f'{R_new.sum():.5g} per year in all (the inputs\' {R_in.sum():.5g}), sd / target {np.min(s_new / R_new):.3f}-'
             f'{np.max(s_new / R_new):.3f} (the inputs\' {rel_in.min():.3f}-{rel_in.max():.3f}); the sampler scores each bin by its '
             'PDF (gibbs.py --mfd-misfit pdf; the curves saved with the problem as mfd_pdf_th and mfd_pdf_best), and the '

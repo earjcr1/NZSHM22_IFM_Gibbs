@@ -147,9 +147,10 @@ def main():
     mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from (b, N) pairs
     if mfdgr:
         _g = str(mfdgr).split(',')
-        if len(_g) == 8:                               # b's 10th percentile, mean and 90th; the mean N at each; the N scaling
-            mgr_txt = (f'b {_g[0]} / {_g[1]} / {_g[2]} (10th percentile, mean, 90th percentile), the mean N(M\u22655) '
-                       f'conditioned on each {_g[3]} / {_g[4]} / {_g[5]} per year, N scaling {_g[6]}\u2013{_g[7]} (2\u03c3)')
+        if len(_g) in (8, 11):                         # b's 10th percentile, mean and 90th; the mean N at each; the N scaling;
+            mgr_txt = (f'b {_g[0]} / {_g[1]} / {_g[2]} (10th percentile, mean, 90th percentile), the mean N(M\u22655) '   # and m
+                       f'conditioned on each {_g[3]} / {_g[4]} / {_g[5]} per year, N scaling {_g[6]}\u2013{_g[7]} (2\u03c3)'
+                       + (f', magnitude-uncertainty factor {_g[9]} ({_g[8]}\u2013{_g[10]}, 2\u03c3)' if len(_g) == 11 else ''))
         else:                                          # earlier on 2026-11-17: independent N5 and b triples
             _n5d = _g[6] if len(_g) > 6 else 'gamma'
             mgr_txt = (f'N(M\u22655) {_g[0]} / {_g[1]} / {_g[2]} per year ('
@@ -917,8 +918,13 @@ def main():
             'inversion solution; mfd_gr.py reproduces the solution’s own MFDs exactly), propagated exactly to each bin '
             + ('from NZSHM22’s knobs (Rollins et al., 2024): b a split normal through its 10th percentile, mean and 90th '
                'percentile; N(M\u22655) the mean conditioned on b, so the two are correlated; and the N scaling, a factor on the '
-               'whole MFD independent of b, a split normal in log about 1 through its 2\u03c3 values. '
-               if len(str(mfdgr).split(',')) == 8 else 'from the two knobs’ distributions. ')
+               'whole MFD independent of b, a split normal in log about 1 through its 2\u03c3 values'
+               + ('; and a further factor on N for how the catalogue\u2019s magnitude uncertainties are read '
+                  '(RECONSIDER_MAGUNCERT): NZSHM22\u2019s N take them as downward-skewed (Rhoades, 1996), half that skew gives '
+                  'N(M\u22655) 3.92 rather than 3.40, and Gaussian ones about twice that rise, so the factor is a normal through '
+                  + ' / '.join(str(mfdgr).split(',')[8:11]) + ' as its \u22122\u03c3, mean and +2\u03c3 (by default 1, 3.92/3.40 and '
+                  '1 + 2(3.92/3.40 \u2212 1)), independent of the others, its density convolved with the N scaling\u2019s. ' if len(str(mfdgr).split(',')) == 11 else '. ')
+               if len(str(mfdgr).split(',')) in (8, 11) else 'from the two knobs’ distributions. ')
             + 'Each bin costs \u22122 ln of its density in log rate, measured from its minimum; the bins are scored '
             'independently, and the prior’s soft top on each bin takes its upper spread. Each bin’s share of the fit '
             'check is its own misfit’s mean and variance.'
