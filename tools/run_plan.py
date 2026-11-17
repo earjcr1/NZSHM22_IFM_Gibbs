@@ -67,9 +67,9 @@ def calibration(runs):
     each run pays (its wall time less its sampling, gibbs.py's 'seconds'; the median), plus dense, the extra time of a
     run's first sweeps from dense starts. With progress, [(sweep, cumulative seconds), ...] from gibbs.py's progress lines,
     the time per sweep is the second half's, after dense starts (thousands of ruptures on) have thinned out, and the
-    first half's excess over it is dense: at 630,000 ruptures the first sweeps from dispersed starts took 3.5 s each, the
-    chains settled within about 50 sweeps (27,000 ruptures on to 1,600), and a calibration timed over all 120 sweeps
-    put a sweep at 0.80 s, about three times the steady cost, so the plan sampled a third of what it could."""
+    first half's excess over it is dense (at 630,000 ruptures from dispersed starts: 0.204 s per sweep plus 0.276 s per
+    recorded draw, 2.1 s extra per run; timed over all 120 sweeps, 0.220 s). Other runs on the machine at the same time
+    inflate it: a calibration beside test runs measured 0.80 s per sweep."""
     t, x, setup, dense = [], [], [], []
     for run in runs:
         npz, wall, sweeps, thin = run[:4]
