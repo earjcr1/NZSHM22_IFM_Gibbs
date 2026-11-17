@@ -62,13 +62,26 @@ def needs(targets):
 
 
 def calibration(runs):
-    """The calibration runs, [(npz, wall seconds, sweeps, thin), ...] -> dict(a, b, setup): a sweep's time a + b / thin
-    (a per sweep, b per recorded draw; least squares over the runs, neither below zero) and the setup each run pays (its
-    wall time less its sampling, gibbs.py's 'seconds'; the median)."""
-    t, x, setup = [], [], []
-    for npz, wall, sweeps, thin in runs:
+    """The calibration runs, [(npz, wall seconds, sweeps, thin[, progress]), ...] -> dict(a, b, setup, dense): a sweep's
+    time a + b / thin (a per sweep, b per recorded draw; least squares over the runs, neither below zero) and the setup
+    each run pays (its wall time less its sampling, gibbs.py's 'seconds'; the median), plus dense, the extra time of a
+    run's first sweeps from dense starts. With progress, [(sweep, cumulative seconds), ...] from gibbs.py's progress lines,
+    the time per sweep is the second half's, after dense starts (thousands of ruptures on) have thinned out, and the
+    first half's excess over it is dense: at 630,000 ruptures the first sweeps from dispersed starts took 3.5 s each, the
+    chains settled within about 50 sweeps (27,000 ruptures on to 1,600), and a calibration timed over all 120 sweeps
+    put a sweep at 0.80 s, about three times the steady cost, so the plan sampled a third of what it could."""
+    t, x, setup, dense = [], [], [], []
+    for run in runs:
+        npz, wall, sweeps, thin = run[:4]
+        prog = run[4] if len(run) > 4 else []
         sec = float(np.load(npz)['seconds'])
-        t.append(sec / sweeps)
+        late = [(s_, c_) for s_, c_ in prog if s_ >= sweeps / 2]
+        if len(late) >= 2 and late[-1][0] > late[0][0]:
+            ts = (late[-1][1] - late[0][1]) / (late[-1][0] - late[0][0])   # the second half's time per sweep
+            dense.append(max(0.0, late[0][1] - ts * late[0][0]))          # the first half's excess
+        else:
+            ts = sec / sweeps
+        t.append(ts)
         x.append(1.0 / thin)
         setup.append(max(0.0, wall - sec))
     t, x = np.array(t), np.array(x)
@@ -79,7 +92,7 @@ def calibration(runs):
     else:
         a, b = float(t.max()), 0.0
     return dict(a=float(a), b=float(b), setup=float(np.median(setup)), thins=[int(round(1 / v)) for v in x],
-                sweeps=[r[2] for r in runs])
+                sweeps=[r[2] for r in runs], dense=float(np.median(dense)) if dense else 0.0)
 
 
 def _report_rows(path):
@@ -177,7 +190,7 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
     budget = total * (1 - MARGIN) - spent_s - post_s
     nd, _ = needs(targets)
     tau = ref['tau'] if ref else {}
-    setup_s = cost['setup']
+    setup_s = cost['setup'] + cost.get('dense', 0.0)        # each run pays its setup and its dense starts' first sweeps
     sec = lambda th: cost['a'] + cost['b'] / th          # a sweep's time, recording a draw every th sweeps
     afford = lambda r, th: (budget - r * setup_s) / (r * sec(th))
     burn_of = lambda S_: BURN_MAX if S_ * BURN_FRAC >= BURN_MAX else int(round(S_ * BURN_FRAC, -1 if S_ >= 500 else 0))
@@ -206,7 +219,9 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
          f'{post_s / 60:.1f} min; a {100 * MARGIN:.0f}% margin; {max(budget, 0) / 60:.1f} min left for sampling',
          f'   calibration ({len(cost.get("thins", [])) or 1} runs of {CALIB_SWEEPS} sweeps, {K} chains, {threads} threads, a draw '
          f'recorded every {" and ".join(str(t_) for t_ in cost.get("thins", []))} sweeps): {cost["a"]:.4f} s per sweep plus '
-         f'{cost["b"]:.3f} s per recorded draw, so {sweep_s:.4f} s per sweep at this plan\'s thin; {setup_s:.0f} s of setup per run',
+         f'{cost["b"]:.3f} s per recorded draw (the runs\' second halves), so {sweep_s:.4f} s per sweep at this plan\'s thin; '
+         f'{cost["setup"]:.0f} s of setup per run' + (f', and {cost["dense"]:.0f} s more for the first sweeps from dense starts'
+                                                         if cost.get('dense') else ''),
          f'   chains: {K} ({CHAINS_PER_THREAD} per thread); replicates: {reps}'
          + (f' (each still gets {REPLICATE_MIN:,} sweeps or more' + (f' and is predicted to reach {REPLICATE_SAFETY:g} x TARGETS\' '
             'effective draws)' if tau else ')') if reps > 1 else ' (one long replicate; dispersed starts across its chains test the '

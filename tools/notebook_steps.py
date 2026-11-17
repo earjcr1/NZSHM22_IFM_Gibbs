@@ -12,6 +12,7 @@ the rupture set found (RUPTURE_DIR); the configuration written (workflow_config.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -144,7 +145,7 @@ def record_config(**more):
 
 def sh(*args, quiet=False):
     """Run one of the workflow's scripts (in tools/) with this Python, streaming its output (quiet: shown only if it
-    fails); stop on failure. The time it takes counts toward the run plan's time spent."""
+    fails, and returned); stop on failure. The time it takes counts toward the run plan's time spent."""
     if str(args[0]).endswith('.py') and not os.path.isabs(str(args[0])):
         args = (os.path.join(HERE, args[0]),) + tuple(args[1:])
     cmd = [sys.executable] + [str(a) for a in args]
@@ -159,6 +160,7 @@ def sh(*args, quiet=False):
     if code != 0:
         print(''.join(held), end='')
         raise RuntimeError('command failed: ' + ' '.join(cmd[1:]))
+    return held
 
 
 def show(path):
@@ -355,8 +357,10 @@ def plan_runs():
             print(f"calibrating the sampler: {cal['sweeps']} sweeps of {K} chains with this run's settings, a draw recorded "
                   f'every {th}')
             t = time.time()
-            sh('gibbs.py', *gibbs_args(os.path.join('_calibration', f'thin{th}'), 12345, cal, keep=False), quiet=True)
-            cals.append((os.path.join(cdir, f'thin{th}.npz'), time.time() - t, cal['sweeps'], th))
+            held = sh('gibbs.py', *gibbs_args(os.path.join('_calibration', f'thin{th}'), 12345, cal, keep=False), quiet=True)
+            prog = [(int(sw_), float(r_) * int(sw_)) for sw_, r_ in        # its progress: sweep, cumulative seconds
+                    re.findall(r'sweep +(\d+)/\d+ .*?\(\d+s, ([\d.]+)s/sweep\)', ''.join(held), re.S)]
+            cals.append((os.path.join(cdir, f'thin{th}.npz'), time.time() - t, cal['sweeps'], th, prog))
         cost = run_plan.calibration(cals)
         shutil.rmtree(cdir, ignore_errors=True)
         ref, diff = run_plan.reference(g['DATA_DIR'], g['CONFIG'], exclude=g['RUN_DIR'])
