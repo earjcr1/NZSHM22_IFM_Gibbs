@@ -35,7 +35,7 @@ import re
 import numpy as np
 
 MISSING = []
-BODY_PT, BODY_LEAD = float(os.environ.get('SUMMARY_PT', 11.0)), float(os.environ.get('SUMMARY_LEAD', 15.4))   # body text
+BODY_PT, BODY_LEAD = float(os.environ.get('SUMMARY_PT', 11.0)), float(os.environ.get('SUMMARY_LEAD', 16.5))   # body text
 
 
 def read(path):
@@ -519,42 +519,29 @@ def main():
 
     # title
     para(a.title, title)
-    if not a.no_preamble:                              # the run's line, folder and dates, and the Overview heading
-        para(f'Workflow summary for {data_name}, preset {preset}' + (f', with {model_txt}' if model_txt else ''), sub)
-        para(f'Run folder: <font name="DVM" size="7.6">{run_name}</font>', small)
-        para(f'Run started {t_start or "n/a"}' + (f', last step {t_end}' if t_end else '') + '. Figures as last drawn; '
-             'numbers from the run\u2019s reports.', small)
-        story.append(Spacer(1, 10))
+    para('This workflow samples the Bayesian posterior of the annual rate of every rupture in an NZSHM22 rupture set, '
+         'from the same constraints and a stated prior, with an exact Gibbs sampler. It is an alternative to the NZSHM22 '
+         'inversion summarized below.')
     on_draw = [v[0] for v in on.values()]               # ruptures on per draw, each replicate
     floor_m = f'{floor:g}'.replace('-', '−')             # the floor's exponent with a minus sign
     per_col = n_nnz / n_cols if n_nnz and n_cols else None
-    head('Why this workflow')
+    head('Predecessors, and why this workflow')
     para('The 2022 New Zealand National Seismic Hazard Model (NZSHM22) builds its fault-based earthquake rates by an '
          'inversion (Gerstenberger et al., 2022, 2024) that follows the UCERF3 recipe (Field et al., 2014; Page et al., '
          '2014) in OpenSHA (Milner and Field, 2023): each rupture in a rupture set (411,270 for the crustal faults) gets an '
          'annual rate such that the predicted slip rates, paleoseismic event rates and regional magnitude-frequency '
-         'distribution (MFD, from the rate N of M ≥ 5 earthquakes and a b-value, partitioned onto the modelled ruptures) '
-         'match their targets: a linear system <i>G m</i> ≈ <i>d</i> with far more '
+         'distribution (MFD, from a regional rate N of M ≥ 5 earthquakes and a b-value) match their targets: a linear '
+         'system <i>G m</i> ≈ <i>d</i> with far more '
          'unknowns than independent data. NZSHM22 solves it by fast simulated '
-         'annealing (Szu and Hartley, 1987) from all rates at zero, each step perturbing one rate by up to a random order of '
-         'magnitude between 10<super>−10</super> and 10<super>−2</super>, with four inversions averaged every 30 seconds, '
-         'about 3 billion iterations in all. Each '
+         'annealing (Szu and Hartley, 1987) from all rates at zero, over about 3 billion iterations. Each '
          'logic-tree branch gets one solution, with a few hundred to about 1,700 crustal ruptures at non-zero rates.')
     para('That leaves three things this workflow sets out to supply:'
-         '<br/>• <b>The range of rates the data allow, carried into hazard.</b> The data fix sums of rates (on a fault, in '
-         'a bin) far better than single rates'
+         '<br/>• <b>The range of rates the data allow, carried into hazard.</b> The data fix sums of rates far better '
+         'than single rates'
          + (f' (here <i>G</i> has rank {fmt(rank)} for {fmt(n_cols)} unknowns)' if rank and n_cols else '') + '. Each '
          'annealing run lands on a different model depending on its seed (Gerstenberger et al., 2022), but a branch keeps '
          'one. Here the whole set is sampled as a Bayesian posterior: every rate and derived quantity gets a mean and a '
          'spread, and weighted representative models (step 8) carry it into hazard.'
-         '<br/>• <b>Whether sparse solutions are warranted.</b> In UCERF3 one annealing run put about 4% of ruptures above '
-         'their minimum rates, but 10 runs averaged about 38,000 and 200 runs about 115,000, different runs fitting the data '
-         'equally well with different subsets (Page et al., 2014): one solution’s sparsity reflects the search as much '
-         'as the data. Here spike-and-slab '
-         'lets each rupture be exactly off or on and estimates the fraction on in each bin from the data'
-         + (f': in this run about {rng(on_draw)} ruptures are on per draw, a different set in each' if on_draw else '')
-         + '. A draw may still look sparse, depending on what counts as negligible, but that is now the outcome of a '
-         'stated prior and the data.'
          '<br/>• <b>Freedom from the annealing’s settings, weighting and nuances.</b> Combining slip rates, the MFD and paleo '
          'rates into one objective needs a weight on each, set subjectively for the subduction interfaces and, for the '
          'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
@@ -564,7 +551,16 @@ def main():
          + (', and the MFD bins’ uncertainties too come from N and b (MFD_GR)' if mfdgr else
             '; with MFD_GR even the MFD bins’ uncertainties come from N and b rather than a set level') + '. The '
          'annealing’s perturbations, cooling schedule, start and iteration count also shape its solution; a posterior '
-         'does not depend on how it is sampled (step 6).')
+         'does not depend on how it is sampled (step 6).'
+         '<br/>• <b>Ability to fit the constraints within their own inherent PDFs rather than as Gaussian misfits in '
+         'rate.</b> The inversion scores every constraint as a Gaussian in rate: each slip rate with one symmetric sd; each '
+         'paleo site with a symmetric sd about its best estimate, though its recurrence-interval PDF is lopsided (its '
+         'one-sigma range a median 1.9 times longer below than above) and a Gaussian caps the cost of predicting no events '
+         'there; each MFD bin with a set relative uncertainty. Here each is scored in the space its uncertainty was worked '
+         'out in: slip rates by split normals from the NZ Community Fault Model (Seebeck et al., 2023), corrected for their '
+         'timeframes (Coffey et al., accepted); paleo sites by \u22122 ln of their recurrence-interval PDFs in years; MFD '
+         'bins half in rate and half in log10, or, with MFD_GR, by their own PDFs from N and b. The sampler evaluates each '
+         'exactly.')
 
     head('The Gibbs sampler, and why it suits this problem', new_page=True)
     para('A Markov chain Monte Carlo (MCMC) sampler draws a sequence of models whose distribution settles on the '
@@ -624,14 +620,16 @@ def main():
          '<br/>• <b>This Gibbs sampler</b>’s single point of slowdown is correlation its one-at-a-time updates cannot '
          'cross in one move: near-duplicate ruptures (handled by the swaps) and the fraction on in each bin. Its cost per '
          'sweep grows only with the nonzero entries of <i>G</i>, so it scales to the full rupture sets.')
-    para('<i>References.</i> Field, E. H., et al. (2014), <i>Bull. Seismol. Soc. Am.</i> 104, 1122–1180 (UCERF3). '
+    para('<i>References.</i> Coffey, G. L., et al. (accepted), Reassessing geologic fault slip rates and their '
+         'uncertainties in Aotearoa New Zealand, <i>Bull. Seismol. Soc. Am.</i> Field, E. H., et al. (2014), <i>Bull. Seismol. Soc. Am.</i> 104, 1122–1180 (UCERF3). '
          'Gerstenberger, M. C., et al. (2022), <i>GNS Science Report</i> 2022/47, doi:10.21420/2EXG-NP48; (2024), '
          '<i>Bull. Seismol. Soc. Am.</i>, doi:10.1785/0120230165 (the NZSHM22 seismicity rate model). Goodman, J., and J. '
          'Weare (2010), <i>Commun. Appl. Math. Comput. Sci.</i> 5, 65–80. Hoffman, M. D., and A. Gelman (2014), <i>J. Mach. '
          'Learn. Res.</i> 15, 1593–1623. Milner, K. R., and E. H. Field (2023), <i>Bull. Seismol. Soc. Am.</i>, '
          'doi:10.1785/0120230122. Neal, R. M. (2003), <i>Ann. Stat.</i> 31, 705–767 (slice sampling); (2011), in '
          '<i>Handbook of Markov Chain Monte Carlo</i>, CRC Press, 113–162 (HMC). Page, M. T., et al. (2014), <i>Bull. '
-         'Seismol. Soc. Am.</i> 104, 1181–1204 (the UCERF3 grand inversion). Sambridge, M. (1999a, b), <i>Geophys. J. '
+         'Seismol. Soc. Am.</i> 104, 1181–1204 (the UCERF3 grand inversion). Seebeck, H., et al. (2023), <i>N. Z. J. '
+         'Geol. Geophys.</i> (the NZ Community Fault Model, version 1.0). Sambridge, M. (1999a, b), <i>Geophys. J. '
          'Int.</i> 138, 479–494 and 727–746. Szu, H., and R. Hartley (1987), <i>Phys. Lett. A</i> 122, 157–162.')
 
     head('This run, step by step', new_page=True)
@@ -641,14 +639,15 @@ def main():
     head('1. Inputs and configuration')
     para(f'The inputs are the inversion matrices in {tt(data_name)}: {tt(cfg.get("a_file", "cru_A.txt"))} (<i>G</i>, '
          f'{fmt(raw_rows)} rows by {fmt(raw_cols)} ruptures, {fmt(raw_nnz and raw_nnz / 1e6, "{:.1f}")} million nonzeros) '
-         f'and {tt(cfg.get("d_file", "cru_D.txt"))} (<i>d</i>): the subsections’ slip rates, the MFD bins, the '
-         'paleoseismic event rates, and penalty rows forcing some ruptures to zero.'
-         + (f' The OpenSHA solution for the rupture set ({tt(refname)}) supplies the fault geometry and named faults, and '
-            'a reference model drawn in black on every figure.' if ref else '')
+         f'and {tt(cfg.get("d_file", "cru_D.txt"))} (<i>d</i>).'
+         + (f' The OpenSHA solution for the rupture set ({tt(refname)}) supplies the fault geometry, the named faults and '
+            'a reference model, drawn in black on every figure.' if ref else '')
          + ' One configuration cell sets everything; this run used:')
     dtm_txt = {False: 'no balance term: the Gaussian misfit alone', True: 'a balance term, one weight for every data type',
                'zero-model': 'a balance term, each data type\u2019s own weight'}.get(dtm, str(dtm))
-    table([['setting', 'value', 'meaning'],
+    table([['setting', 'value', 'meaning']]
+          + ([['run', '', f'<font name="DVM" size="7">{run_name}</font>; started {t_start or "n/a"}'
+               + (f', last step {t_end}' if t_end else '')]] if not a.no_preamble else []) + [
            ['SLIP_SECTIONS', repr(cfg.get('slip_sections')), 'how the slip-rate rows count (\u2019auto\u2019: each fault '
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
            ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
@@ -675,8 +674,7 @@ def main():
                      'with the same sds; an order of magnitude off is unlikely, two far more so'}.get(amis, str(amis))
                      + '; every prediction kept above zero']] if amis else [])
                 + [[f'MISFIT_{g_.upper()}', repr(gmis[g_]), dict(zip(gnames[g_], (lin_, log_, 'half linear, half log: '
-                    + half_ + ', the geometric mean of the two densities, with the same sds'))).get(gmis[g_], str(gmis[g_]))
-                    + '; every prediction kept above zero']
+                    + half_ + ', with the same sds'))).get(gmis[g_], str(gmis[g_]))]
                    for g_, lin_, log_, half_ in (
                        ('slip', 'the slip rates scored linearly, by their split normals',
                         'the slip rates scored in log, by Gaussians in log10(prediction / target) with sd log10(1 + sd / '
@@ -818,7 +816,7 @@ def main():
               'and 2.3\u201397.7% ranges.' if np_phys else 'in units of its uncertainty, log-log; the shaded bands are '
               'within one and two uncertainties.'), FW * 0.8 if np_phys else FW * 0.6, max_h=15 * cm)
 
-    head('4. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''))
+    head('4. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''), new_page=True)
     para(f'<b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
          f'rate from 10<super>{floor:g}</super> per year up to its magnitude bin\u2019s target rate (spike-and-slab). The '
          'top is soft, a Gaussian shoulder as wide as the bin\u2019s own uncertainty, since no single rupture can carry more '
@@ -860,9 +858,8 @@ def main():
             'minimum, a curve through the site\u2019s 2.275, 15.865, 84.135 and 97.725% points with its mode at '
             '1/bestEstimate exactly (the rupture set\u2019s paleo_constraint_data.json)'
             + (f'; {pm_poor} site(s) fit their quantiles to worse than 0.05 decades' if pm_poor else '')
-            + '. The ranges are lopsided, and the Gaussian caps a site\u2019s misfit, so this penalizes paleo rates predicted '
-            'well below their targets far more. It is kept exactly by the same Metropolis steps as the soft band, and '
-            'recorded apart; \u03c7\u00b2 still counts the paleo rows\u2019 Gaussian misfit, for comparison.' if pmis == 'years' else '')
+            + '. The ranges are lopsided, and the Gaussian caps a site’s misfit, so this penalizes paleo rates predicted '
+            'well below their targets far more; it is kept exactly by Metropolis steps.' if pmis == 'years' else '')
          + (' <b>Half linear, half log</b> (MISFIT \'half\'). Every data group is scored by half its linear misfit and half its '
             'log misfit, the geometric mean of the two densities, so each measurement still counts once: the slip rates by '
             'half their split normals and half a Gaussian in log10(prediction / target), the MFD bins by half their Gaussians '
@@ -886,18 +883,15 @@ def main():
                             ('paleo', 'the paleo rows by their Gaussians in rate',
                              'the paleo rows by their recurrence-interval PDFs in years',
                              'the paleo rows by half their Gaussians in rate and half their recurrence-interval PDFs in years')))
-            + '. A half-and-half group\u2019s score is the geometric mean of its two densities, so each measurement still '
-            'counts once; away from a target a log part grows with the decades off. Every prediction is kept above zero, '
-            'each log part is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts every part.' if mixed else '')
+            + '. A half-and-half group’s score is the geometric mean of its two densities, so each measurement still '
+            'counts once; each log part is kept exactly by Metropolis steps.' if mixed else '')
          + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
             f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): '
-            + ('each fault\u2019s numbers corrected for its slip-rate timeframe (CFM_TIMEFRAME; Coffey et al.: the CFM\u2019s range '
-               'widened by the distribution of true over measured slip rate for the few earthquakes a short timeframe captures, '
-               'rebuilt in full from the paper\u2019s Table S4), and the split normal '
-               + ('fitted to that corrected distribution: through its 16%, 50% and 84% points, or, for the most right-skewed '
-                  'faults, fitted in log10 of the slip rate and converted, whichever is closest to it in Kullback\u2013Leibler '
-                  'divergence (its median and body exactly for most faults)' if cfg.get('cfm_timeframe_shape') == 'fit' else
+            + ('each fault’s numbers corrected for its slip-rate timeframe (CFM_TIMEFRAME; Coffey et al., accepted: the '
+               'range widened for the few earthquakes a short timeframe captures), and the split normal '
+               + ('fitted to that distribution’s 16%, 50% and 84% points (or, for the most right-skewed faults, in log10, '
+                  'whichever is closer in Kullback\u2013Leibler divergence)' if cfg.get('cfm_timeframe_shape') == 'fit' else
                   'with its mode at the corrected distribution\u2019s mode and its 2.5% and 97.5% points at 2 sd')
                + f', times {srf:g}' if ctf else 'its '
                + (f'distribution shifted, sds kept, so that its median is {srf:g} \u00d7 SR_pref (SR_pref read as the median, CFM_PREF; a fault '
@@ -907,10 +901,8 @@ def main():
             + (f'{cfm_k:g} \u00d7 ' if cfm_k != 1 else '') + f'{srf:g} \u00d7 (SR_max \u2212 SR_pref) '
             f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')
             + '; a side of zero width takes the other\u2019s)')
-            + '. The inputs\u2019 Gaussian has one sd, twice the half range, for both sides; '
-            'here each side has its own, and their mean is the unit of the rows, of \u03c7\u00b2 and of the summed slip rates, '
-            'which sum the modes. The misfit, each residual weighed by its own side\u2019s sd, is evaluated exactly in every '
-            'update.' if cfm else '')
+            + '. The inputs’ Gaussian has one sd for both sides; here each side has its own, and the misfit is '
+            'evaluated exactly in every update.' if cfm else '')
          + (f' <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins are not scored against cru_D\u2019s '
             'targets but by their own probability densities: the on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code '
             'derives from N(M\u22655) and b (the total Gutenberg\u2013Richter MFD, less the truly off-fault MFD and the '
