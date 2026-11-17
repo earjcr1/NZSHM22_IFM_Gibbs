@@ -131,14 +131,15 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       and "'precise': (10000, 20000, 1.005)}" in _pl and 'PRESET_TARGETS' in src['check_convergence.py']
       and all(f'\ndef {f_}(' in _pl for f_ in ('plan', 'reference', 'run_record', 'calibration', 'post_estimate', 'needs'))
       and "'RUN_PLAN'" in src['run_config.py'] and 'SH_SECONDS[0] += time.time() - t0_' in cells[1][1]
-      and any('PLAN = run_plan.plan(RUN_MINUTES, THREADS, SWEEP_S, SETUP_S, SH_SECONDS[0], _post, TARGETS, _ref, _diff,' in c
+      and any('PLAN = run_plan.plan(RUN_MINUTES, THREADS, COST, SH_SECONDS[0], _post, TARGETS, _ref, _diff)' in c
+              and 'for _th in run_plan.CALIB_THINS:' in c
               and "MAIN = [gibbs_run(f'main_rep{r}', seed=replicate_seed(r), plan=P)" in c for _, c in cells)
       and "json.dump(TIMINGS, open('timings.json', 'w'), indent=1)" in cells[-1][1]
       and 'convergence_summary.json' in src['check_convergence.py']
       and not any("'--slab'" in c for _, c in cells),
       "notebook RUN_MINUTES = 240 and TARGETS = 'production' (2026-11-17, in place of the presets): the runs planned just before "
-      'sampling (run_plan.py: the time spent, sh() measured, a calibration run, the latest run\'s post-processing, 10% margin; '
-      '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each meets TARGETS), with a '
+      'sampling (run_plan.py: the time spent, sh() measured, calibration runs at two recording rates, the latest run\'s post-processing, 10% margin; '
+      '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
       'for later plans; the other priors are gibbs.py options')
 check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_linear()') == 1,

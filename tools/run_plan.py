@@ -6,17 +6,20 @@ RUN_MINUTES is the whole notebook's length. The notebook plans the spike-and-sla
 cleaning and the best fit have run and their time is known:
   1. the time already spent (every script the notebook ran, sh()) and the post-processing still to come (the latest run's
      record in DATA_DIR, timings.json, or else as long as the time spent) come off the budget first, with a 10% margin;
-  2. a short calibration run of gibbs.py (CALIB_SWEEPS sweeps, with the run's own settings and chains) measures the
-     time per sweep and the setup that every run pays;
+  2. two short calibration runs of gibbs.py (CALIB_SWEEPS sweeps each, with the run's own settings and chains, recording
+     a draw every CALIB_THINS sweeps) measure the time per sweep, split into a part per sweep and a part per recorded draw
+     (t = a + b / thin: the running summaries and swap moves come once per recorded draw, which costs a great deal at
+     630,000 ruptures), and the setup that every run pays;
   3. chains = CHAINS_PER_THREAD x THREADS (the kernel updates chains in groups of four per thread);
   4. replicates: 1, unless each of several would still get REPLICATE_MIN sweeps and (with a prediction) still be
-     predicted to meet TARGETS (at most REPLICATES_MAX): the verdict is each replicate's, so splitting a budget that one
-     replicate needs whole would only turn a PASS into CHECKs;
+     predicted to reach REPLICATE_SAFETY times TARGETS' effective draws (at most REPLICATES_MAX): the verdict is each
+     replicate's, so splitting a budget that one replicate needs whole would only turn a PASS into CHECKs, and the
+     prediction is rough (another run's autocorrelation times; R-hat not predicted);
   5. sweeps: what the rest of the budget affords; burn-in BURN_MAX sweeps, or BURN_FRAC of a shorter run;
      thin: about DRAWS_PER_CHAIN kept draws per chain.
 Then it predicts each of the verdict's effective-draw counts from the autocorrelation times of the latest run in DATA_DIR
-(its convergence report; one with the same model settings if there is one), and says how many minutes the targets would
-need. check_convergence.py --plan reports the verdict against TARGETS and against the prediction.
+(its convergence report; one with the same model settings if there is one, a setting an older run did not record taken
+at its value before it existed, OLD_DEFAULTS), and says how many minutes the targets would need. check_convergence.py --plan reports the verdict against TARGETS and against the prediction.
 
 TARGETS (the verdict's thresholds, set by the run's purpose, not by its length): effective draws for 95% of ruptures and
 for the total rate, and the R-hat that chi2 and the total rate must stay below; each bin's fraction on needs a fifth of
@@ -37,14 +40,18 @@ CHAINS_PER_THREAD = 4
 BURN_MAX, BURN_FRAC = 5000, 0.2
 DRAWS_PER_CHAIN = 3000
 REPLICATE_MIN, REPLICATES_MAX = 50000, 4
-CALIB_SWEEPS = 60             # the calibration run: its time per sweep and setup
-CALIB_THIN = 4                # a draw recorded every 4 sweeps, as often as a short run's: recording costs time on a small
-                              # problem (at 19k, thin 10 underestimated a thin-4 run's sweeps by 15%); an overestimate otherwise
+REPLICATE_SAFETY = 1.5        # more than one replicate only if each is predicted to reach 1.5 x TARGETS' effective draws
+CALIB_SWEEPS, CALIB_BURN = 120, 24   # each calibration run's sweeps and burn-in
+CALIB_THINS = (4, 24)         # its two recording rates, to split the time per sweep from the time per recorded draw (a single
+                              # rate misjudged it: at 19k thin 10 underestimated a thin-4 run by 15%; at 630k thin 4 overestimated
+                              # a thin-18 run by 24%)
 MIN_SWEEPS = 500              # a plan never goes below this, whatever the budget
 METRICS = (('ess_rate_5pct', '95% of ruptures'), ('ess_total', 'the total rate'), ('ess_pi_min', "each bin's fraction on"))
 MODEL_KEYS = ('mfd_uncertainty', 'down_the_middle', 'misfit_slip', 'misfit_mfd', 'misfit_paleo', 'mfd_monotonic', 'mfd_gr',
               'mfd_step_sd', 'slip_along', 'cfm_timeframe', 'cfm_template_rho', 'slip_rate_factor', 'slip_sum', 'slip_sum_l0',
               'plate_rate', 'floor')
+OLD_DEFAULTS = {'slip_along': 'uniform', 'mfd_step_sd': None, 'mfd_gr': False}   # a setting a run made before it existed did
+                                                                                   # not record: its value then
 
 
 def needs(targets):
@@ -53,10 +60,25 @@ def needs(targets):
     return dict(ess_rate_5pct=rate, ess_total=total, ess_pi_min=total / 5), rhat
 
 
-def calibration(npz, wall_s, sweeps):
-    """A calibration run's time per sweep and setup (its wall time less its sampling, gibbs.py's 'seconds')."""
-    sec = float(np.load(npz)['seconds'])
-    return sec / sweeps, max(0.0, wall_s - sec)
+def calibration(runs):
+    """The calibration runs, [(npz, wall seconds, sweeps, thin), ...] -> dict(a, b, setup): a sweep's time a + b / thin
+    (a per sweep, b per recorded draw; least squares over the runs, neither below zero) and the setup each run pays (its
+    wall time less its sampling, gibbs.py's 'seconds'; the median)."""
+    t, x, setup = [], [], []
+    for npz, wall, sweeps, thin in runs:
+        sec = float(np.load(npz)['seconds'])
+        t.append(sec / sweeps)
+        x.append(1.0 / thin)
+        setup.append(max(0.0, wall - sec))
+    t, x = np.array(t), np.array(x)
+    if len(t) > 1 and np.ptp(x) > 0:
+        b, a = np.polyfit(x, t, 1)
+        if b < 0 or a <= 0:                               # noise: no measurable cost per recorded draw
+            a, b = float(t.max()), 0.0
+    else:
+        a, b = float(t.max()), 0.0
+    return dict(a=float(a), b=float(b), setup=float(np.median(setup)), thins=[int(round(1 / v)) for v in x],
+                sweeps=[r[2] for r in runs])
 
 
 def _report_rows(path):
@@ -129,7 +151,8 @@ def reference(data_dir, config, exclude=None):
             recs.append(r)
     if not recs:
         return None, None
-    diff = lambda r: [k for k in MODEL_KEYS if str(r['cfg'].get(k)) != str(config.get(k))]
+    val = lambda c, k: c[k] if c.get(k) is not None else OLD_DEFAULTS.get(k, c.get(k))
+    diff = lambda r: [k for k in MODEL_KEYS if str(val(r['cfg'], k)) != str(val(config, k))]
     recs.sort(key=lambda r: r['when'], reverse=True)
     same = [r for r in recs if not diff(r)]
     r = (same or recs)[0]
@@ -142,38 +165,51 @@ def _round_down(s):
     return int(s // step * step)
 
 
-def plan(minutes, threads, sweep_s, setup_s, spent_s, post_s, targets, ref=None, ref_diff=None, calib_chains=None):
-    """The run lengths for RUN_MINUTES, with the reasoning as lines. sweep_s and setup_s: the calibration's (at
-    CHAINS_PER_THREAD x threads chains); spent_s: the time the notebook has spent; post_s: the post-processing to come;
-    ref: the reference run (reference()) for the prediction. Returns dict(chains, sweeps, burn, thin, hyper_every,
-    replicates, predicted, minutes_needed, lines)."""
+def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=None):
+    """The run lengths for RUN_MINUTES, with the reasoning as lines. cost: the calibration's (calibration(), at
+    CHAINS_PER_THREAD x threads chains: a sweep's time a + b / thin, and the setup per run); spent_s: the time the notebook
+    has spent; post_s: the post-processing to come; ref: the reference run (reference()) for the prediction. Returns
+    dict(chains, sweeps, burn, thin, hyper_every, replicates, sweep_s (at that thin), setup_s, predicted, minutes_needed,
+    lines)."""
     K = CHAINS_PER_THREAD * threads
     total = minutes * 60.0
     budget = total * (1 - MARGIN) - spent_s - post_s
     nd, _ = needs(targets)
     tau = ref['tau'] if ref else {}
+    setup_s = cost['setup']
+    sec = lambda th: cost['a'] + cost['b'] / th          # a sweep's time, recording a draw every th sweeps
+    afford = lambda r, th: (budget - r * setup_s) / (r * sec(th))
+    burn_of = lambda S_: BURN_MAX if S_ * BURN_FRAC >= BURN_MAX else int(round(S_ * BURN_FRAC, -1 if S_ >= 500 else 0))
 
-    def lengths(r):                                      # sweeps, burn-in and thin for r replicates
-        S_ = (budget - r * setup_s) / (r * sweep_s)
-        S_ = _round_down(max(S_, MIN_SWEEPS))
-        b_ = BURN_MAX if S_ * BURN_FRAC >= BURN_MAX else int(round(S_ * BURN_FRAC, -1 if S_ >= 500 else 0))
-        return S_, b_, max(1, int(round((S_ - b_) / DRAWS_PER_CHAIN)))
+    def lengths(r):                                      # sweeps, burn-in and thin for r replicates (thin and the sweeps
+        th = 1                                           # it affords settle in a few rounds)
+        for _ in range(8):
+            S_ = _round_down(max(afford(r, th), MIN_SWEEPS))
+            b_ = burn_of(S_)
+            th_new = max(1, int(round((S_ - b_) / DRAWS_PER_CHAIN)))
+            if th_new == th:
+                break
+            th = th_new
+        return S_, b_, th
 
-    meets = lambda r: all(K * (lengths(r)[0] - lengths(r)[1]) / tau[m] >= nd[m] for m in tau)
-    reps = next((r for r in range(REPLICATES_MAX, 1, -1)
-                 if (budget - r * setup_s) / (r * sweep_s) >= REPLICATE_MIN and meets(r)), 1)
-    short = (budget - reps * setup_s) / (reps * sweep_s) < MIN_SWEEPS
+    def meets(r):
+        S_, b_, _ = lengths(r)
+        return all(K * (S_ - b_) / tau[m] >= REPLICATE_SAFETY * nd[m] for m in tau)
+    reps = next((r for r in range(REPLICATES_MAX, 1, -1) if lengths(r)[0] >= REPLICATE_MIN and meets(r)), 1)
     S, burn, thin = lengths(reps)
+    short = afford(reps, thin) < MIN_SWEEPS
+    sweep_s = sec(thin)
     est = spent_s + post_s + reps * (setup_s + S * sweep_s)
     L = [f'run plan for RUN_MINUTES = {minutes:g} (tools/run_plan.py):',
          f'   spent so far {spent_s / 60:.1f} min (cleaning, the best fit, the calibration); post-processing to come about '
          f'{post_s / 60:.1f} min; a {100 * MARGIN:.0f}% margin; {max(budget, 0) / 60:.1f} min left for sampling',
-         f'   calibration ({CALIB_SWEEPS} sweeps, {calib_chains or K} chains, {threads} threads): {sweep_s:.4f} s per sweep, '
-         f'{setup_s:.0f} s of setup per run',
+         f'   calibration ({len(cost.get("thins", [])) or 1} runs of {CALIB_SWEEPS} sweeps, {K} chains, {threads} threads, a draw '
+         f'recorded every {" and ".join(str(t_) for t_ in cost.get("thins", []))} sweeps): {cost["a"]:.4f} s per sweep plus '
+         f'{cost["b"]:.3f} s per recorded draw, so {sweep_s:.4f} s per sweep at this plan\'s thin; {setup_s:.0f} s of setup per run',
          f'   chains: {K} ({CHAINS_PER_THREAD} per thread); replicates: {reps}'
-         + (f' (each still gets {REPLICATE_MIN:,} sweeps or more' + (' and is predicted to meet TARGETS)' if tau else ')')
-            if reps > 1 else f' (more only if each could get {REPLICATE_MIN:,} sweeps' + (' and still meet TARGETS' if tau else '')
-            + '; so no replicate comparison)'),
+         + (f' (each still gets {REPLICATE_MIN:,} sweeps or more' + (f' and is predicted to reach {REPLICATE_SAFETY:g} x TARGETS\' '
+            'effective draws)' if tau else ')') if reps > 1 else f' (more only if each could get {REPLICATE_MIN:,} sweeps'
+            + (f' and still reach {REPLICATE_SAFETY:g} x TARGETS\' effective draws' if tau else '') + '; so no replicate comparison)'),
          f'   sweeps {S:,} per chain, burn-in {burn:,}'
          + ('' if burn == BURN_MAX else f' ({100 * BURN_FRAC:.0f}% of a run too short for the usual {BURN_MAX:,})')
          + f', a draw kept every {thin} ({S // thin - burn // thin:,} kept per chain)',
@@ -194,7 +230,8 @@ def plan(minutes, threads, sweep_s, setup_s, spent_s, post_s, targets, ref=None,
                     else ' -> expect CHECK'))
         x = max(nd[m] * tau[m] / K for m in pred)
         S_need = x + BURN_MAX if x * BURN_FRAC / (1 - BURN_FRAC) >= BURN_MAX else x / (1 - BURN_FRAC)
-        need_min = (spent_s + post_s + setup_s + S_need * sweep_s) / (1 - MARGIN) / 60
+        th_need = max(1, int(round((S_need - burn_of(S_need)) / DRAWS_PER_CHAIN)))
+        need_min = (spent_s + post_s + setup_s + S_need * sec(th_need)) / (1 - MARGIN) / 60
         L.append(f'   TARGETS {targets!r} would need about {S_need:,.0f} sweeps per chain with {K} chains: RUN_MINUTES about '
                  f'{need_min:,.0f}' + (' (this plan should suffice)' if not miss else ''))
     else:
@@ -213,9 +250,9 @@ def post_estimate(ref, spent_s):
     return spent_s, 'taken as long as the time spent so far (no earlier record)'
 
 
-if __name__ == '__main__':                               # a plan without the notebook: python run_plan.py MINUTES THREADS SWEEP_S SETUP_S SPENT_S POST_S [TARGETS DATA_DIR]
+if __name__ == '__main__':      # a plan without the notebook: python run_plan.py MINUTES THREADS A B SETUP_S SPENT_S POST_S [TARGETS DATA_DIR]
     import sys
     a = sys.argv[1:]
-    ref, diff = reference(a[7], {}) if len(a) > 7 else (None, None)
-    print('\n'.join(plan(float(a[0]), int(a[1]), float(a[2]), float(a[3]), float(a[4]), float(a[5]),
-                         a[6] if len(a) > 6 else 'production', ref, diff)['lines']))
+    ref, diff = reference(a[8], {}) if len(a) > 8 else (None, None)
+    print('\n'.join(plan(float(a[0]), int(a[1]), dict(a=float(a[2]), b=float(a[3]), setup=float(a[4]), thins=list(CALIB_THINS)),
+                         float(a[5]), float(a[6]), a[7] if len(a) > 7 else 'production', ref, diff)['lines']))

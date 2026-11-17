@@ -532,9 +532,12 @@ pass the run's flags and --snap-floor (after the user's 630k run of 2026-11-17).
 RUN_MINUTES (240) and TARGETS ('production') replaced PRESET/PRESETS on 2026-11-17 (the user's request; one scheme, not two). tools/run_plan.py:
 plan() at the top of the sampler's cell (cell 11), after cleaning and the best fit: spent = SH_SECONDS (cell 2's sh() times
 every script; idle time not counted); post = the latest DATA_DIR run's timings.json post_s (the last cell writes it) or = spent;
-budget = 0.9 x RUN_MINUTES x 60 - spent - post; calibration gibbs run (CALIB_SWEEPS 60, burn 20, CALIB_THIN 4, the run's settings
-and chains, quiet, deleted) -> sweep_s, setup_s (wall - npz 'seconds'); chains 4 x THREADS; replicates > 1 only if each gets
->= 50,000 sweeps and is predicted to meet TARGETS (max 4); sweeps rounded down; burn 5,000 or 20%; thin for ~3,000 kept draws.
+budget = 0.9 x RUN_MINUTES x 60 - spent - post; two calibration gibbs runs (CALIB_SWEEPS 120, CALIB_BURN 24, CALIB_THINS 4 and
+24, the run's settings and chains, quiet, deleted) -> calibration(): sweep time a + b / thin (per sweep, per recorded draw; one
+rate misjudged 630k by 24%), setup (wall - npz 'seconds'); chains 4 x THREADS; replicates > 1 only if each gets >= 50,000
+sweeps and is predicted at >= REPLICATE_SAFETY 1.5 x TARGETS (max 4); sweeps rounded down; burn 5,000 or 20%; thin for ~3,000
+kept draws (thin and sweeps iterated). reference() compares MODEL_KEYS with OLD_DEFAULTS for settings older runs lack
+(slip_along uniform, mfd_step_sd None, mfd_gr False).
 Prediction: reference() = latest DATA_DIR run with convergence_summary.json (check_convergence.py writes it) or the report's
 tables (older runs; thin from workflow_config), preferring identical MODEL_KEYS; tau = chains x draws x thin / ESS per metric
 (ess_rate_5pct, ess_total, ess_pi_min = fifth of the total's target); minutes needed for TARGETS. run_plan.json (RUN_DIR),
