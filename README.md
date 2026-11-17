@@ -145,6 +145,6 @@ The next three figures show the posterior’s fit to each data type. Each colour
 - **Paleo rates.** The posterior mean underpredicts them (median ratio 0.79).
 - **Slow mixing.** 71 ruptures per replicate, carrying 11.0% of the total rate, mix slowly; their individual rates are less precise than the rest, though sums over many ruptures are not affected.
 - **Convergence.** Not every replicate passes: main_rep0: R-hat of the ruptures on or of a bin's fraction on 1.0148 (below 1.01 needed) (the report suggests longer runs).
-- **Starts.** All 16 chains started from the same point (the best fit); runs from dispersed starts remain untested.
+- **Starts.** The 16 chains started from over-dispersed points, half randomized best fits and half prior draws, so R̂ across them tests whether the run forgot its starts; the slow minority above is what it has not yet settled.
 - **Representative models.** The 100 representatives miss some of their tolerances; the posterior-mean rate vector is the exact input for mean hazard.
 - **What the data determine.** Sums of rates (fault, subsection and bin rates) and the probability that a rupture exceeds about 10<sup>−5</sup> per year are well determined; individual rates below that are largely set by the prior.

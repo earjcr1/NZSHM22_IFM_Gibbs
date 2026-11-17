@@ -1299,9 +1299,14 @@ def main():
         pts.append('<b>Convergence.</b> Not every replicate passes'
                    + (': ' + '; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check)
                       + ' (the report suggests longer runs).' if why_check else '; see the reasons in convergence_report.txt.'))
-    pts.append(f'<b>Starts.</b> All {nrep * (ch or 0)} chains started from the same point (the best fit'
-               + (' moved inside the band' if band else ', with ruptures switched on for positivity' if positive and pos_on
-                  else '') + '); runs from dispersed starts remain untested.')
+    if cfg.get('dispersed_starts'):                   # each chain from its own over-dispersed start
+        pts.append(f'<b>Starts.</b> The {nrep * (ch or 0)} chains started from over-dispersed points, half randomized best '
+                   'fits and half prior draws, so R\u0302 across them tests whether the run forgot its starts; the slow '
+                   'minority above is what it has not yet settled.')
+    else:
+        pts.append(f'<b>Starts.</b> All {nrep * (ch or 0)} chains started from the same point (the best fit'
+                   + (' moved inside the band' if band else ', with ruptures switched on for positivity' if positive and pos_on
+                      else '') + '); runs from dispersed starts remain untested.')
     if reps and s_verdict[1] and 'miss' in s_verdict[1]:
         pts.append(f'<b>Representative models.</b> The {reps} representatives miss some of their tolerances; the '
                    'posterior-mean rate vector is the exact input for mean hazard.')
