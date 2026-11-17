@@ -820,6 +820,7 @@ Prior-free extremal bounds for a few key functionals (a linear program with per-
 | representative draws | `select_draws.py` | `select_report.txt` |
 | figures | `plot_rate_magnitude.py`, `plot_slip_rates.py`, `plot_paleo_rates.py` | each figure's `.txt` |
 | the faults' share of the plate rate and the summed slip rates (with `RUPTURE_SET`) | `plate_rate.py` | `plate_rate.txt` |
+| the targets, the inputs' Gaussians against the distributions the run scores the data by: slip rates, paleo rates and the magnitude bins (MFD_GR's PDFs, or its defaults for comparison; with `RUPTURE_SET`; November 17th, 2026) | `plot_targets.py` | `fig_targets_slip.png`, `fig_targets_paleo.png`, `fig_targets_mfd.png` and their `.txt`, in `RUN_DIR`; in the summary PDF's section 4 |
 | everything above, in order | the notebook | `workflow_log_<date>-<time>.txt`, in the prior's folder |
 
 Its run lengths are planned to fit `RUN_MINUTES`, and its verdict judged against `TARGETS` ("Run lengths from the time available"; until November 17th, 2026, three presets, `PRESET`).

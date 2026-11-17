@@ -462,7 +462,7 @@ def main():
 
     # the figures that exist, numbered in the order they appear
     FIGS = ['prelim.png', 'nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
-            'nnls/fig_paleo_rates_nnls.png'] + [f'{a.prior}/{f}' for f in (
+            'nnls/fig_paleo_rates_nnls.png', 'fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png'] + [f'{a.prior}/{f}' for f in (
                 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
                 'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png')]
@@ -472,8 +472,13 @@ def main():
         if f not in present and os.path.basename(f) not in a.skip_figs:
             MISSING.append(f)
     num = {f: i + 1 for i, f in enumerate(present)}
-    fref = lambda *fs: ('Figures ' if len([f for f in fs if f in num]) > 1 else 'Figure ') + \
-        '\u2013'.join(str(num[f]) for f in fs if f in num) if any(f in num for f in fs) else 'the figures (not found)'
+    def fref(*fs):                                       # 'Figure 3', 'Figures 3\u20135' (a run), 'Figures 3, 5'
+        k = sorted(num[f] for f in fs if f in num)
+        if not k:
+            return 'the figures (not found)'
+        if len(k) == 1:
+            return f'Figure {k[0]}'
+        return 'Figures ' + (f'{k[0]}\u2013{k[-1]}' if k[-1] - k[0] == len(k) - 1 else ', '.join(map(str, k)))
 
     def to_md(t, cell_=False):
         """The PDF's paragraph markup as Markdown (GitHub's: <sub> and <sup> kept as HTML)."""
@@ -975,6 +980,38 @@ def main():
             'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 8.5):g}' + ' km of the '
             'plate boundary counts as one measurement, and it is recorded apart from χ² (' + tt('plate_rate.txt') + ').'
             if ssum else ''))
+
+    # the targets: the inputs' Gaussians against the distributions this run scores the data by (plot_targets.py)
+    if any(f in num for f in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')):
+        para('<b>The targets, old and new.</b> NZSHM22\u2019s inversion scores every datum by a Gaussian in rate, as its '
+             'inputs give it. This workflow scores each type by the distribution its uncertainty was worked out in: the '
+             'slip rates by the NZ Community Fault Model\u2019s split normals (lopsided where the CFM\u2019s ranges are, and '
+             'corrected for each fault\u2019s timeframe), the paleo rates by each site\u2019s recurrence-interval PDF, and, '
+             'with MFD_GR, the magnitude bins by the PDFs that NZSHM22\u2019s own uncertainty in N(M\u22655) and b gives them. '
+             + fref('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png') + ' set the two side by side.')
+    figure('fig_targets_slip.png', 'Slip-rate targets. For each fault section, at the inputs\u2019 target (the x axis), '
+           'the wide grey bar is the 16\u201384% range of the inputs\u2019 Gaussian (NZSHM22: mean 0.8 SlipRate, sd 2 '
+           'SlipRateStdDev, the 0.8 on the mean only), and the coloured bar the same range of the distribution this run '
+           'scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same '
+           'colours. With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are much '
+           'narrower and lopsided: SR_min and SR_max are read as 2\u03c3 rather than 1, and the slip-rate factor scales the '
+           'whole distribution, sds included; many of the inputs\u2019 Gaussians reach below zero.', FW)
+    figure('fig_targets_paleo.png', 'Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs\u2019 '
+           'Gaussian in rate (bestEstimate \u00b1 its one-sigma sd) and the coloured bar the 15.9\u201384.1% range of the '
+           'site\u2019s recurrence-interval PDF, as rates, which the paleo misfit in years scores it by. Both are centred on '
+           'bestEstimate; the PDF reaches further below it and less far above, the skew of a recurrence interval seen in '
+           'rate, and never below zero.', FW)
+    figure('fig_targets_mfd.png', 'The magnitude bins. Left, per bin: the total Gutenberg\u2013Richter MFD and NZSHM22\u2019s '
+           'partitioning of it (the truly off-fault and the sub-seismogenic on-fault MFDs), the supra-seismogenic target '
+           'that remains (cru_D\u2019s, black) with NZSHM22\u2019s \u00b11\u03c3 (blue), and MFD_GR\u2019s PDF for each bin '
+           '(orange: 16\u201384% and 2.3\u201397.7%), propagated from the logic tree\u2019s correlated (b, N) pairs, the N '
+           'scaling and, with RECONSIDER_MAGUNCERT, the magnitude-uncertainty factor on N. Right, cumulative: the same '
+           'targets summed from each magnitude up, with the band the bins give when each is drawn from its own PDF, as '
+           'the sampler scores them (independently). The central target is cru_D\u2019s either way; MFD_GR widens each '
+           'bin to the uncertainty N and b give it (at 630,000 ruptures about \u00b125% at M6.85 and a factor of about '
+           '1.8 at M8.55, where cru_D\u2019s recipe gives 10\u201320%). '
+           + ('This run scores the bins by these PDFs (MFD_GR).' if mfdgr else
+              'This run used cru_D\u2019s Gaussians; MFD_GR\u2019s default PDFs are shown for comparison.'), FW)
 
     head('5. Sampling')
     para(f'The sampler ({tt("gibbs.py")}, a C kernel run from Python) is an exact Gibbs sampler: it updates one rupture at '
