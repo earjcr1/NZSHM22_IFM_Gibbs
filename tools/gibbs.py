@@ -46,6 +46,7 @@ vectorised NumPy kernel (~100x slower) if no compiler is available, or on reques
 import argparse
 import ctypes
 import hashlib
+import math
 import os
 import subprocess
 import sys
@@ -868,12 +869,14 @@ static void col_lwsums(int64_t kg, const double *data, const int32_t *indices, c
    multiplies the likelihood by exp(-S / 2). Every rupture is in at most one bin (bx; -1 none), with the coefficient gx
    there. Each chain keeps lam and H_b = sum_{k != b} A_bk lam_k - c_b, so that a change of bin b alone from y0 to y1
    changes S by (l1 - l0) (A_bb (l1 + l0) + 2 H_b), with l = ln y. */
-typedef struct { int64_t NB; const int64_t *row; const double *A, *c, *dy; const int32_t *bx; const double *gx; } stctx;
-static void st_fill(const stctx *st, const double *r, double *lam, double *hh) {
+typedef struct { int64_t NB; const int64_t *row; const double *A, *c, *dy; const int32_t *bx; const double *gx; int64_t cs; } stctx;
+/* cs: c's stride per chain (0: one c for every chain; NB: each chain its own, --mfd-gr-tau, each draw's G-R curve) */
+static void st_fill(const stctx *st, const double *r, double *lam, double *hh, int64_t k) {
     const int64_t NB = st->NB;
+    const double *c = st->c + k * st->cs;
     for (int64_t b = 0; b < NB; b++) lam[b] = log(r[st->row[b]] + st->dy[b]);
     for (int64_t b = 0; b < NB; b++) {
-        double h = -st->c[b];
+        double h = -c[b];
         for (int64_t k = 0; k < NB; k++) if (k != b) h += st->A[b * NB + k] * lam[k];
         hh[b] = h;
     }
@@ -998,7 +1001,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
     if (ST) {
         LAM = (double *)malloc(sizeof(double) * (size_t)K * (size_t)ST->NB);
         HH = (double *)malloc(sizeof(double) * (size_t)K * (size_t)ST->NB);
-        for (int64_t k = 0; k < K; k++) st_fill(ST, R + k * N, LAM + k * ST->NB, HH + k * ST->NB);
+        for (int64_t k = 0; k < K; k++) st_fill(ST, R + k * N, LAM + k * ST->NB, HH + k * ST->NB, k);
     }
     for (int64_t sw = 0; sw < nsweeps; sw++) {
       for (int64_t i = 0; i < n; i++) {
@@ -1350,7 +1353,7 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
         double *x = X + k * n, *r = R + k * N;
         uint64_t *s = rng + 4 * k;
         int64_t acc = 0;
-        if (ST) st_fill(ST, r, lam, hh);
+        if (ST) st_fill(ST, r, lam, hh, k);
         for (int64_t q = 0; q < npair; q++) {
             const int64_t i = pi[q], j = pj[q];
             const double mi = x[i], mj = x[j];
@@ -1722,19 +1725,23 @@ def _pm_ptr(T):
 
 
 class _STC(ctypes.Structure):
-    """--mfd-step-sd: the kernel's stctx, the MFD steps' term."""
+    """--mfd-step-sd, --mfd-gr-tau: the kernel's stctx, the MFD steps' term."""
     _fields_ = [('NB', ctypes.c_int64), ('row', ctypes.c_void_p), ('A', ctypes.c_void_p), ('c', ctypes.c_void_p),
-                ('dy', ctypes.c_void_p), ('bx', ctypes.c_void_p), ('gx', ctypes.c_void_p)]
+                ('dy', ctypes.c_void_p), ('bx', ctypes.c_void_p), ('gx', ctypes.c_void_p), ('cs', ctypes.c_int64)]
 
 
-def _st_ptr(T):
-    """--mfd-step-sd: the address of the kernel's stctx, or None without it."""
+def _st_ptr(T, k0=0):
+    """--mfd-step-sd, --mfd-gr-tau: the address of the kernel's stctx for chains from k0 on (with --mfd-gr-tau each chain
+    has its own c, the draw's G-R curve, so the context points at chain k0's), or None without it."""
     ms = getattr(T, 'mstep', None)
     if ms is None:
         return None
-    if '_c' not in ms:
-        ms['_c'] = _STC(len(ms['row']), *(ms[k].ctypes.data for k in ('row', 'A', 'c', 'dy', 'bx', 'gx')))
-    return ctypes.addressof(ms['_c'])
+    cs = ms['c'].shape[1] if ms['c'].ndim == 2 else 0
+    key = '_c' if cs == 0 else f'_c{k0}'
+    if key not in ms:
+        ms[key] = _STC(len(ms['row']), *(ms[k].ctypes.data for k in ('row', 'A')), ms['c'].ctypes.data + k0 * cs * 8,
+                       *(ms[k].ctypes.data for k in ('dy', 'bx', 'gx')), cs)
+    return ctypes.addressof(ms[key])
 
 
 def _sp_ptrs(T):
@@ -1844,7 +1851,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if KC[3] is None else _ptr(KC[3]), None if T.rlo is None else _ptr(T.rlo),
                       None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T),
-                      *_pass_ptrs(T), _st_ptr(T))
+                      *_pass_ptrs(T), _st_ptr(T, k0))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -1925,7 +1932,7 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
                      None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T),
-                     _st_ptr(T))
+                     _st_ptr(T, k0))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2554,7 +2561,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     if T.slip_sum is not None:
         tr['slip_sum_expect'] = float(T.slip_sum['expect'])
-    if T.mstep is not None:                              # --mfd-step-sd: its tolerance, and its value if the steps scatter so
+    if T.mstep is not None and T.mstep.get('joint'):     # --mfd-gr-tau: its tolerance (decades a step)
+        tr['mfd_gr_tau'] = T.mstep['tau_dec']
+    elif T.mstep is not None:                            # --mfd-step-sd: its tolerance, and its value if the steps scatter so
         tr['mfd_step_sd'], tr['mfd_step_expect'] = T.mstep['sigma_s'], len(T.mstep['pairs']) - 1
     samp = None
     ST = None                                            # running summaries: everything the notebook needs, without draws
@@ -2600,6 +2609,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             done += ns
             if SS is not None:
                 update_pi(counted=backend == 'c')
+            if T.mstep is not None and T.mstep.get('joint'):   # --mfd-gr-tau: each chain's b and level, given its bins
+                mjoint_update(T.mstep, R, g)
             if H is not None:
                 for k in range(K):
                     zk, hmu[k], htau[k] = H.update(g, T, np.log(X[k]), hmu[k].copy(), htau[k])
@@ -2632,7 +2643,17 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             y = y.copy()
             y[:, pr_] /= PMr['eps']
             Rd = y - Dd
-        if MFr is not None and MFr.get('pdf'):               # MFD_GR: each bin's curve misfit, -2 ln of its PDF from its minimum
+        if MFr is not None and MFr.get('joint'):             # --mfd-gr-tau: the bins' misfit about each chain's G-R curve
+            mr_ = MFr['rows']
+            tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = mjoint_value(T.mstep, R)
+            tr.setdefault('mfd_gr_b', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 0]
+            tr.setdefault('mfd_gr_level', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 1] + math.log(T.mstep['m_c'])
+            tr.setdefault('mfd_gr_n5', np.zeros((K, n_rec)))[:, rec] = (T.mstep['m_c'] * np.exp(T.mstep['theta'][:, 1])
+                                                                        * T.mstep['n5'][T.mstep['ib']])   # s m N(b), per year
+            y = y.copy()
+            y[:, mr_] /= MFr['eps']
+            Rd = y - Dd
+        elif MFr is not None and MFr.get('pdf'):             # MFD_GR: each bin's curve misfit, -2 ln of its PDF from its minimum
             mr_ = MFr['rows']
             tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(
                 _pm_f_np(T.lw['PM'], np.tile(MFr['idx'], (K, 1)), np.log(np.maximum(y[:, mr_], 1e-300))), 1)
@@ -2677,7 +2698,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('balance_s', np.zeros((K, n_rec, nbal - nd)))[:, rec] = R[:, nd:nbal] / np.sqrt(T.balance['A'])
         if T.slip_sum is not None:                           # the summed slip rates' term, on its own
             tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
-        if T.mstep is not None:                              # --mfd-step-sd: the MFD steps' term, on its own
+        if T.mstep is not None and not T.mstep.get('joint'):   # --mfd-step-sd: the MFD steps' term, on its own
             tr.setdefault('mfd_step', np.zeros((K, n_rec)))[:, rec] = mstep_value(T.mstep, R)
         if T.lw is not None and T.lw.get('tau') is not None:   # --log-band: the soft band's penalty, on its own
             lr_ = T.lw['rows']
@@ -2775,6 +2796,9 @@ def report(tr, burn, thin, names=None):
     fitted = 'misfit' in tr and not np.array_equal(tr['misfit'], tr['chi2'])
     q = ({'chi2 as fitted': tr['misfit'][:, nb:], 'chi2 (Gaussians)': tr['chi2'][:, nb:]} if fitted else {'chi2': tr['chi2'][:, nb:]})
     q.update({'sum_m': tr['sum_m'][:, nb:], 'pred/data scale': tr['tscale'][:, nb:]})
+    if 'mfd_gr_b' in tr:                             # --mfd-gr-tau: the curve's b and level, with R-hat and effective draws
+        q.update({'MFD curve b': tr['mfd_gr_b'][:, nb:], 'MFD curve ln(s m)': tr['mfd_gr_level'][:, nb:],
+                  'MFD curve N(M>=5)': tr['mfd_gr_n5'][:, nb:]})
     for j, idx in enumerate(tr['monitor']):
         q[f'm[{idx}]' if names is None else names[j]] = tr['mon'][:, nb:, j]
     print(f'{"quantity":>18s} {"mean":>11s} {"sd":>10s} {"q05":>10s} {"q95":>10s} {"Rhat":>6s} {"ESS":>7s}')
@@ -2819,7 +2843,15 @@ def report(tr, burn, thin, names=None):
         print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
               f'tau of their targets: {o.mean():.1f} per draw')
-    if 'mfd_misfit' in tr:                           # --mfd-misfit log10: in the likelihood in place of the bins' Gaussian
+    if 'mfd_gr_b' in tr:                             # --mfd-gr-tau: the bins about each draw's G-R curve, and its b and level
+        v, bb, lv = tr['mfd_misfit'][:, nb:], tr['mfd_gr_b'][:, nb:], np.exp(tr['mfd_gr_level'][:, nb:])
+        q_ = lambda x: f'{np.mean(x):.3f} (5-95% {np.quantile(x, .05):.3f}-{np.quantile(x, .95):.3f})'
+        print(f'MFD misfit (--mfd-gr-tau {float(tr["mfd_gr_tau"]):g}, the bins about each draw\'s G-R curve): {v.mean():.1f} on average '
+              f'(5-95% {np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}; near {len(tr["mfd_pdf_rows"])} if they scatter about it as '
+              f'the tolerance says), in the likelihood in place of the bins\' own PDFs; the curve\'s b {q_(bb)}, its level s m '
+              f'(the N scaling times the magnitude-uncertainty factor) {q_(lv)}, its N(M>=5) s m N(b) {q_(tr["mfd_gr_n5"][:, nb:])} '
+              'per year (the regional rate, through NZSHM22\'s partitioning)')
+    elif 'mfd_misfit' in tr:                         # --mfd-misfit log10: in the likelihood in place of the bins' Gaussian
         v = tr['mfd_misfit'][:, nb:]
         print(f'MFD misfit (log10 part, sum (log10(total / R_j) / s_j)^2, s_j = log10(1 + sigma_j / R_j)): {v.mean():.1f} '
               f'on average (5-95% {np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), in the likelihood '
@@ -4342,6 +4374,81 @@ def mstep_build(T, rows, orig, sigma_s, width):
                 width=float(width), pairs=np.array(pairs, np.int64), const=float(e @ Pc @ e / tau ** 2))
 
 
+def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801):
+    """--mfd-gr-tau (MFD_GR_TAU): the bins scored jointly about each draw's G-R curve. b and the level L = ln(s m / m_mid)
+    are each chain's hyperparameters, under their MFD_GR priors (mfd_gr.b_logpdf, level_logpdf); the draw's curve over the
+    bins' targets is exp(L + shape(b)) (mfd_gr.joint_grid, saved with the problem by cleaning), and the residual rho = lam -
+    ln dy - L - shape(b) (lam = ln of each bin's prediction, dy its target, in its row's units) is scored by
+    S = sum_p (rho_{a+1} - rho_a)^2 / tau^2 + (mean rho)^2 / tau^2 (tau = tau_dec x ln 10; tau_dec the shape's tolerance in
+    decades per step, the user's MFD_GR_TAU): the steps' departures from the curve's, and the bins' mean level tied to it
+    within one step's tolerance, so that the level and tilt are all b's and the level's (none of them the residual's). S is
+    the MFD's misfit on chi2's scale (rank NB: near NB if the residuals scatter as tau says); in the kernel it is the step
+    term's quadratic form with A = Q fixed and c = Q (ln dy + L + shape(b)) each chain's own, updated as b and L are
+    drawn (mjoint_update). The bins' own PDFs are not used, so the catalogue's information enters once, as b's and the
+    level's priors."""
+    import mfd_gr as mg
+    if P.get('mfd_gr_shape') is None or P.get('mfd_gr') is None:
+        raise SystemExit('--mfd-gr-tau needs a problem cleaned with preliminaries.py --mfd-gr since November 18th, 2026 (each '
+                         'bin\'s G-R shape over b, mfd_gr_shape): clean again')
+    ms = mstep_build(T, rows, orig, tau_dec / width, width)
+    if len(ms['pairs']) != len(rows) - 1:
+        raise SystemExit('--mfd-gr-tau: the magnitude bins must be contiguous')
+    nb_, tau = len(rows), tau_dec * LN10
+    Q = ms['D'].T @ ms['D'] / tau ** 2 + np.ones((nb_, nb_)) / (nb_ ** 2 * tau ** 2)
+    knobs = mg.parse_knobs(P['mfd_gr'])
+    bg0 = np.asarray(P['mfd_gr_bgrid'], float)
+    sh0 = np.asarray(P['mfd_gr_shape'], float)[rows]
+    if not np.all(np.isfinite(sh0)):
+        raise SystemExit('--mfd-gr-tau: some bin has no G-R shape in the problem (mfd_gr_shape)')
+    if len(bg0) > 1:                                    # b on a fine grid, the shape (smooth in b) interpolated
+        bg = np.linspace(bg0[0], bg0[-1], n_b)
+        sh = np.array([np.interp(bg, bg0, r_) for r_ in sh0])
+    else:
+        bg, sh = bg0, sh0
+    lpv, v_lo, v_hi, m_c = mg.level_logpdf(knobs)
+    lg = np.linspace(v_lo, v_hi, n_l) - math.log(m_c)
+    ms.update(A=np.ascontiguousarray(Q), c=np.zeros((K, nb_)), joint=True, tau=tau, tau_dec=float(tau_dec), Q=Q,
+              lnd=np.log(ms['dy']), shape=sh, bgrid=bg, lgrid=lg, lpb=np.asarray(mg.b_logpdf(knobs, bg), float),
+              lpl=np.asarray(lpv(lg + math.log(m_c)), float), QG=Q @ sh, GQG=np.sum(sh * (Q @ sh), 0),
+              oQG=Q.sum(0) @ sh, Q1=Q.sum(1), oQo=float(Q.sum()), knobs=knobs, m_c=float(m_c),
+              theta=np.zeros((K, 2)), ib=np.zeros(K, np.int64), il=np.zeros(K, np.int64),
+              n5=np.asarray(mg.n_of_b(knobs, bg), float))   # N(M>=5) at each b (s = m = 1): the draw's is s m N(b)
+    ms.pop('const', None)
+    return ms
+
+
+def mjoint_update(ms, R, g, chains=None):
+    """--mfd-gr-tau: each chain's b and level drawn exactly from their conditional given its bins' predictions (on the
+    grids of b and L: prior x exp(-S / 2)), and the chain's c in the kernel's step term set to its new curve."""
+    R = np.atleast_2d(R)
+    for k in (range(R.shape[0]) if chains is None else chains):
+        with np.errstate(divide='ignore'):
+            u = np.log(R[k, ms['row']] + ms['dy']) - ms['lnd']
+        if not np.all(np.isfinite(u)):
+            raise SystemExit('--mfd-gr-tau: a magnitude bin is predicted at 0; every bin must hold a rupture that is on')
+        a_ = u @ ms['QG']
+        s1 = float(u @ ms['Q1'])
+        L = ms['lgrid']
+        lp = (ms['lpb'] + 0.5 * (2.0 * a_ - ms['GQG']))[:, None] + ms['lpl'][None, :] \
+            + 0.5 * (2.0 * L[None, :] * (s1 - ms['oQG'][:, None]) - L[None, :] ** 2 * ms['oQo'])
+        w = np.exp(lp - lp.max()).ravel()
+        j = int(np.searchsorted(np.cumsum(w), g.random() * w.sum()))
+        i_, l_ = divmod(min(j, w.size - 1), len(L))
+        ms['ib'][k], ms['il'][k] = i_, l_
+        ms['theta'][k] = ms['bgrid'][i_], L[l_]
+        ms['c'][k] = ms['Q'] @ (ms['lnd'] + L[l_] + ms['shape'][:, i_])
+
+
+def mjoint_value(ms, R):
+    """--mfd-gr-tau: S, the bins' misfit about each chain's current curve, on chi2's scale (+inf where a bin is at 0)."""
+    R = np.atleast_2d(R)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        lam = np.log(R[:, ms['row']] + ms['dy'])
+    rho = lam - ms['lnd'] - ms['theta'][:, 1:2] - ms['shape'][:, ms['ib']].T
+    out = np.einsum('kb,bc,kc->k', rho, ms['Q'], rho)
+    return np.where(np.isfinite(lam).all(1), out, np.inf)
+
+
 def mstep_value(ms, R):
     """--mfd-step-sd: the term S for each chain (rows of R, the residuals), on chi2's scale; +inf where a bin is not
     predicted above 0."""
@@ -4512,6 +4619,12 @@ def main():
     ap.add_argument('--all-positive', action='store_true',
                     help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
                          '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
+    ap.add_argument('--mfd-gr-tau', type=float, default=None, metavar='TAU',
+                    help='MFD_GR_TAU, with --mfd-misfit pdf (MFD_GR): the bins scored jointly about each draw\'s G-R curve, '
+                         'its b and level (ln of the N scaling times the magnitude-uncertainty factor) each chain\'s '
+                         'hyperparameters under their MFD_GR priors, in place of each bin\'s own PDF; each pair of neighbouring '
+                         'bins\' step in log10 total may depart from the curve\'s by about TAU decades, and their mean level from '
+                         'it by about TAU (0.025: about 6%% a step)')
     ap.add_argument('--mfd-step-sd', type=float, default=None, metavar='B',
                     help='the MFD\'s steps held to the target\'s, softly: each pair of neighbouring magnitude bins\' step in '
                          'log10 total, less the target\'s own step there, is to stray from the draw\'s common tilt (the mean of '
@@ -5394,6 +5507,37 @@ def main():
         left = T.band_outside(T.residual(Us))
         if left.any():
             raise SystemExit(f'plate rate: the start leaves {left.max()} rows outside {T.band["what"]}')
+    if a.mfd_gr_tau is not None:                   # MFD_GR_TAU: the bins scored jointly about each draw's G-R curve
+        if a.mfd_step_sd is not None:
+            raise SystemExit('--mfd-gr-tau replaces --mfd-step-sd: give one')
+        if mf_rows is None or a.mfd_misfit != 'pdf':
+            raise SystemExit('--mfd-gr-tau needs --mfd-misfit pdf (MFD_GR: a problem cleaned with preliminaries.py --mfd-gr)')
+        if dirs is not None or lognormal is not None:
+            raise SystemExit('--mfd-gr-tau is not implemented for transfer moves or the hierarchical prior')
+        if a.backend != 'c':
+            raise SystemExit('--mfd-gr-tau is implemented in the C kernel only (--backend c)')
+        if not a.mfd_gr_tau > 0:
+            raise SystemExit(f'--mfd-gr-tau {a.mfd_gr_tau:g}: give a tolerance above 0 (decades a step)')
+        from cru_common import magnitude_bins
+        rows_ms, R_ms, orig_ms, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
+        T.mstep = mjoint_build(T, P, rows_ms, orig_ms, a.mfd_gr_tau, a.bin_width, a.chains)
+        T.lw['PM']['I'][mf_rows] = -1              # the bins' own PDFs out of the likelihood: the curve scores them
+        MF_ = T.lw['MF']
+        MF_['joint'], MF_['E'], MF_['V'] = True, np.ones(len(mf_rows)), np.full(len(mf_rows), 2.0)   # S ~ chi2 with NB dof
+        Us = T.init(X0 if scale is None else X0 / scale)
+        mjoint_update(T.mstep, T.residual(Us), np.random.default_rng(a.seed + 7))
+        s0 = mjoint_value(T.mstep, T.residual(Us))
+        ms_ = T.mstep
+        kn_ = ms_['knobs']
+        print(f'MFD bins scored jointly (--mfd-gr-tau {a.mfd_gr_tau:g}, MFD_GR {P.get("mfd_gr")}): each chain draws b (prior '
+              f'{kn_["b"][0]:g}/{kn_["b"][1]:g}/{kn_["b"][2]:g}, 10/50/90%) and the level ln(s m) (s the N scaling, 2-sigma '
+              f'{kn_["s"][0]:g}-{kn_["s"][1]:g}; m ' + ('none' if kn_['m'] is None else '/'.join(f'{v:g}' for v in kn_['m']))
+              + f') each sweep, exactly on grids of {len(ms_["bgrid"])} x {len(ms_["lgrid"])}; the {len(rows_ms)} bins score '
+              f'against the draw\'s G-R curve (NZSHM22\'s partitioning), each step within {a.mfd_gr_tau:g} decades of the '
+              f'curve\'s ({100 * (10 ** a.mfd_gr_tau - 1):.1f}%) and the mean level within {a.mfd_gr_tau:g}, in place of each bin\'s '
+              f'own PDF (the MFD misfit, in chi2 as fitted; near {len(rows_ms)} if the bins scatter so); the start\'s '
+              f'{np.median(s0):.1f} (median over the chains), b {np.median(ms_["theta"][:, 0]):.3f}, s m '
+              f'{ms_["m_c"] * np.exp(np.median(ms_["theta"][:, 1])):.3f}')
     if a.mfd_step_sd is not None:                  # the MFD's steps held to the target's: a soft term, recorded apart
         if dirs is not None or lognormal is not None:
             raise SystemExit('--mfd-step-sd is not implemented for transfer moves or the hierarchical prior')

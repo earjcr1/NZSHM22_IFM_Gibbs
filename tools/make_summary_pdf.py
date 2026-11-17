@@ -142,7 +142,7 @@ def main():
     positive = band == 'positive'                      # BAND = 'positive': every prediction above zero
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
-    mstep = cfg.get('mfd_step_sd')                     # MFD_STEP_SD (2026-11-17): the MFD's steps held to the target's
+    mtau = cfg.get('mfd_gr_tau')                       # MFD_GR_TAU (2026-11-18): the bins scored jointly about each draw's G-R curve
     dsr = cfg.get('slip_along') or 'uniform'          # SLIP_ALONG_RUPTURE (2026-11-17): each rupture's slip along it
     mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from (b, N) pairs
     if mfdgr:
@@ -298,10 +298,11 @@ def main():
                                   'soft band start', float, (1, 2), flags=re.M) if tau else (None, None)
     ss_re = r'^summed slip rates \(--slip-sum\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+); near ([\d.]+) if'
     ssr = [tuple(float(x) for x in m.groups()) for m in (re.search(ss_re, t, re.M) for t in logs) if m] if ssum else []
-    st_re = r'^MFD steps \(--mfd-step-sd [\d.]+\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+); near (\d+) if'
-    stp = [tuple(float(x) for x in m.groups()) for m in (re.search(st_re, t, re.M) for t in logs) if m] if mstep else []
-    if mstep and not stp:
-        MISSING.append('MFD steps term')
+    st_re = (r'^MFD misfit \(--mfd-gr-tau [\d.]+, [^)]*\): ([\d.]+) on average \(5-95% ([\d.]+)-([\d.]+); near (\d+) if.*?'
+             r"the curve's b ([\d.]+) \(5-95% ([\d.]+)-([\d.]+)\), its level s m \([^)]*\) ([\d.]+) \(5-95% ([\d.]+)-([\d.]+)\)")
+    stp = [tuple(float(x) for x in m.groups()) for m in (re.search(st_re, t, re.M) for t in logs) if m] if mtau else []
+    if mtau and not stp:
+        MISSING.append('MFD curve (MFD_GR_TAU)')
     if ssum and not ssr:
         MISSING.append('summed slip rates term')
     rise_cap = re.search(r'^\s*(\d\.\d\d)-\d\.\d\d -> \S+: the target rises .*?at most ([\d.]+) times the lower\'s '
@@ -440,7 +441,7 @@ def main():
               + (['the paleo rows scored by their recurrence-interval PDFs'] if pmis != 'gaussian' else [])
               + (['the slip rates as lopsided distributions from the CFM'] if cfm else [])) if grp else
              ([f'the band (factor {band:g})'] if band else ['positivity'] if positive else [])
-             + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else [])) + (['a monotonic MFD'] if mono else []) + (['the MFD\u2019s steps held to the target\u2019s'] if mstep else []) \
+             + ([f'a soft band ({dec(tau)} at 1 sd)'] if tau else [])) + (['a monotonic MFD'] if mono else []) + (['the bins scored jointly about each draw\u2019s G-R curve'] if mtau else []) \
         + (['the summed slip rates'] if ssum else []) + ([f'the plate rate ({plate_txt})'] if plate else [])
     model_txt = ', '.join(parts[:-1]) + (' and ' if len(parts) > 1 else '') + parts[-1] if parts else ''
 
@@ -758,9 +759,10 @@ def main():
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
                  'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
                                           'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + (
-          [['MFD_STEP_SD', f'{mstep:g}', f'each pair of neighbouring bins\u2019 step in log10 total, less the target\u2019s own, held '
-            f'to the draw\u2019s common tilt within about {100 * (10 ** (0.1 * mstep) - 1):.0f}% (a soft term, gibbs.py --mfd-step-sd)']]
-          if mstep else []) + [['SLIP_ALONG_RUPTURE', repr(dsr), 'each rupture’s slip spread along its subsections: '
+          [['MFD_GR_TAU', f'{mtau:g}', f'the bins scored jointly about each draw\u2019s G-R curve, its b and level drawn under '
+            f'MFD_GR\u2019s priors; each pair of neighbouring bins\u2019 step within about {100 * (10 ** mtau - 1):.0f}% of the '
+            'curve\u2019s, their mean level within the same (gibbs.py --mfd-gr-tau), in place of each bin\u2019s own PDF']]
+          if mtau else []) + [['SLIP_ALONG_RUPTURE', repr(dsr), 'each rupture’s slip spread along its subsections: '
           + ('UCERF3’s sqrt-sine taper by area, its average kept (less near the ends, up to 1.31 times it mid-rupture)'
              if dsr == 'tapered' else 'the same average slip on each, as the inputs have it')]] + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
@@ -959,13 +961,14 @@ def main():
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
                f'most {rise_cap[1]:.3f} times the lower\u2019s, a cap {rise_cap[2]:g} sd above the targets\u2019 own difference, as far as the other pairs\u2019 '
                'limits sit above theirs (the median).' if rise_cap else '.') if mono else '')
-         + (f' <b>The MFD\u2019s steps.</b> A soft term in the misfit: each pair of neighbouring magnitude bins\u2019 step in '
-            'log10 total, less the target\u2019s own step there, is to stray from the draw\u2019s common tilt (the mean of those '
-            f'differences) by about {mstep:g} \u00d7 0.1 decades (MFD_STEP_SD, in b-value units), so a step ratio off by about '
-            f'{100 * (10 ** (0.1 * mstep) - 1):.0f}% costs as much as a datum one uncertainty off. The target\u2019s own bends '
-            '(from the partitioning of the total MFD) cost nothing, and the MFD\u2019s level and tilt are left to the bins: it '
-            'acts on the bin-to-bin zig-zags their uncertainties allow. It is kept exactly by Metropolis steps, like the log '
-            'misfits, and recorded apart from χ².' if mstep else '')
+         + (f' <b>The bins jointly.</b> With MFD_GR_TAU the bins are not scored one by one: each chain draws a G-R curve, its b '
+            'and its level (the N scaling times the magnitude-uncertainty factor) under the same priors MFD_GR\u2019s bin PDFs '
+            'come from, drawn exactly given the bins each sweep, and the bins are scored about that curve (NZSHM22\u2019s '
+            f'partitioning, its bends included): each pair of neighbouring bins\u2019 step within {mtau:g} decades of the '
+            f'curve\u2019s (about {100 * (10 ** mtau - 1):.0f}%), and their mean level within the same, so the MFD\u2019s level '
+            'and tilt are the curve\u2019s and only its shape is the tolerance\u2019s. The catalogue\u2019s information enters '
+            'once, as the priors on b and the level, where independent bins would count a shift in level once per bin.'
+            if mtau else '')
          + (' <b>Tapered slip.</b> Each rupture’s slip on its subsections follows UCERF3’s sqrt-sine taper along '
             'it by area (SLIP_ALONG_RUPTURE), its average and moment unchanged: less slip near its ends, up to 1.31 times '
             'the average mid-rupture, in the slip-rate rows, the summed slip rates and the plate rate alike.'
@@ -1144,9 +1147,11 @@ def main():
                 f'{fmt(min(x[1] for x in ssr), "{:.1f}")}–{fmt(max(x[2] for x in ssr), "{:.1f}")}), against about '
                 f'{ssr[0][3]:.1f} expected if the model matched the truth (one per {l0:g} km of strip); '
                 f'{tt("plate_rate.txt")} lists the strips furthest from their target sums.' if ssr else '')
-             + (f' <b>The MFD\u2019s steps</b>: {rng([x[0] for x in stp], "{:.1f}")} on average per replicate (5–95% '
+             + (f' <b>The MFD about its G-R curve</b>: a misfit of {rng([x[0] for x in stp], "{:.1f}")} on average (5–95% '
                 f'{fmt(min(x[1] for x in stp), "{:.1f}")}–{fmt(max(x[2] for x in stp), "{:.1f}")}), against about '
-                f'{stp[0][3]:.0f} if the steps scatter about the target\u2019s as MFD_STEP_SD says.' if stp else '')
+                f'{stp[0][3]:.0f} if the bins scatter about it as MFD_GR_TAU says; the curve\u2019s b {stp[0][4]:.3f} '
+                f'(5–95% {stp[0][5]:.3f}–{stp[0][6]:.3f}) and its level s m {stp[0][7]:.3f} ({stp[0][8]:.3f}–{stp[0][9]:.3f}).'
+                if stp else '')
              + (f' <b>The plate rate</b>: every strip is inside the limits in {float(plate_in.group(2)):.1f}% of the '
                 f'{int(plate_in.group(1)):,} kept draws, as a hard constraint requires'
                 + (f'; the strip closest to the limit, {plate_top.group(1)} ({plate_top.group(2)}° E, '

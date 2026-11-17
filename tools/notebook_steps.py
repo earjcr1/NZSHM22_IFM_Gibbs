@@ -67,8 +67,9 @@ def setup(g):
         parse_knobs(g['MFD_GR_SPEC'])
     _check(g['SLIP_ALONG_RUPTURE'] in ('uniform', 'tapered'), 'SLIP_ALONG_RUPTURE', g['SLIP_ALONG_RUPTURE'],
            "use 'uniform' (the inputs') or 'tapered' (UCERF3's sqrt-sine taper)")
-    st = g['MFD_STEP_SD']
-    _check(st is None or (num(st) and st > 0), 'MFD_STEP_SD', st, 'give a tolerance above 0 in b-value units, or None for off')
+    tau = g['MFD_GR_TAU']
+    _check(tau is None or (num(tau) and tau > 0), 'MFD_GR_TAU', tau,
+           'give the G-R shape\'s tolerance above 0, in decades a step (0.025 about 6%), or None for each bin by its own PDF')
     g['PLATE_LIMITS'] = f"{g['SLIP_RATE_FACTOR']:g}" if g['PLATE_RATE'] else None   # as gibbs.py --plate-rate takes it
     _check(num(g['RUN_MINUTES']) and g['RUN_MINUTES'] > 0, 'RUN_MINUTES', g['RUN_MINUTES'], 'give the run\'s length in minutes')
     from run_plan import TARGETS
@@ -127,7 +128,7 @@ def record_config(**more):
             slip_sections=g['SLIP_SECTIONS'], mfd_uncertainty=g['MFD_UNCERTAINTY'], down_the_middle=g['DOWN_THE_MIDDLE'],
             misfit=g['MISFIT'], misfit_slip=g['MISFIT_SLIP'], misfit_mfd=g['MISFIT_MFD'],
             mfd_gr=g['MFD_GR'] and g['MFD_GR_SPEC'], misfit_paleo=g['MISFIT_PALEO'], mfd_monotonic=g['MFD_MONOTONIC'],
-            mfd_step_sd=g['MFD_STEP_SD'], slip_along=g['SLIP_ALONG_RUPTURE'],
+            mfd_gr_tau=g['MFD_GR_TAU'] if g['MFD_GR'] else None, slip_along=g['SLIP_ALONG_RUPTURE'],
             plate_rate=g['PLATE_RATE'] and g['SLIP_RATE_FACTOR'] or None, paleo_misfit=g['PALEO_MISFIT'],
             mfd_misfit=g['MFD_MISFIT'], slip_misfit=g['SLIP_MISFIT'], cfm_sliprates=g['CFM_SLIPRATES'], cfm_file=g['CFM_CSV'],
             cfm_pref='mode', cfm_rounding=False, cfm_timeframe=g['CFM_TIMEFRAME'] and g['CFM_SLIPRATES'],
@@ -313,8 +314,8 @@ def _terms(gibbs=False):
         a += ['--slip-misfit', g['SLIP_MISFIT']] + ([] if gibbs else ['--slip-block', g['SLIP_BLOCK']])
     if g['MFD_MONOTONIC']:
         a += ['--mfd-monotonic']
-    if g['MFD_STEP_SD'] is not None:
-        a += ['--mfd-step-sd', g['MFD_STEP_SD']]
+    if gibbs and g['MFD_GR'] and g['MFD_GR_TAU'] is not None:   # the bins jointly about each draw's G-R curve (the sampler only:
+        a += ['--mfd-gr-tau', g['MFD_GR_TAU']]                   # the starts' polish scores each bin by its own PDF)
     if g['PLATE_RATE']:
         a += ['--plate-rate', g['PLATE_LIMITS']]
     if g['SLIP_SUM']:

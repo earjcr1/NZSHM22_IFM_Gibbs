@@ -218,6 +218,57 @@ def _split_logpdf(x, lo, mode, hi):
     return -0.5 * ((x - mode) / s) ** 2 - np.log(0.5 * (s_lo + s_hi) * math.sqrt(2 * math.pi))
 
 
+def level_logpdf(knobs):
+    """The level's prior: ln of the density of v = ln(s m) (s the N scaling, m RECONSIDER_MAGUNCERT's factor, independent:
+    the N scaling has no allowance for the magnitudes' uncertainties, the user's confirmation, 2026-11-18), as a function;
+    the range of v to integrate over; and m's middle value (1 without m), where the bins' targets sit. Returns
+    (lpv, v_lo, v_hi, m_c)."""
+    sl_, sh_ = knobs['s']
+    if sl_ == sh_:                                        # s fixed at 1: a narrow kernel in ln s
+        lps = lambda v: -0.5 * (v / FIXED_KERNEL) ** 2 - math.log(FIXED_KERNEL * math.sqrt(2 * math.pi))
+        v_lo, v_hi = -8 * FIXED_KERNEL, 8 * FIXED_KERNEL
+    else:                                                 # ln s a split normal, mode 0, each side's sd half its 2-sigma distance
+        s_lo, s_hi = -0.5 * math.log(sl_), 0.5 * math.log(sh_)
+        s_lo, s_hi = (s_lo or s_hi), (s_hi or s_lo)
+        lps = lambda v: _split_logpdf(v, -s_lo, 0.0, s_hi)
+        v_lo, v_hi = -8 * s_lo, 8 * s_hi
+    m_c = 1.0                                             # the magnitude-uncertainty factor's middle branch (1: none)
+    if knobs.get('m') is None:
+        lpv = lps
+    else:                                                 # ln(s m): three branches of m, equal weights (exactly, no grid)
+        lm = np.log(np.asarray(knobs['m'], float))
+        m_c = float(knobs['m'][1])
+        lpv = lambda v: np.logaddexp.reduce([lps(np.asarray(v) - l_) for l_ in lm], axis=0) - math.log(len(lm))
+        v_lo, v_hi = v_lo + lm.min(), v_hi + lm.max()
+    return lpv, v_lo, v_hi, m_c
+
+
+def joint_grid(parts, knobs, n_b=241):
+    """MFD_GR_TAU (the bins scored jointly): each bin's G-R shape as b varies, for the sampler's draws of b. Returns
+    (bgrid, lnshape): b on a grid over its prior's +-6 sd (one point if b is fixed), and lnshape (NZ_NUM_BINS, n) =
+    ln(N(b) f_j(b)) - ln(N(b_mean) f_j(b_mean)), f_j the supra-seismogenic on-fault MFD per unit N (NZSHM22's partitioning),
+    so that a draw's curve over the bins' targets (at b's mean, s = 1 and m's middle value) is exp(L + lnshape(b)), L =
+    ln(s m / m_mid); NaN where a bin has no target."""
+    bl, bm, bh = knobs['b']
+    if bl == bh:
+        bgrid = np.array([bm])
+    else:
+        bgrid = np.linspace(bm - 6.0 * (bm - bl) / Z10, bm + 6.0 * (bh - bm) / Z10, n_b)
+    S = np.array([components(parts, 1.0, b_)['supra'] for b_ in bgrid]) * n_of_b(knobs, bgrid)[:, None]
+    S0 = components(parts, 1.0, bm)['supra'] * float(n_of_b(knobs, bm))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ln = np.where((S > 1e-19) & (S0 > 1e-19), np.log(S) - np.log(S0), np.nan)
+    return bgrid, ln.T
+
+
+def b_logpdf(knobs, b):
+    """b's prior, ln of its split normal's density (0 if b is fixed)."""
+    bl, bm, bh = knobs['b']
+    if bl == bh:
+        return np.zeros(np.shape(b))
+    return _split_logpdf(np.asarray(b, float), bm - (bm - bl) / Z10, bm, bm + (bh - bm) / Z10)
+
+
 def bin_pdfs(parts, knobs, n_coarse=161, n_b=1201, n_u=6001):
     """Each bin's distribution of its target s N(b) f_j(b) (f_j the supra-seismogenic MFD per unit N, NZSHM22's
     partitioning), propagated exactly from the knobs (parse_knobs): the density g_j(u) of u = ln(target) on a grid, a sum
@@ -240,22 +291,7 @@ def bin_pdfs(parts, knobs, n_coarse=161, n_b=1201, n_u=6001):
         w = np.exp(_split_logpdf(bf, bm - sdl, bm, bm + sdh))
         w /= w.sum()
         Sf = np.array([np.interp(bf, bc, Sc[:, j]) for j in range(NZ_NUM_BINS)]).T
-    if sl_ == sh_:                                        # s fixed at 1: a narrow kernel in ln s
-        lps = lambda v: -0.5 * (v / FIXED_KERNEL) ** 2 - math.log(FIXED_KERNEL * math.sqrt(2 * math.pi))
-        v_lo, v_hi = -8 * FIXED_KERNEL, 8 * FIXED_KERNEL
-    else:                                                 # ln s a split normal, mode 0, each side's sd half its 2-sigma distance
-        s_lo, s_hi = -0.5 * math.log(sl_), 0.5 * math.log(sh_)
-        s_lo, s_hi = (s_lo or s_hi), (s_hi or s_lo)
-        lps = lambda v: _split_logpdf(v, -s_lo, 0.0, s_hi)
-        v_lo, v_hi = -8 * s_lo, 8 * s_hi
-    m_c = 1.0                                             # the magnitude-uncertainty factor's middle branch (1: none)
-    if knobs.get('m') is None:
-        lpv = lps
-    else:                                                 # ln(s m): three branches of m, equal weights (exactly, no grid)
-        lm = np.log(np.asarray(knobs['m'], float))
-        m_c = float(knobs['m'][1])
-        lpv = lambda v: np.logaddexp.reduce([lps(np.asarray(v) - l_) for l_ in lm], axis=0) - math.log(len(lm))
-        v_lo, v_hi = v_lo + lm.min(), v_hi + lm.max()
+    lpv, v_lo, v_hi, m_c = level_logpdf(knobs)
     R = components(parts, float(n_of_b(knobs, bm)) * m_c, bm)['supra']
     out = {}
     for j in np.flatnonzero(R > 1e-19):

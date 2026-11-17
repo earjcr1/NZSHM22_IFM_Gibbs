@@ -92,7 +92,9 @@ def load_problem(path):
                 mfd_gr=str(z['mfd_gr']) if 'mfd_gr' in z.files else None,
                 mfd_pdf_th=z['mfd_pdf_th'].astype(np.float64) if 'mfd_pdf_th' in z.files else None,
                 mfd_pdf_best=z['mfd_pdf_best'].astype(np.float64) if 'mfd_pdf_best' in z.files else None,
-                mfd_pdf_q84=z['mfd_pdf_q84'].astype(np.float64) if 'mfd_pdf_q84' in z.files else None)
+                mfd_pdf_q84=z['mfd_pdf_q84'].astype(np.float64) if 'mfd_pdf_q84' in z.files else None,
+                mfd_gr_bgrid=z['mfd_gr_bgrid'].astype(np.float64) if 'mfd_gr_bgrid' in z.files else None,
+                mfd_gr_shape=z['mfd_gr_shape'].astype(np.float64) if 'mfd_gr_shape' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -918,7 +920,7 @@ def reference_rates(spec, P):
 
 FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
-                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_STEP_SD', 'mfd_step_sd'), ('SLIP_ALONG_RUPTURE', 'slip_along'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_GR_TAU', 'mfd_gr_tau'), ('SLIP_ALONG_RUPTURE', 'slip_along'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
@@ -980,8 +982,8 @@ def run_settings(config, problem):
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'
-    if 'mfd_step_sd' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):     # MFD_STEP_SD (2026-11-17): a run from before it had no such term
-        cfg['mfd_step_sd'] = None
+    if 'mfd_gr_tau' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):      # MFD_GR_TAU (2026-11-18, in place of MFD_STEP_SD):
+        cfg['mfd_gr_tau'] = None                                                     # a run from before it scored the bins one by one
     if 'slip_along' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):      # SLIP_ALONG_RUPTURE (2026-11-17): before it, always the inputs' uniform
         cfg['slip_along'] = 'uniform'
     if cfg.get('rupture_set') not in (None, 'auto'):     # a folder: its name, shortened

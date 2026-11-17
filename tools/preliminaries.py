@@ -618,7 +618,12 @@ def main():
             f'({np.min(GB["q84"][ib] / R_new):.3f}-{np.max(GB["q84"][ib] / R_new):.3f}; mfd_pdf_q84)')
         pdf_th, pdf_best, pdf_q84 = np.full((len(d), 4), np.nan), np.full(len(d), np.nan), np.full(len(d), np.nan)
         pdf_th[brows], pdf_best[brows], pdf_q84[brows] = GB['th'][ib], GB['best'][ib], GB['q84'][ib]
-        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best, pdf_q84)
+        bgrid, lnsh = mfd_gr.joint_grid(parts, GB['knobs'])   # each bin's G-R shape as b varies, for MFD_GR_TAU (gibbs.py
+        if not np.all(np.isfinite(lnsh[ib])):                # --mfd-gr-tau: the bins scored jointly about each draw's curve)
+            raise SystemExit('--mfd-gr: some bin has no G-R shape over b\'s range (mfd_gr.joint_grid)')
+        shape_rows = np.full((len(d), len(bgrid)), np.nan)
+        shape_rows[brows] = lnsh[ib]
+        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best, pdf_q84, bgrid, shape_rows)
     sd = detect_slip_rows(d_raw, info, keep_r)          # slip-rate rows: leading rows up to the first zero-forcing row
     if sd is not None and det is not None and np.intersect1d(sd[0], det).size:
         sd = None                                        # overlaps the bin rows: not a usable detection
@@ -810,6 +815,8 @@ def main():
                  mfd_gr=None if mfd_gr_info is None else mfd_gr_info[0],
                  mfd_pdf_th=None if mfd_gr_info is None else mfd_gr_info[1], mfd_pdf_best=None if mfd_gr_info is None else mfd_gr_info[2],
                  mfd_pdf_q84=None if mfd_gr_info is None else mfd_gr_info[3],
+                 mfd_gr_bgrid=None if mfd_gr_info is None else mfd_gr_info[4],
+                 mfd_gr_shape=None if mfd_gr_info is None else mfd_gr_info[5],
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',

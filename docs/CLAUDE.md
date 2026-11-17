@@ -483,8 +483,18 @@ coefficient) and mstep_value; kernel stctx (st_fill, st_change, st_bounds, st_up
 (bounds for off ruptures), the on chain's slice step as a Metropolis proposal, and swap_run (one or two bins); ODD now allocated with
 LW or ST. C only. Recorded as tr['mfd_step'], printed 'MFD steps (--mfd-step-sd B): ... near n_pairs-1'. best_fit_as_fitted.py
 --mfd-step-sd (mfd_step_term, exact gradient; terms_key mfd_step=). Notebook: notebook_steps._terms passes it (gibbs_args, starts_args); RUN_NAME _mfdstep{B};
-FIGURE_SETTINGS; summary PDF (settings row, model text, recorded term). run_quick_checks pins MFD_STEP_SD=None. selftest_mfdstep at
+Out of the notebook since 2026-11-18 (MFD_GR_TAU, below). run_quick_checks pins MFD_GR_TAU=None. selftest_mfdstep at
 B = 2 (tight B mixes slowly in its toy). REPORT.md "The MFD's steps".
+MFD_GR_TAU (2026-11-18, the user's request, in place of MFD_STEP_SD in the notebook; 0.025 by default, with MFD_GR only; gibbs.py --mfd-gr-tau TAU,
+with --mfd-misfit pdf): the bins jointly about each draw's G-R curve. gibbs.mjoint_build (Q = D'D/tau^2 + 11'/(NB tau)^2, the residual's
+steps and mean level; mstep_build for bx/gx), mjoint_update (each chain's b and L = ln(s m / m_mid) drawn exactly on a 481 x 801 grid,
+prior x exp(-S/2); c = Q (ln dy + L + shape(b)) per chain), mjoint_value. Kernel stctx gained cs (c's stride per chain); st_fill takes k;
+_st_ptr(T, k0) points each thread at its chains' c. The bins' PM curves are switched off (T.lw['PM']['I'][mf_rows] = -1; MF joint, E = 1,
+V = 2); mfd_misfit = S (in chi2 as fitted); tr mfd_gr_b, mfd_gr_level (ln(s m)), mfd_gr_n5, mfd_gr_tau; report rows 'MFD curve ...'.
+mfd_gr.level_logpdf (shared with bin_pdfs), joint_grid, b_logpdf; preliminaries.py --mfd-gr saves mfd_gr_bgrid and mfd_gr_shape
+(cru_common.load_problem). Notebook: _terms passes it to gibbs.py only (the starts' polish keeps each bin's PDF); RUN_NAME _mfdtau{TAU};
+FIGURE_SETTINGS and run_plan's MODEL_KEYS mfd_gr_tau (older runs None); summary PDF row, model text, results (b, s m). gibbs.py
+--mfd-step-sd is kept for direct use (selftest_mfdstep). REPORT.md "The bins jointly about a G-R curve".
 MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
 preliminaries.py --mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI --rupture-set DIR (MFD_GR_SPEC from MFD_GR_B = (0.823, 0.959, 1.089),
 MFD_GR_N5 = (2.65, 3.40, 4.57), MFD_GR_NSCALE = (0.66, 1.41); the user's revision 2026-11-17 from Rollins et al. 2024 BSSA Table 1,

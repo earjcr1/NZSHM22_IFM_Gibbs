@@ -107,12 +107,12 @@ def run_name(g, d):
             + (f"_misfit{S['MISFIT']}" if S['MISFIT'] != 'mixed' else
                f"_misfit_slip{S['MISFIT_SLIP']}_mfd{'pdf' if S['MFD_GR'] else S['MISFIT_MFD']}_paleo{S['MISFIT_PALEO']}")
             + ('_mfdmonotonic' if S['MFD_MONOTONIC'] else '')
-            + (f"_mfdstep{S['MFD_STEP_SD']:g}" if S['MFD_STEP_SD'] is not None else '')
             + ('_dsrtapered' if S['SLIP_ALONG_RUPTURE'] == 'tapered' else '')
             + ('_mfdgrb' + '-'.join(f'{x_:g}' for x_ in S['MFD_GR_B']) + 'N' + '-'.join(f'{x_:g}' for x_ in S['MFD_GR_N5'])
                + 's' + '-'.join(f'{x_:g}' for x_ in S['MFD_GR_NSCALE'])
                + ('m' + '-'.join(f'{x_:g}' for x_ in (MAGUNCERT if S['RECONSIDER_MAGUNCERT'] is True else S['RECONSIDER_MAGUNCERT']))
                   if S.get('RECONSIDER_MAGUNCERT') else '') if S['MFD_GR'] else '')
+            + (f"_mfdtau{S['MFD_GR_TAU']:g}" if S['MFD_GR'] and S.get('MFD_GR_TAU') is not None else '')
             + (f"_platemax{S['SLIP_RATE_FACTOR']:g}{S['CROSS_SECTIONS']}" if S['PLATE_RATE'] else '')
             + ('_cfm' + ('tf' if S['CFM_TIMEFRAME'] else '')
                + (f"tmpl{S['CFM_TEMPLATE_RHO']:g}" + ('links' if S['CFM_RATE_LINKS'] else '')
