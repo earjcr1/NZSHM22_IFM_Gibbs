@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'covariance.py']
+SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -109,11 +109,12 @@ _cut = [k for k in ('PRIOR_KIND', 'THETA', 'BOX_TOP', 'USE_SWAPS', 'OUTPUT_DRAWS
         if any(re.search(rf'\b{k}\b', c) for _, c in cells)]
 _gr = ''.join(c for _, c in cells if 'def gibbs_run(' in c)
 _gr_all = ''.join(c for _, c in cells if 'MAIN = [gibbs_run(' in c)
-check(not _cut and all(s in _gr for s in ("'--init', start", "start = 'fitted' if os.path.exists('nnls/fitted_vectors.npz') else 'nnls'",
-                                          "'--no-samples'", "'--swap-cos', 0.99"))
+check(not _cut and all(s in _gr for s in ("'--init', start", "start = init or 'nnls'", "'--no-samples'", "'--swap-cos', 0.99"))
+      and not any("sh('best_fit_as_fitted.py'" in c for _, c in cells)
       and "elif a.init == 'fitted':" in src['gibbs.py'] and 'nnls_key' in src['best_fit_as_fitted.py'],
-      'notebook: no PRIOR_KIND, THETA, BOX_TOP, USE_SWAPS, OUTPUT_DRAWS, SA_STARTS or BEST_FIT; its runs start from the best '
-      'fit (as fitted, gibbs.py --init fitted, when the notebook made it; else NNLS), store no draws and use swap moves'
+      'notebook: no PRIOR_KIND, THETA, BOX_TOP, USE_SWAPS, OUTPUT_DRAWS, SA_STARTS or BEST_FIT; its runs start from the NNLS '
+      'best fit (with DISPERSED_STARTS, chain 1; the others from randomized fits), store no draws and use swap moves; '
+      'best_fit_as_fitted.py is for the command line since 2026-11-17 (gibbs.py --init fitted)'
       + (f'; found {_cut}' if _cut else ''))
 check(re.findall(r'^SEED = (\S+)', cells[0][1], re.M) == ['None'] and 'replicate_seed(r)' in _gr_all
       and "np.random.SeedSequence([SEED_USED, r])" in _gr_all and 'seed=SEED_USED' in ''.join(c for _, c in cells),
@@ -133,7 +134,7 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       and "'RUN_PLAN'" in src['run_config.py'] and 'SH_SECONDS[0] += time.time() - t0_' in cells[1][1]
       and any('PLAN = run_plan.plan(RUN_MINUTES, THREADS, COST, SH_SECONDS[0], _post, TARGETS, _ref, _diff)' in c
               and 'for _th in run_plan.CALIB_THINS:' in c
-              and "MAIN = [gibbs_run(f'main_rep{r}', seed=replicate_seed(r), plan=P)" in c for _, c in cells)
+              and "MAIN = [gibbs_run(f'main_rep{r}', seed=replicate_seed(r), plan=P," in c for _, c in cells)
       and "json.dump(TIMINGS, open('timings.json', 'w'), indent=1)" in cells[-1][1]
       and 'convergence_summary.json' in src['check_convergence.py']
       and not any("'--slab'" in c for _, c in cells),
@@ -142,6 +143,20 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
       'for later plans; the other priors are gibbs.py options')
+check(re.findall(r'^DISPERSED_STARTS = (\S+)', cells[0][1], re.M) == ['True'] and 'dispersed_starts=DISPERSED_STARTS' in cells[1][1]
+      and any("sh('dispersed_starts.py', '--problem', 'cru_clean.npz', '--chains', _chains, '--noise', 2," in c
+              and "*(['--fit-args', *_fit_args] if _fit_args else [])" in c
+              and "'--prior-share', 0.5" in c
+              and "init='starts.npy' if DISPERSED_STARTS else None" in c for _, c in cells)
+      and 'REPLICATE_MIN, REPLICATES_MAX = 50000, 1' in src['run_plan.py'] and 'noise=a.noise' in src['dispersed_starts.py'] and "SeedSequence([a.seed, 7]).spawn(n_prior)" in src['dispersed_starts.py']
+      and 'def ensemble(problem, n_fits, seed, workers, verbose=True, noise=1.0):' in src['randomized_nnls.py']
+      and 'DISPERSED_STARTS=False' in open(f'{ROOT}/tools/run_quick_checks.sh').read(),
+      'notebook DISPERSED_STARTS = True (2026-11-17): half the chains from randomized best fits at twice the stated noise, '
+      'half from prior draws scaled to the bins\' targets (--prior-share 0.5), each polished briefly by best_fit_as_fitted.py in the run\'s model space (dispersed_starts.py, randomized_nnls.ensemble noise), passed to gibbs.py --init starts.npy; one '
+      'replicate (run_plan REPLICATES_MAX 1); the smoke test pins it off')
+check(any("sh('plot_targets.py', '--problem', 'cru_clean.npz', '--ruptures', RUPTURE_DIR)" in c for _, c in cells)
+      and all(f_ in open(f'{ROOT}/tools/make_summary_pdf.py').read() for f_ in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')),
+      'notebook draws the targets old and new after cleaning (plot_targets.py, with the rupture set); the summary PDF shows them')
 check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_linear()') == 1,
       "gibbs.py --prior linear (command line only), with its exact test in the full self-test set")
 check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
@@ -470,6 +485,8 @@ for s, t in trees.items():
 for i, c in cells:
     t = ast.parse(c)
     called = sorted({n.value for n in ast.walk(t) if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in SCRIPTS})
+    if 'dispersed_starts.py' in called and "'--fit-args'" in c:   # its --fit-args pass on to best_fit_as_fitted.py
+        called = sorted(set(called) | {'best_fit_as_fitted.py'})
     used = set()
     for n in ast.walk(t):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.startswith('--'):

@@ -57,21 +57,22 @@ Q = (2.5, 16.0, 50.0, 84.0, 97.5)                 # the fits' percentiles shown 
 _W = {}
 
 
-def _init(problem):
-    """Each worker: the problem, read once (a path to a cleaned problem, or (G, d, sigma) arrays)."""
+def _init(problem, noise=1.0):
+    """Each worker: the problem, read once (a path to a cleaned problem, or (G, d, sigma) arrays), and the noise's
+    factor on sigma (1: the stated noise; dispersed_starts.py draws 2)."""
     if isinstance(problem, str):
         P = load_problem(problem)
         G, d, sigma = P['G'], P['d'], float(P['sigma'])
     else:
         G, d, sigma = problem
-    _W.update(G=sp.csc_matrix(G), d=np.asarray(d, np.float64), sigma=float(sigma))
+    _W.update(G=sp.csc_matrix(G), d=np.asarray(d, np.float64), sigma=float(sigma), noise=float(noise))
 
 
 def _fit(job):
-    """One fit: NNLS to d + sigma e, e ~ N(0, I) drawn from the job's seed."""
+    """One fit: NNLS to d + noise sigma e, e ~ N(0, I) drawn from the job's seed."""
     k, seed = job
     G, d, sigma = _W['G'], _W['d'], _W['sigma']
-    dk = d + sigma * np.random.default_rng(seed).standard_normal(len(d))
+    dk = d + _W.get('noise', 1.0) * sigma * np.random.default_rng(seed).standard_normal(len(d))
     t0 = time.time()
     x, it = nnls_lawson_hanson(G, dk, threads=1)
     nz = np.flatnonzero(x)
@@ -81,8 +82,8 @@ def _fit(job):
                 seconds=time.time() - t0)
 
 
-def ensemble(problem, n_fits, seed, workers, verbose=True):
-    """n_fits fits, in fit order, in `workers` processes (1: in this one)."""
+def ensemble(problem, n_fits, seed, workers, verbose=True, noise=1.0):
+    """n_fits fits, in fit order, in `workers` processes (1: in this one); noise: the factor on the stated noise."""
     jobs = list(zip(range(n_fits), np.random.SeedSequence(seed).spawn(n_fits)))
     out, t0, step = [], time.time(), max(1, n_fits // 10)
 
@@ -93,11 +94,11 @@ def ensemble(problem, n_fits, seed, workers, verbose=True):
             print(f'   {len(out):5d} / {n_fits} fits ({el:.0f} s, {el / len(out):.1f} s per fit with {workers} worker'
                   f'{"s" if workers > 1 else ""}; this fit {r["seconds"]:.1f} s, {r["it"]} iterations)', flush=True)
     if workers <= 1:
-        _init(problem)
+        _init(problem, noise)
         for job in jobs:
             progress(_fit(job))
     else:
-        with ProcessPoolExecutor(workers, initializer=_init, initargs=(problem,)) as pool:
+        with ProcessPoolExecutor(workers, initializer=_init, initargs=(problem, noise)) as pool:
             for r in pool.map(_fit, jobs, chunksize=1):
                 progress(r)
     return out

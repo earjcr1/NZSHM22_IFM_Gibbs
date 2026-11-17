@@ -39,7 +39,8 @@ MARGIN = 0.10                 # of RUN_MINUTES, kept free
 CHAINS_PER_THREAD = 4
 BURN_MAX, BURN_FRAC = 5000, 0.2
 DRAWS_PER_CHAIN = 3000
-REPLICATE_MIN, REPLICATES_MAX = 50000, 4
+REPLICATE_MIN, REPLICATES_MAX = 50000, 1   # one replicate (2026-11-17, the user's choice): the chains' dispersed starts
+                                           # (DISPERSED_STARTS) test the convergence in place of a second replicate
 REPLICATE_SAFETY = 1.5        # more than one replicate only if each is predicted to reach 1.5 x TARGETS' effective draws
 CALIB_SWEEPS, CALIB_BURN = 120, 24   # each calibration run's sweeps and burn-in
 CALIB_THINS = (4, 24)         # its two recording rates, to split the time per sweep from the time per recorded draw (a single
@@ -208,7 +209,8 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
          f'{cost["b"]:.3f} s per recorded draw, so {sweep_s:.4f} s per sweep at this plan\'s thin; {setup_s:.0f} s of setup per run',
          f'   chains: {K} ({CHAINS_PER_THREAD} per thread); replicates: {reps}'
          + (f' (each still gets {REPLICATE_MIN:,} sweeps or more' + (f' and is predicted to reach {REPLICATE_SAFETY:g} x TARGETS\' '
-            'effective draws)' if tau else ')') if reps > 1 else f' (more only if each could get {REPLICATE_MIN:,} sweeps'
+            'effective draws)' if tau else ')') if reps > 1 else ' (one long replicate; dispersed starts across its chains test the '
+            'convergence)' if REPLICATES_MAX == 1 else f' (more only if each could get {REPLICATE_MIN:,} sweeps'
             + (f' and still reach {REPLICATE_SAFETY:g} x TARGETS\' effective draws' if tau else '') + '; so no replicate comparison)'),
          f'   sweeps {S:,} per chain, burn-in {burn:,}'
          + ('' if burn == BURN_MAX else f' ({100 * BURN_FRAC:.0f}% of a run too short for the usual {BURN_MAX:,})')

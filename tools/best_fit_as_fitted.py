@@ -432,6 +432,8 @@ def main():
 
     def stop(intermediate_result):
         hist.append(float(intermediate_result.fun))
+        if len(hist) % 500 == 0:                      # progress: how fast the misfit settles
+            print(f'      iteration {len(hist)}: misfit {hist[-1]:.3f} ({time.time() - t0:.0f}s)', flush=True)
         if len(hist) > win[0] and hist[-1 - win[0]] - hist[-1] < a.tol:
             raise StopIteration
 

@@ -183,7 +183,7 @@ def main():
             if r['ess_pi_min'] < need_sum / 5:
                 why.append(f"each bin's fraction on needs {need_sum / 5:,.0f} effective draws (fewest {r['ess_pi_min']:,.0f})")
         print(f"{r['run']}: " + ('PASS' if not why else 'CHECK: ' + '; '.join(why) + ': run longer (more sweeps)'
-                                 + ('; if this persists, start chains from dispersed models (gibbs.py --init FILE.npy) to look for separate modes' if modes else '')))
+                                 + ('; if this persists with dispersed starts (the notebook\'s DISPERSED_STARTS; gibbs.py --init FILE.npy), the chains may sit in separate modes' if modes else '')))
     if a.plan and os.path.exists(a.plan):                # the plan's prediction against what the runs achieved
         pl = json.load(open(a.plan))
         if pl.get('predicted'):

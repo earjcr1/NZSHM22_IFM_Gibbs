@@ -547,6 +547,16 @@ exploratory 100/200/1.01, production 1000/2000/1.01, precise 10000/20000/1.005) 
 thin 8, and TARGETS 'exploratory'). FIGURE_SETTINGS RUN_MINUTES ('240 (16x56,000)'; older runs 'preset ...'); summary PDF
 RUN_MINUTES and TARGETS rows (older runs PRESET), the prediction beside the achieved draws; RUN_NAME _{RUN_MINUTES}min.
 630k very conservative run: tau 37 / 73 / ~2,100 sweeps -> 'production' ~245 min on 4 threads.
+DISPERSED_STARTS (True, 2026-11-17, the user's choice: randomized fits, one per chain, noise x2): dispersed_starts.py writes
+starts.npy (chains x kept cols): rows 0..7 randomized_nnls.ensemble(noise=2) NNLS fits, rows 8..15 prior draws (--prior-share 0.5:
+per bin pi ~ U(0,1), on w.p. pi, log-uniform 2 floor..R_j, bin scaled to R_j); none from the unperturbed NNLS fit; each then
+polished by best_fit_as_fitted.py --max-iter 300 (--polish-iter) with the run's args (notebook _fit_args after --fit-args), in
+parallel subprocesses one thread each (unpolished starts broke the monotonic MFD and the slab floor's snap left rows at 0);
+cell 11 makes it before the calibration (seed replicate_seed(1000)), gibbs_run(init='starts.npy'); calibration still from the
+NNLS fit. run_plan REPLICATES_MAX = 1 (no splitting). Smoke test pins DISPERSED_STARTS=False. best_fit_as_fitted.py removed
+from the notebook (2026-11-17, the user's choice; 630k trace: 227.5 -> 151.9 at 500 its, 149.1 at 1,500, 147.4 at 5,000;
+default --tol 0.01 took 27 min): chains start from NNLS fits (gibbs_run start = init or 'nnls'; dispersed_starts.py --base
+nnls default, fitted optional); cell 9 draws the NNLS fit's figures only.
 The old presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
 8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
 

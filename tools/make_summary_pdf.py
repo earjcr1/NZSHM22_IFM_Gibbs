@@ -1035,7 +1035,13 @@ def main():
          f'{fmt(acc and 100 * acc, "{:.1f}")}% of swaps accepted), and the fraction on in each bin is redrawn after every '
          'sweep. '
          + (f'The chains start from the best fit moved inside the band by a penalized least-squares fit (χ² '
-            f'{start_chi2 or "n/a"}, no rows outside). ' if band else 'The chains start from the best fit'
+            f'{start_chi2 or "n/a"}, no rows outside). ' if band else
+            ('Every chain starts from its own draw (dispersed_starts.py): half from randomized best fits (the best fit to '
+             'the data plus twice their stated noise), half from the prior (each bin\u2019s fraction on uniform, rates '
+             'log-uniform up to its target, the bin scaled to its target), each polished briefly in the sampler\u2019s own '
+             'model space so that it meets the hard constraints; the starts are over-dispersed, so R̂ across the chains '
+             'tests whether the run has forgotten where it started' if cfg.get('dispersed_starts') else
+             'The chains start from the best fit')
             + (f', with {fmt(pos_on)} ruptures switched on at twice the slab floor so that none of the {fmt(pos_rows)} '
                'rows it predicts at zero is left there' if positive and pos_on else '')
             + (f'; in {plate_start.group(1)} of {plate_start.group(2)} chains it took up more than the plate-rate limit, '
