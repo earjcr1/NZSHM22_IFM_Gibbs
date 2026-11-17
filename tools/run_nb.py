@@ -4,7 +4,9 @@
     python tools/run_nb.py NOTEBOOK RUN_DIR DATA_DIR RUN_SELFTESTS(0/1) [NAME=VALUE ...] [CELLS=n]
 
 RUN_DIR and DATA_DIR are best given as absolute paths (the notebook resolves relative ones from its own folder).
-NAME=VALUE replaces a configuration value, e.g. "PRESET='quick'" or "MFD_UNCERTAINTY='two-measurements'";
+NAME=VALUE replaces a configuration value, e.g. "PRESET='quick'" or "MFD_UNCERTAINTY='two-measurements'"; the
+settings fixed in tools/run_config.py (SLIP_SECTIONS, BLOCKS, CFM_SLIPRATES, ...) and RUN_DIR, no longer in the
+configuration cell, are passed to it as _OVERRIDES;
 CELLS=n stops after the first n code cells.
 
 Only these configuration values are overridden, by replacing their assignments in the configuration cell; everything
@@ -23,10 +25,17 @@ max_cells = int(extra.pop('CELLS', 10 ** 6))
 nb = json.load(open(nb_path))
 cells = [c for c in nb['cells'] if c['cell_type'] == 'code']
 src0 = ''.join(cells[0]['source'])
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from run_config import OVERRIDABLE                       # the settings fixed in tools/run_config.py, and RUN_DIR
+overrides = []                                           # those, set through _OVERRIDES (run_config.derived_settings)
 for name, val in (('RUN_DIR', repr(run_dir)), ('DATA_DIR', repr(data_dir)),
                   ('RUN_SELFTESTS', 'True' if selftests == '1' else 'False')) + tuple(extra.items()):
     src0, k = re.subn(rf"^{name} = [^#\n]*?(\s+#)", lambda m: f"{name} = {val}" + m.group(1), src0, count=1, flags=re.M)
+    if k == 0 and name in OVERRIDABLE:
+        overrides.append(f'{name!r}: {val}')
+        continue
     assert k == 1, name
+src0 = f"_OVERRIDES = {{{', '.join(overrides)}}}\n" + src0
 os.chdir(os.path.dirname(os.path.abspath(nb_path)))      # the notebook's folder, as Jupyter would start it
 ns = {'__name__': '__main__'}
 t_all = time.time()

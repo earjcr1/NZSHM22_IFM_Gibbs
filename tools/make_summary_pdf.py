@@ -143,6 +143,7 @@ def main():
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
     mstep = cfg.get('mfd_step_sd')                     # MFD_STEP_SD (2026-11-17): the MFD's steps held to the target's
+    dsr = cfg.get('slip_along') or 'uniform'          # SLIP_ALONG_RUPTURE (2026-11-17): each rupture's slip along it
     mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from N5 and b triples
     if mfdgr:
         _g = str(mfdgr).split(',')
@@ -735,7 +736,9 @@ def main():
                                           'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + (
           [['MFD_STEP_SD', f'{mstep:g}', f'each pair of neighbouring bins\u2019 step in log10 total, less the target\u2019s own, held '
             f'to the draw\u2019s common tilt within about {100 * (10 ** (0.1 * mstep) - 1):.0f}% (a soft term, gibbs.py --mfd-step-sd)']]
-          if mstep else []) + [
+          if mstep else []) + [['SLIP_ALONG_RUPTURE', repr(dsr), 'each rupture’s slip spread along its subsections: '
+          + ('UCERF3’s sqrt-sine taper by area, its average kept (less near the ends, up to 1.31 times it mid-rupture)'
+             if dsr == 'tapered' else 'the same average slip on each, as the inputs have it')]] + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
             + ('and PLATE_RATE use' if plate else 'uses') + f', 8.5 km wide {xsec_txt}'],
            ['SLIP_SUM', str(bool(ssum)),
@@ -923,6 +926,10 @@ def main():
             '(from the partitioning of the total MFD) cost nothing, and the MFD\u2019s level and tilt are left to the bins: it '
             'acts on the bin-to-bin zig-zags their uncertainties allow. It is kept exactly by Metropolis steps, like the log '
             'misfits, and recorded apart from χ².' if mstep else '')
+         + (' <b>Tapered slip.</b> Each rupture’s slip on its subsections follows UCERF3’s sqrt-sine taper along '
+            'it by area (SLIP_ALONG_RUPTURE), its average and moment unchanged: less slip near its ends, up to 1.31 times '
+            'the average mid-rupture, in the slip-rate rows, the summed slip rates and the plate rate alike.'
+            if dsr == 'tapered' else '')
          + (f' <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
             f'{xsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
             'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '

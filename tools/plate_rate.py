@@ -199,16 +199,69 @@ def _projection(ft, pole):
     return float(uh @ v / V ** 2), float(uh @ that / V), V
 
 
-def rupture_matrix(rupture_dir, n_sections):
-    """Subsections x ruptures: each rupture's average slip (m, average_slips.csv) on each of its subsections
-    (indices.csv)."""
+TAPER_GRID = 200001                                   # the tapered slip's CDF, tabulated
+
+
+def _taper_cdf():
+    """UCERF3's tapered slip along a rupture (SlipAlongRuptureModels TAPERED): sqrt(sin(pi x)) on x in [0, 1], the
+    fraction of the rupture's area along it; its CDF, normalized to 1 at x = 1, tabulated (the integrand's square-root
+    ends integrate closely enough on this grid: each rupture's average slip kept to 3e-8)."""
+    x = np.linspace(0.0, 1.0, TAPER_GRID)
+    y = np.sqrt(np.sin(np.pi * x))
+    F = np.concatenate([[0.0], np.cumsum(0.5 * (y[1:] + y[:-1]) * np.diff(x))])
+    return x, F / F[-1]
+
+
+def slip_taper(rupture_dir, ptr=None, idx=None):
+    """Each rupture's tapered slip on each of its subsections, as a factor on its average slip (aligned with
+    indices.csv's entries, idx): its subsections laid end to end in indices.csv's order, each taking its share of the
+    rupture's area (trace length x down-dip width, (LowDepth - UpDepth) / sin(dip), times 1 - AseismicSlipFactor), and
+    each getting the taper's mean over its stretch, (F(b) - F(a)) / (b - a). The area-weighted mean of the factors over a
+    rupture is 1, so its average slip, and its moment, are unchanged; a one-subsection rupture keeps its average slip."""
+    if ptr is None:
+        from make_solution import read_rupture_set
+        _, ptr, idx = read_rupture_set(rupture_dir)
+    feats = _sections(rupture_dir)
+    area = np.zeros(len(feats))
+    for i, ft in enumerate(feats):
+        pr = ft['properties']
+        t = np.asarray(ft['geometry']['coordinates'], float)
+        t = t.reshape(-1, t.shape[-1])[:, :2] if t.ndim > 2 else t[:, :2]
+        dx = np.diff(t[:, 0]) * 111.32 * np.cos(np.radians(t[:, 1].mean()))
+        L = np.hypot(dx, np.diff(t[:, 1]) * 110.574).sum()
+        W = (float(pr['LowDepth']) - float(pr['UpDepth'])) / max(np.sin(np.radians(float(pr['DipDeg']))), 1e-6)
+        area[i] = L * W * (1.0 - float(pr.get('AseismicSlipFactor', 0.0) or 0.0))
+    if (area <= 0).any():
+        raise ValueError(f'{rupture_dir}: {(area <= 0).sum()} subsections with no area (fault_sections.geojson)')
+    x, F = _taper_cdf()
+    a = area[idx]
+    nk = np.diff(ptr)
+    col = np.repeat(np.arange(len(nk)), nk)
+    tot = np.bincount(col, weights=a, minlength=len(nk))
+    hi = np.cumsum(a) - np.repeat(np.concatenate([[0.0], np.cumsum(tot)[:-1]]), nk)   # each one's end along its rupture
+    hi = hi / tot[col]
+    lo = hi - a / tot[col]
+    w = (np.interp(hi, x, F) - np.interp(lo, x, F)) / (hi - lo)
+    w[nk[col] == 1] = 1.0
+    return w
+
+
+def rupture_matrix(rupture_dir, n_sections, along='uniform'):
+    """Subsections x ruptures: each rupture's slip (m) on each of its subsections (indices.csv): its average slip
+    (average_slips.csv), the same on all of them ('uniform', NZSHM22's Dsr Uniform), or tapered along the rupture
+    ('tapered', UCERF3's sqrt-sine; slip_taper), as the cleaned problem's slip_along says."""
     from make_solution import read_rupture_set
     _, ptr, idx = read_rupture_set(rupture_dir)
     D = np.loadtxt(os.path.join(rupture_dir, 'average_slips.csv'), delimiter=',', skiprows=1)
     if not np.array_equal(D[:, 0], np.arange(len(ptr) - 1)):
         raise ValueError(f'{rupture_dir}/average_slips.csv: rupture indices are not 0, 1, 2, ... in order')
     col = np.repeat(np.arange(len(ptr) - 1), np.diff(ptr))
-    return sp.csr_matrix((D[col, 1], (idx, col)), shape=(n_sections, len(ptr) - 1))
+    v = D[col, 1]
+    if along == 'tapered':
+        v = v * slip_taper(rupture_dir, ptr, idx)
+    elif along != 'uniform':
+        raise ValueError(f'slip along the ruptures {along!r}: use uniform or tapered')
+    return sp.csr_matrix((v, (idx, col)), shape=(n_sections, len(ptr) - 1))
 
 
 def _slip_rows(P, slip_block):
@@ -254,7 +307,7 @@ def cross_sections(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends
     feats = _sections(rupture_dir)
     n = len(feats)
     if S is None:
-        S = rupture_matrix(rupture_dir, n)
+        S = rupture_matrix(rupture_dir, n, P.get('slip_along', 'uniform'))
     if P['raw_shape'][1] != S.shape[1]:
         raise ValueError(f'the inputs have {P["raw_shape"][1]} ruptures and the rupture set {S.shape[1]}')
     rows, sec = _slip_rows(P, slip_block)

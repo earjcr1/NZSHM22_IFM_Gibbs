@@ -145,7 +145,7 @@ def main():
         if rd is None:
             raise SystemExit(f'--ruptures {a.ruptures}: no OpenSHA rupture set there')
         try:
-            coef = check_problem(P, rupture_matrix(rd, len(_sections(rd))), a.slip_block)   # row scale / sigma (m/yr)
+            coef = check_problem(P, rupture_matrix(rd, len(_sections(rd)), P.get('slip_along', 'uniform')), a.slip_block)   # row scale / sigma (m/yr)
         except ValueError as e:
             raise SystemExit(f'--ruptures: {e}')
         u = scale / coef * 1e3

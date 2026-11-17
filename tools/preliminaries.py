@@ -392,6 +392,10 @@ def main():
                          'SR_max per parent fault), each a split normal in mm/yr with its mode at the inputs\' factor (0.8) '
                          'x SR_pref (cfm_sliprates.py); needs --rupture-set')
     ap.add_argument('--rupture-set', default=None, help='the OpenSHA rupture set (for --cfm-sliprates)')
+    ap.add_argument('--slip-along', default='uniform', choices=['uniform', 'tapered'],
+                    help='each rupture\'s slip along its subsections in the slip-rate rows: uniform (default; NZSHM22\'s Dsr '
+                         'Uniform, as the inputs have it), or tapered (UCERF3\'s sqrt-sine taper by area along the rupture, '
+                         'its average slip unchanged; plate_rate.slip_taper); needs --rupture-set')
     ap.add_argument('--cfm-sigmas', type=float, default=2.0,
                     help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2; the inputs read them as 1)')
     ap.add_argument('--slip-sd-multiplier', type=float, default=None,
@@ -498,6 +502,31 @@ def main():
             say(ln)
     if args.cfm_template_rho is not None and not args.cfm_sliprates:
         raise SystemExit('--cfm-template-rho needs --cfm-sliprates (the CFM\'s quality codes and slip-rate triples)')
+    W_taper = None                                       # --slip-along tapered: each slip row's taper on each rupture
+    if args.slip_along == 'tapered':
+        from cru_common import find_rupture_set
+        from plate_rate import _sections, slip_taper
+        from make_solution import read_rupture_set
+        rd_t = find_rupture_set(args.rupture_set) if args.rupture_set else None
+        if rd_t is None:
+            raise SystemExit('--slip-along tapered needs --rupture-set (its indices.csv and fault_sections.geojson)')
+        ns_t = len(_sections(rd_t))
+        _, ptr_t, idx_t = read_rupture_set(rd_t)
+        if len(ptr_t) - 1 != A.shape[1]:
+            raise SystemExit(f'--slip-along tapered: the inputs have {A.shape[1]} ruptures and the rupture set {len(ptr_t) - 1}')
+        col_t = np.repeat(np.arange(len(ptr_t) - 1), np.diff(ptr_t))
+        w_t = slip_taper(rd_t, ptr_t, idx_t)
+        W_taper = sp.csr_matrix((w_t, (idx_t, col_t)), shape=(ns_t, A.shape[1]))
+        A = sp.csr_matrix(A)
+        top = A[:ns_t]
+        pat = sp.csr_matrix((np.ones(len(w_t)), (idx_t, col_t)), shape=top.shape)
+        if top.nnz != pat.nnz or abs(top).multiply(pat).nnz != top.nnz:
+            raise SystemExit('--slip-along tapered: the first rows of --A are not the rupture set\'s subsections\' slip-rate '
+                             'rows (their ruptures differ from indices.csv\'s)')
+        A = sp.vstack([top.multiply(W_taper).tocsr(), A[ns_t:]]).tocsr()
+        say(f'== slip along the ruptures: tapered (UCERF3\'s sqrt-sine by area, each rupture\'s average slip unchanged): '
+            f'the {ns_t} subsections\' rows reweighted, factors {w_t.min():.3f}-{w_t.max():.3f} (ruptures of one '
+            f'subsection: 1); {int((np.diff(ptr_t) > 1).sum()):,} ruptures tapered')
     if args.cfm_rate_links and args.cfm_template_rho is None:
         raise SystemExit('--cfm-rate-links needs --cfm-template-rho (the correlation)')
 
@@ -643,12 +672,21 @@ def main():
                                 f'{len(sub_par)} subsections in {rd_s}')
             elif par_note is None:
                 par_note = 'no rupture set given or found beside --A'
+        G_grp = G                                       # the grouping sees each copy's uniform coefficients
+        if W_taper is not None:
+            Wc = sp.csr_matrix(W_taper[np.asarray(keep_r)[srows]][:, keep_c])
+            Wc.data = 1.0 / Wc.data
+            Gr_ = sp.csr_matrix(G)
+            sel = sp.csr_matrix((np.ones(len(srows)), (srows, np.arange(len(srows)))), shape=(Gr_.shape[0], len(srows)))
+            mask = np.ones(Gr_.shape[0])
+            mask[srows] = 0.0
+            G_grp = (sp.diags(mask) @ Gr_ + sel @ Gr_[srows].multiply(Wc)).tocsr()
         try:
-            sec, kr, notes = slip_sections(G, d, srows, keep_r, spec, parents=par_s)
+            sec, kr, notes = slip_sections(G_grp, d, srows, keep_r, spec, parents=par_s)
         except (OSError, ValueError) as e:
             raise SystemExit(f'--slip-sections: {e}')
         if par_s is not None:
-            sec0 = slip_sections(G, d, srows, keep_r, spec)[0]
+            sec0 = slip_sections(G_grp, d, srows, keep_r, spec)[0]
             n_split = int(sum(1 for k_ in np.unique(sec0) if len(set(par_s[sec0 == k_])) > 1))
             notes = [f'sections stop at each parent fault\'s end (the rupture set\'s fault names): {n_split} runs of copies '
                      f'that spanned two or more faults are split, {int(sec.max()) - int(sec0.max())} sections more'] + notes
@@ -776,7 +814,8 @@ def main():
                  slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
                  template_scale=t_keep, cfm_template_rho=args.cfm_template_rho,
                  cfm_rate_links=True if args.cfm_rate_links else None,
-                 sections_by_fault=True if par_s is not None else None)
+                 sections_by_fault=True if par_s is not None else None,
+                 slip_along='tapered' if W_taper is not None else None)
     say(f'   saved cleaned problem -> {args.out}   ({time.time() - t0:.1f}s)')
     say('   magnitude-bin rows, checked on the saved problem: ' + check_bin_rows(load_problem(args.out), args.bins_block))
     if args.bins_block in bnames:                  # the bins' edges against the ruptures' magnitudes, when a rupture set is at hand
