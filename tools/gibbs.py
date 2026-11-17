@@ -4767,11 +4767,17 @@ def main():
         nb = np.bincount(bins)
         edge = "soft lower edge, sd %g decades" % se if se > 0 else "hard lower edge"
         rel = 1.0 / P['d'][rows]                         # each bin row's relative uncertainty (it is normalized by it)
+        q84 = P.get('mfd_pdf_q84')                       # MFD_GR: each bin's upper spread, its 84.135% point over its target
+        if q84 is not None and np.isfinite(q84[rows]).all():
+            rel = q84[rows] / Rb - 1.0
+            if not (rel > 0).all():
+                raise SystemExit('MFD_GR: a bin\'s 84.135% point is not above its target (mfd_pdf_q84); clean again')
         su = np.log10(1.0 + rel) if soft_top else np.zeros(len(rows))     # upper-edge sd per bin, decades
         if soft_top:                                     # soft top at R_j: Gaussian in log rate with the bin's own uncertainty
             ku_vec = np.ascontiguousarray((1.0 / (2.0 * (su * LN10) ** 2))[bins])
             hi_u = 10.0
-            edge += f'; soft top at R_j, sd log10(1 + sigma_j/R_j) = {su.min():.3f}-{su.max():.3f} decades'
+            edge += (f'; soft top at R_j, sd log10(1 + sigma_j/R_j) = {su.min():.3f}-{su.max():.3f} decades'
+                     + (' (MFD_GR: each bin\'s upper spread, its 84.135% point over its target)' if q84 is not None else ''))
         else:
             edge += f'; hard top at {F:g} x R_j'
 

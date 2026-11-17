@@ -25,17 +25,20 @@ constant share of the total, the minimum and maximum magnitudes and the run's N5
 regional_inversion_target_mfds.json. load_parts checks the rebuild against the stored MFDs at the run's own N5 and b
 (19k, 211k and 630k: every component to 1e-14 or better).
 
-Each component is proportional to N5, so a bin's target is N5 x s_j(b). The knobs are triples, (low, mode, high) for N5
-and for b (parse_triples): b a split normal; N5 a Gamma with that mode and sd half the triple's width (the user's choice,
-2026-11-17; split normals in log10 or in rate as options). Each bin's PDF is propagated exactly (bin_pdfs: N5's density
-summed over a fine grid of b, in u = ln of the target) and described for the sampler by the paleo sites' sinh-arcsinh
-curve family in log rate (paleo_misfit, mode 'log'; fit_bin_curves): its minimum at the mode of the density of log rate,
-through the exact 2.275/15.865/84.135/97.725% points (19k-630k: quantile errors about 0.001 decades, misfit within about
-0.2 of the exact one to 3 sd). Each bin is then scored by -2 ln of its density of log rate, from its minimum (gibbs.py
---mfd-misfit pdf), as a paleo site by its curve; the bin's row keeps a target, the target at the knobs' modes, and a sigma,
-the propagated sd, for its units and the prior's soft top.
+Each component is proportional to N5, so a bin's target is N5 x f_j(b). The knobs are NZSHM22's (Rollins et al., 2024,
+BSSA 114, 150-181, Table 1, upper-plate IFM; the user's choice, 2026-11-17, replacing independent N5 and b triples):
+b's 10th percentile, mean and 90th percentile (0.823, 0.959, 1.089), read as a split normal; the mean N(M>=5)
+conditioned on each (2.65, 3.40, 4.57 per year), so N and b are correlated, N(b) a quadratic in log10 N through the three
+pairs; and the N scaling s, a factor on the whole MFD independent of b, its 2-sigma values (0.66, 1.41) about 1, read as
+a split normal in ln s (parse_knobs). A bin's target is s N(b) f_j(b). Each bin's PDF is propagated exactly (bin_pdfs:
+ln s's density summed over a fine grid of b, in u = ln of the target) and described for the sampler by the paleo sites'
+sinh-arcsinh curve family in log rate (paleo_misfit, mode 'log'; fit_bin_curves): its minimum at the mode of the density
+of log rate, through the exact 2.275/15.865/84.135/97.725% points. Each bin is then scored by -2 ln of its density of log
+rate, from its minimum (gibbs.py --mfd-misfit pdf), as a paleo site by its curve; the bin's row keeps a target, the
+target at b's mean and s = 1, and a sigma, the propagated sd, for its units; the prior's soft top takes each bin's upper
+spread, its 84.135% point over its target (q84, saved with the problem as mfd_pdf_q84).
 
-    python mfd_gr.py SOLUTION [--mfd-gr N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear]]
+    python mfd_gr.py SOLUTION [--mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI]
 """
 import argparse
 import csv
@@ -149,27 +152,46 @@ PQ = np.array([0.02275, 0.15865, 0.5, 0.84135, 0.97725])   # the bins' quantiles
 FIXED_KERNEL = 0.01                                     # a knob given without spread: a normal kernel of this sd in ln N5
 
 
-def parse_triples(spec):
-    """MFD_GR's knobs as triples, 'N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear]' -> dict(n5=(lo, mode, hi), b=(lo,
-    mode, hi), n5_space). b: a split normal with its mode at the middle value and each side's sd its distance to the outer
-    one. N5: 'gamma' (the default; the user's choice, 2026-11-17): a Gamma with its mode at the middle value and its sd half
-    the triple's width ((N5_HI - N5_LO) / 2), as a rate estimated from Poisson or negative-binomial counts has (skewness
-    2 / sqrt(k): 0.48 for 3.92 +- 1); 'log10' or 'linear': a split normal like b's, read in log10 (the triple's ratios) or
-    in rate (kept above 0)."""
-    parts_ = str(spec).split(',')
-    space = 'gamma'
-    if parts_ and parts_[-1].strip() in ('gamma', 'log10', 'linear'):
-        space = parts_.pop().strip()
+Z10 = 1.2815515655446004                                # the 90th percentile of a standard normal
+
+
+def parse_knobs(spec):
+    """MFD_GR's knobs, 'B10,B,B90,N10,N,N90,S_LO,S_HI' (the NZSHM22 logic tree's form; Rollins et al., 2024, Table 1) ->
+    dict(b=(b10, mean, b90), n=(n10, n, n90), s=(lo, hi)):
+      b: the b-value's 10th percentile, mean and 90th percentile (a split normal, its mode the mean, each side's sd its
+         distance to the 10th or 90th percentile over 1.2816);
+      n: the mean rate of M>=5 earthquakes conditioned on each of those b-values: N(b), a quadratic in log10 N through the
+         three pairs (b and N correlated);
+      s: the N scaling, a factor on the whole MFD independent of b, its 2.275% and 97.725% (2 sigma) values about 1 (a split
+         normal in ln s, its mode at 1, each side's sd half the log distance to its value).
+    A knob without spread (b10 = b = b90; S_LO = S_HI = 1) is held at its middle value."""
     try:
-        v = [float(x) for x in parts_]
+        v = [float(x) for x in str(spec).split(',')]
     except ValueError:
         v = []
-    if len(v) != 6 or not (0 < v[0] <= v[1] <= v[2] and 0 < v[3] <= v[4] <= v[5]):
-        raise ValueError(f'MFD_GR {spec}: give N5_LO,N5,N5_HI,B_LO,B,B_HI (low <= mode <= high, all above 0), e.g. '
-                         '2.92,3.92,4.92,0.859,0.959,1.059, optionally followed by gamma (the default), log10 or linear for N5')
-    if v[0] == v[2] and v[3] == v[5]:
-        raise ValueError(f'MFD_GR {spec}: both knobs without spread give the bins no distribution')
-    return dict(n5=tuple(v[:3]), b=tuple(v[3:]), n5_space=space)
+    if len(v) != 8:
+        raise ValueError(f'MFD_GR {spec}: give B10,B,B90,N10,N,N90,S_LO,S_HI (b\'s 10th percentile, mean and 90th percentile, '
+                         'the mean N(M>=5) at each, and the N scaling\'s 2-sigma values), e.g. 0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41')
+    b, n, sc = tuple(v[:3]), tuple(v[3:6]), tuple(v[6:])
+    if not (0 < b[0] <= b[1] <= b[2]) or (b[0] == b[1]) != (b[1] == b[2]):
+        raise ValueError(f'MFD_GR {spec}: b\'s values must rise (B10 < B < B90), or all three be equal (b fixed)')
+    if not all(x > 0 for x in n) or (b[0] == b[2] and len(set(n)) > 1):
+        raise ValueError(f'MFD_GR {spec}: the N values must be above 0 (and equal when b is fixed)')
+    if not (0 < sc[0] <= 1 <= sc[1]):
+        raise ValueError(f'MFD_GR {spec}: the N scaling\'s values must bracket 1 (0 < S_LO <= 1 <= S_HI)')
+    if b[0] == b[2] and sc[0] == sc[1]:
+        raise ValueError(f'MFD_GR {spec}: neither b nor the N scaling has spread, so the bins have no distribution')
+    return dict(b=b, n=n, s=sc)
+
+
+def n_of_b(knobs, b):
+    """The mean N(M>=5) conditioned on b: log10 N a quadratic in b through the three (b, N) pairs (a constant with b fixed)."""
+    (b0, b1, b2), (n0, n1, n2) = knobs['b'], knobs['n']
+    b = np.asarray(b, float)
+    if b0 == b2:
+        return np.full(b.shape, n1)
+    c = np.polyfit([b0, b1, b2], np.log10([n0, n1, n2]), 2)
+    return 10.0 ** np.polyval(c, b)
 
 
 def _split_logpdf(x, lo, mode, hi):
@@ -182,49 +204,35 @@ def _split_logpdf(x, lo, mode, hi):
 
 
 def bin_pdfs(parts, knobs, n_coarse=161, n_b=1201, n_u=6001):
-    """Each bin's distribution of its target N5 s_j(b), propagated exactly from the knobs (parse_triples): the density
-    g_j(u) of u = ln(target) on a grid (a sum over a fine grid of b, weighted by b's density, of N5's density at
-    u - ln s_j(b)), with its quantiles (PQ), the mode of the rate's own density (g(u) / e^u), mean, sd and the
-    probability that the target is 0 or less (s_j(b) <= 0 at some b). Returns dict(R: the target at the knobs' modes,
-    bins: {j: dict(u, g, q, mode, mean, sd, p_neg)})."""
-    (bl, bm, bh), (nl, nm, nh) = knobs['b'], knobs['n5']
+    """Each bin's distribution of its target s N(b) f_j(b) (f_j the supra-seismogenic MFD per unit N, NZSHM22's
+    partitioning), propagated exactly from the knobs (parse_knobs): the density g_j(u) of u = ln(target) on a grid, a sum
+    over a fine grid of b, weighted by b's density, of ln s's density at u - ln(N(b) f_j(b)); with its quantiles (PQ), the
+    mode of the rate's own density (g(u) / e^u), mean, sd and the probability that the target is 0 or less. Returns
+    dict(R: the target at b's mean, N(b) there and s = 1; bins: {j: dict(u, g, q, mode, mean, sd, p_neg)})."""
+    bl, bm, bh = knobs['b']
+    sl_, sh_ = knobs['s']
     if bl == bh:                                          # b fixed
         bf, w = np.array([bm]), np.ones(1)
-        Sf = components(parts, 1.0, bm)['supra'][None, :]
+        Sf = (components(parts, 1.0, bm)['supra'] * float(n_of_b(knobs, bm)))[None, :]
     else:
-        lo_b, hi_b = bm - 6.0 * ((bm - bl) or (bh - bm)), bm + 6.0 * ((bh - bm) or (bm - bl))
+        sdl, sdh = (bm - bl) / Z10, (bh - bm) / Z10
+        lo_b, hi_b = bm - 6.0 * sdl, bm + 6.0 * sdh
         bc = np.linspace(lo_b, hi_b, n_coarse)
-        Sc = np.array([components(parts, 1.0, b_)['supra'] for b_ in bc])
+        Sc = np.array([components(parts, 1.0, b_)['supra'] for b_ in bc]) * n_of_b(knobs, bc)[:, None]
         Sc = np.where(Sc > 1e-19, Sc, np.where(Sc < 0, Sc, 0.0))
         bf = np.linspace(lo_b, hi_b, n_b)
-        w = np.exp(_split_logpdf(bf, bl, bm, bh))
+        w = np.exp(_split_logpdf(bf, bm - sdl, bm, bm + sdh))
         w /= w.sum()
         Sf = np.array([np.interp(bf, bc, Sc[:, j]) for j in range(NZ_NUM_BINS)]).T
-    if knobs['n5_space'] == 'gamma' and nl != nh:        # v = ln N5: N5 a Gamma, mode nm, sd (nh - nl) / 2
-        from scipy.stats import gamma as gamma_
-        sdn = 0.5 * (nh - nl)
-        rk = (nm + math.sqrt(nm * nm + 4.0 * sdn * sdn)) / (2.0 * sdn)    # sqrt(k): (k - 1) theta = mode, sqrt(k) theta = sd
-        kk, th_ = rk * rk, sdn / rk
-        gd = gamma_(kk, scale=th_)
-        lpv = lambda v: gd.logpdf(np.exp(v)) + v
-        v_lo, v_hi = math.log(max(float(gd.ppf(1e-9)), 1e-12)), math.log(float(gd.ppf(1 - 1e-12)))
-        knobs['n5_gamma'] = (kk, th_)
-    elif knobs['n5_space'] in ('log10', 'gamma'):         # log10 N5 a split normal (or, N5 fixed, a narrow kernel)
-        if nl == nh:
-            lpv = lambda v: -0.5 * ((v - math.log(nm)) / FIXED_KERNEL) ** 2 - math.log(FIXED_KERNEL * math.sqrt(2 * math.pi))
-            v_lo, v_hi = math.log(nm) - 8 * FIXED_KERNEL, math.log(nm) + 8 * FIXED_KERNEL
-        else:
-            L = tuple(math.log10(x) for x in (nl, nm, nh))
-            lpv = lambda v: _split_logpdf(v / LN10, *L) - math.log(LN10)
-            v_lo, v_hi = LN10 * (L[1] - 8 * ((L[1] - L[0]) or (L[2] - L[1]))), LN10 * (L[1] + 8 * ((L[2] - L[1]) or (L[1] - L[0])))
-    else:                                                 # linear: N5 a split normal above 0
-        if nl == nh:
-            raise ValueError('MFD_GR: a fixed N5 needs the log10 reading')
-        from scipy.stats import norm
-        p0 = float(np.exp(_split_logpdf(np.array([0.0]), nl, nm, nh))[0])   # not needed exactly: renormalized below
-        lpv = lambda v: _split_logpdf(np.exp(v), nl, nm, nh) + v
-        v_lo, v_hi = math.log(max(nm - 8 * (nm - nl), nm * 1e-3)), math.log(nm + 8 * (nh - nm))
-    R = components(parts, nm, bm)['supra']
+    if sl_ == sh_:                                        # s fixed at 1: a narrow kernel in ln s
+        lpv = lambda v: -0.5 * (v / FIXED_KERNEL) ** 2 - math.log(FIXED_KERNEL * math.sqrt(2 * math.pi))
+        v_lo, v_hi = -8 * FIXED_KERNEL, 8 * FIXED_KERNEL
+    else:                                                 # ln s a split normal, mode 0, each side's sd half its 2-sigma distance
+        s_lo, s_hi = -0.5 * math.log(sl_), 0.5 * math.log(sh_)
+        s_lo, s_hi = (s_lo or s_hi), (s_hi or s_lo)
+        lpv = lambda v: _split_logpdf(v, -s_lo, 0.0, s_hi)
+        v_lo, v_hi = -8 * s_lo, 8 * s_hi
+    R = components(parts, float(n_of_b(knobs, bm)), bm)['supra']
     out = {}
     for j in np.flatnonzero(R > 1e-19):
         sj = Sf[:, j]
@@ -284,10 +292,10 @@ def fit_bin_curves(B):
 
 
 def gr_bins(parts, spec):
-    """MFD_GR's bins for --mfd-gr spec: dict(R (the targets at the knobs' modes, 40 bins), sd (the propagated sds), th and
-    best (each bin's curve: sinh-arcsinh parameters in log rate, and its minimum's rate), B (bin_pdfs), F (fit_bin_curves),
-    knobs, spec). Raises ValueError if a bin's curve cannot be fitted or the target can be 0 or less."""
-    knobs = parse_triples(spec)
+    """MFD_GR's bins for --mfd-gr spec: dict(R (the targets at b's mean and s = 1, 40 bins), sd (the propagated sds), q84
+    (each bin's 84.135% point: the prior's soft top uses its upper spread), th and best (each bin's curve: sinh-arcsinh
+    parameters in log rate, and its minimum's rate), B (bin_pdfs), F (fit_bin_curves), knobs, spec). Raises ValueError if a bin's curve cannot be fitted or the target can be 0 or less."""
+    knobs = parse_knobs(spec)
     B = bin_pdfs(parts, knobs)
     F = fit_bin_curves(B)
     bad = [M_ for j, M_ in ((j, X[j]) for j in F) if not F[j]['ok'] or B['bins'][j]['p_neg'] > 1e-6]
@@ -297,17 +305,19 @@ def gr_bins(parts, spec):
     sd = np.full(NZ_NUM_BINS, np.nan)
     th = np.full((NZ_NUM_BINS, 4), np.nan)
     best = np.full(NZ_NUM_BINS, np.nan)
+    q84 = np.full(NZ_NUM_BINS, np.nan)
     for j in F:
         sd[j], th[j], best[j] = B['bins'][j]['sd'], F[j]['th'], F[j]['best']
-    return dict(R=B['R'], sd=sd, th=th, best=best, B=B, F=F, knobs=knobs, spec=str(spec))
+        q84[j] = math.exp(B['bins'][j]['q'][3])
+    return dict(R=B['R'], sd=sd, q84=q84, th=th, best=best, B=B, F=F, knobs=knobs, spec=str(spec))
 
 
 def knob_text(knobs):
     """The knobs, for reports."""
-    nl, nm, nh = knobs['n5']
-    n5 = (f'N5 Gamma, mode {nm:g}, sd {0.5 * (nh - nl):g} (shape {knobs["n5_gamma"][0]:.2f})' if knobs['n5_space'] == 'gamma'
-          and 'n5_gamma' in knobs else f'N5 split normal in {knobs["n5_space"]} ({nl:g}, {nm:g}, {nh:g})')
-    return n5 + f'; b split normal ({knobs["b"][0]:g}, {knobs["b"][1]:g}, {knobs["b"][2]:g})'
+    b, n, sc = knobs['b'], knobs['n'], knobs['s']
+    return (f'b {b[1]:g} (10th-90th percentile {b[0]:g}-{b[2]:g}, a split normal) with the mean N(M>=5) at each '
+            f'{n[1]:g} ({n[0]:g}, {n[2]:g}; N(b) a quadratic in log10 N), and the N scaling, 2-sigma {sc[0]:g}-{sc[1]:g} '
+            '(a split normal in ln s about 1)')
 
 
 def report_lines(parts, GB, lo=None):
@@ -321,7 +331,7 @@ def report_lines(parts, GB, lo=None):
          f'sections, the seismicity PDF\'s share on the faults {parts["f_on"]:.4f}; minimum supra-seismogenic magnitudes '
          f'{parts["minm"].min():.2f}-{parts["minm"].max():.2f}; the off-fault MFD\'s kink at the {X[parts["kink"]]:.2f} bin',
          '   each bin scored by -2 ln of its PDF in log rate from its minimum (a sinh-arcsinh curve through the exact quantiles, its '
-         'minimum at the exact mode; gibbs.py --mfd-misfit pdf); x target: relative to the target at the knobs\' modes',
+         'minimum at the exact mode; gibbs.py --mfd-misfit pdf); x target: relative to the target at b\'s mean and s = 1',
          f'   {"bin":>5s} {"target":>10s} {"cru_D":>10s} {"mode":>6s} {"2.3%":>6s} {"16%":>6s} {"50%":>6s} {"84%":>6s} {"97.7%":>6s} '
          f'{"sd":>6s} {"(x target)":>10s} {"fit: q err":>10s} {"misfit diff":>11s}']
     i0 = ci(parts['minMag'] if lo is None else lo + DELTA / 2)
@@ -341,13 +351,11 @@ def report_lines(parts, GB, lo=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('rupture_set', help='an OpenSHA inversion solution\'s folder or its ruptures/')
-    ap.add_argument('--mfd-gr', default=None, help='N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear] (default: the solution\'s '
-                    'own N5 and b, +-1 and +-0.1, N5 a Gamma)')
+    ap.add_argument('--mfd-gr', default='0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41',
+                    help='B10,B,B90,N10,N,N90,S_LO,S_HI (default: NZSHM22\'s upper-plate IFM, Rollins et al. 2024, Table 1)')
     a = ap.parse_args()
     parts = load_parts(a.rupture_set)
-    spec = a.mfd_gr or (f'{parts["n5_run"] - 1:g},{parts["n5_run"]:g},{parts["n5_run"] + 1:g},'
-                        f'{parts["b_run"] - 0.1:g},{parts["b_run"]:g},{parts["b_run"] + 0.1:g}')
-    print('\n'.join(report_lines(parts, gr_bins(parts, spec))))
+    print('\n'.join(report_lines(parts, gr_bins(parts, a.mfd_gr))))
 
 
 if __name__ == '__main__':

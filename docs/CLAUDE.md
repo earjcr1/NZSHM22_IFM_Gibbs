@@ -475,21 +475,24 @@ LW or ST. C only. Recorded as tr['mfd_step'], printed 'MFD steps (--mfd-step-sd 
 FIGURE_SETTINGS; summary PDF (settings row, model text, recorded term). run_quick_checks pins MFD_STEP_SD=None. selftest_mfdstep at
 B = 2 (tight B mixes slowly in its toy). REPORT.md "The MFD's steps".
 MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
-preliminaries.py --mfd-gr N5_LO,N5,N5_HI,B_LO,B,B_HI[,gamma|log10|linear] --rupture-set DIR (MFD_GR_SPEC from MFD_GR_N5 = (2.92, 3.92,
-4.92), MFD_GR_B = (0.859, 0.959, 1.059)): N5 a Gamma with that mode and sd half the range (the user's choice; skewness 0.48), b a split
-normal (mode, each side's sd its distance to low or high). tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
+preliminaries.py --mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI --rupture-set DIR (MFD_GR_SPEC from MFD_GR_B = (0.823, 0.959, 1.089),
+MFD_GR_N5 = (2.65, 3.40, 4.57), MFD_GR_NSCALE = (0.66, 1.41); the user's revision 2026-11-17 from Rollins et al. 2024 BSSA Table 1,
+upper-plate IFM, replacing independent N5/b triples): b a split normal through its 10th percentile, mean, 90th (sd = distance / 1.2816);
+N(b) the conditional mean, a quadratic in log10 N through the three pairs (mfd_gr.n_of_b; N and b correlated); the N scaling s a split
+normal in ln s, mode 1, each side's sd half the log of its 2-sigma value; target = s N(b) f_j(b) (parse_knobs). tools/mfd_gr.py rebuilds NZSHM22's partitioning (nzshm-opensha
 NZSHM22_CrustalInversionTargetMFDs.RegionalTargetMFDs.init, NZSHM22_FaultSystemRupSetCalc): total GR 10^-bM at bin centres
 5.05..ci(min(Mmax, maxMag)) summing to N5; sub-seismogenic = sum over sections of GR(pdf_s N5) up to max(ci(minmag_s), ci(6.8001)) - 1;
 off-fault tri-linear (kink = moment-weighted mean section min mag as a bin, read from the stored off-fault MFD; 0.98/1.01 corrections;
 log10 interpolation to ci(8.0)+1); supra = total - off - sub, 1e-20 below 6.8001; ci mirrors getClosestXIndex (1 + 1e-14 nudge, round
 half up). Reads an inversion solution's regional_inversion_target_mfds.json, inversion_target_mfds.json, sub_seismo_on_fault_mfds.csv
 (pdf_s = row sum / the run's N5), mod_sect_min_mags.csv, properties.csv; load_parts checks the rebuild against the stored MFDs at the run's
-N5 and b (1e-14 at 19k, 211k, 630k) and stops otherwise; TVZ MFDs refused. Each component is proportional to N5: target = N5 s_j(b);
-bin_pdfs gives each bin's density of u = ln target exactly (N5's density at u - ln s_j(b) summed over a fine b grid; a knob without
+N5 and b (1e-14 at 19k, 211k, 630k) and stops otherwise; TVZ MFDs refused. Each component is proportional to N: target = s N(b) f_j(b);
+bin_pdfs gives each bin's density of u = ln target exactly (ln s's density at u - ln(N(b) f_j(b)) summed over a fine b grid; s without
 spread a 1% kernel), with quantiles, mode, sd and P(target <= 0) (a bin where it is not negligible refused); fit_bin_curves fits the
 paleo sites' sinh-arcsinh curve in LOG RATE (paleo_misfit.fit_site mode 'log'; the user chose the density of log rate: its mode sits on the
-target, where the rate density's mode is 0.59-0.89 of it at 630k), minimum at the exact mode, through the exact 2.275/15.865/84.135/97.725%
-points (630k: quantile errors <= 0.002 decades, misfit within 0.26 of exact to 0.1/99.9%). Cleaning sets each bin row to the target at the
+target, where the rate density's mode is 0.71-0.94 of it at 630k), minimum at the exact mode, through the exact 2.275/15.865/84.135/97.725%
+points (630k: quantile errors <= 0.003 decades, misfit within 0.30 of exact to 0.1/99.9%); gr_bins also returns each bin's 84.135% point
+q84, saved as mfd_pdf_q84, from which gibbs.py sets the bin's prior soft top (sd log10(q84/R_j) in place of log10(1 + sigma_j/R_j)). Cleaning sets each bin row to the target at the
 knobs' modes over the propagated sd (row_scale untouched) and saves mfd_pdf_th, mfd_pdf_best (per cleaned row, NaN elsewhere); the
 notebook then sets MFD_MISFIT 'pdf' (MISFIT 'mixed'). gibbs.py --mfd-misfit pdf: the bins' rows out of the Gaussian (PALEO_EPS), their
 curves tabulated by paleo_misfit.curve_tables and appended to the paleo tables (T.lw['PM']: I, V0 = U0 - ln(sd/eps), F, D, K, weight 1;

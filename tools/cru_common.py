@@ -91,7 +91,8 @@ def load_problem(path):
                 slip_along=str(z['slip_along']) if 'slip_along' in z.files else 'uniform',
                 mfd_gr=str(z['mfd_gr']) if 'mfd_gr' in z.files else None,
                 mfd_pdf_th=z['mfd_pdf_th'].astype(np.float64) if 'mfd_pdf_th' in z.files else None,
-                mfd_pdf_best=z['mfd_pdf_best'].astype(np.float64) if 'mfd_pdf_best' in z.files else None)
+                mfd_pdf_best=z['mfd_pdf_best'].astype(np.float64) if 'mfd_pdf_best' in z.files else None,
+                mfd_pdf_q84=z['mfd_pdf_q84'].astype(np.float64) if 'mfd_pdf_q84' in z.files else None)
 
 
 def split_weights(P, rows, res):
@@ -963,10 +964,11 @@ def run_settings(config, problem):
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
     if fixed_ and 'preset' in cfg:
         cfg['preset'] = f"{cfg['preset']} ({', '.join(fixed_)})"
-    if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' PDFs from N5 and b triples, or False
-        if cfg['mfd_gr']:
+    if 'mfd_gr' in cfg:                                  # MFD_GR (2026-11-17): the bins' PDFs from (b, N) pairs and the N
+        if cfg['mfd_gr']:                                # scaling (8 values), or, earlier that day, N5 and b triples (6)
             v_ = str(cfg['mfd_gr']).split(',')
-            cfg['mfd_gr'] = f'N5 {"/".join(v_[0:3])} b {"/".join(v_[3:6])}'
+            cfg['mfd_gr'] = (f'b {"/".join(v_[0:3])} N {"/".join(v_[3:6])} s {"-".join(v_[6:8])}' if len(v_) == 8 else
+                             f'N5 {"/".join(v_[0:3])} b {"/".join(v_[3:6])}')
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'

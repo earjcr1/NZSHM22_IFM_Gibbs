@@ -144,13 +144,17 @@ def main():
     mono = bool(cfg.get('mfd_monotonic'))
     mstep = cfg.get('mfd_step_sd')                     # MFD_STEP_SD (2026-11-17): the MFD's steps held to the target's
     dsr = cfg.get('slip_along') or 'uniform'          # SLIP_ALONG_RUPTURE (2026-11-17): each rupture's slip along it
-    mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from N5 and b triples
+    mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from (b, N) pairs
     if mfdgr:
         _g = str(mfdgr).split(',')
-        _n5d = _g[6] if len(_g) > 6 else 'gamma'
-        mgr_txt = (f'N(M\u22655) {_g[0]} / {_g[1]} / {_g[2]} per year ('
-                   + ('a Gamma: mode, sd half the range' if _n5d == 'gamma' else f'a split normal in {_n5d}')
-                   + f'), b {_g[3]} / {_g[4]} / {_g[5]} (a split normal)')
+        if len(_g) == 8:                               # b's 10th percentile, mean and 90th; the mean N at each; the N scaling
+            mgr_txt = (f'b {_g[0]} / {_g[1]} / {_g[2]} (10th percentile, mean, 90th percentile), the mean N(M\u22655) '
+                       f'conditioned on each {_g[3]} / {_g[4]} / {_g[5]} per year, N scaling {_g[6]}\u2013{_g[7]} (2\u03c3)')
+        else:                                          # earlier on 2026-11-17: independent N5 and b triples
+            _n5d = _g[6] if len(_g) > 6 else 'gamma'
+            mgr_txt = (f'N(M\u22655) {_g[0]} / {_g[1]} / {_g[2]} per year ('
+                       + ('a Gamma: mode, sd half the range' if _n5d == 'gamma' else f'a split normal in {_n5d}')
+                       + f'), b {_g[3]} / {_g[4]} / {_g[5]} (a split normal)')
     plate = cfg.get('plate_rate')                      # None, an upper limit, or (low, high)
     plate = (None if plate is None else (None, float(plate)) if isinstance(plate, (int, float))
              else (float(plate[0]), float(plate[1])))
@@ -653,7 +657,7 @@ def main():
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
            ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
             'as the inputs give them)'],
-          ] + ([['MFD_GR', mgr_txt, 'each MFD bin scored by its own target PDF in log rate, propagated from N(M\u22655) and b '
+          ] + ([['MFD_GR', mgr_txt, 'each MFD bin scored by its own target PDF in log rate, propagated from b, N(M\u22655) and the N scaling '
                  'through NZSHM22\u2019s partitioning of the total GR (less the off-fault and sub-seismogenic MFDs; mfd_gr.py), '
                  'in place of cru_D\u2019s targets (gibbs.py --mfd-misfit pdf)']]
                if mfdgr else []) + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
@@ -910,9 +914,14 @@ def main():
             'targets but by their own probability densities: the on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code '
             'derives from N(M\u22655) and b (the total Gutenberg\u2013Richter MFD, less the truly off-fault MFD and the '
             'sub-seismogenic on-fault MFD, with the rupture set\u2019s sections, minimum magnitudes and seismicity shares from its '
-            'inversion solution; mfd_gr.py reproduces the solution\u2019s own MFDs exactly), propagated exactly from the two '
-            'knobs\u2019 distributions to each bin. Each bin costs \u22122 ln of its density in log rate, measured from its minimum; '
-            'the bins are scored independently. Each bin\u2019s share of the fit check is its own misfit\u2019s mean and variance.'
+            'inversion solution; mfd_gr.py reproduces the solution’s own MFDs exactly), propagated exactly to each bin '
+            + ('from NZSHM22’s knobs (Rollins et al., 2024): b a split normal through its 10th percentile, mean and 90th '
+               'percentile; N(M\u22655) the mean conditioned on b, so the two are correlated; and the N scaling, a factor on the '
+               'whole MFD independent of b, a split normal in log about 1 through its 2\u03c3 values. '
+               if len(str(mfdgr).split(',')) == 8 else 'from the two knobs’ distributions. ')
+            + 'Each bin costs \u22122 ln of its density in log rate, measured from its minimum; the bins are scored '
+            'independently, and the prior’s soft top on each bin takes its upper spread. Each bin’s share of the fit '
+            'check is its own misfit’s mean and variance.'
             if mfdgr else '')
          + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'

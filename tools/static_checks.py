@@ -174,8 +174,11 @@ check(all(o_ in src['best_fit_as_fitted.py'] for o_ in ("'--down-the-middle'", "
       'monotonic MFD through cru_common.mfd_monotonic, plate rate; augmented Lagrangian, polish, --snap-floor), and gibbs.py '
       '--init fitted notes a fit made with other terms')
 check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
-      and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(2.92, 3.92, 4.92)']
-      and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.859, 0.959, 1.059)'] and 'mfd_gr' in _cfg_keys
+      and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.823, 0.959, 1.089)']
+      and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(2.65, 3.40, 4.57)']
+      and re.findall(r'^MFD_GR_NSCALE = (\(.*?\))', cells[0][1], re.M) == ['(0.66, 1.41)'] and 'mfd_gr' in _cfg_keys
+      and '\ndef parse_knobs(' in src['mfd_gr.py'] and '\ndef n_of_b(' in src['mfd_gr.py'] and "q84=q84" in src['mfd_gr.py']
+      and 'mfd_pdf_q84=' in src['preliminaries.py'] and "P.get('mfd_pdf_q84')" in src['gibbs.py']
       and 'MFD_GR_SPREAD' not in cells[0][1] and "out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'" in src['run_config.py']
       and any("args += ['--mfd-gr', MFD_GR_SPEC, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
       and "'--mfd-gr'" in src['preliminaries.py'] and 'mfd_gr.gr_bins(' in src['preliminaries.py']
@@ -183,9 +186,10 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       and "'pdf']" in src['gibbs.py'] and '\ndef selftest_mfdpdf(' in src['gibbs.py'] and 'ok &= selftest_mfdpdf()' in src['gibbs.py']
       and "'pdf']" in src['best_fit_as_fitted.py'] and "'mfd_pdf_th' in z.files" in src['block_fit.py']
       and '\ndef curve_tables(' in src['paleo_misfit.py'] and 'mfd-bound' not in src['gibbs.py'],
-      'notebook MFD_GR = False (2026-11-17: each bin scored by its own target PDF, propagated from N5 and b triples through '
-      'NZSHM22\'s partitioning, mfd_gr.py; cru_D\'s bins by default), MFD_GR_N5 (2.92, 3.92, 4.92) a Gamma, MFD_GR_B (0.859, 0.959, '
-      '1.059) a split normal; recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
+      'notebook MFD_GR = False (2026-11-17: each bin scored by its own target PDF, propagated through NZSHM22\'s partitioning, '
+      'mfd_gr.py; cru_D\'s bins by default) from NZSHM22\'s upper-plate knobs: MFD_GR_B (0.823, 0.959, 1.089) b\'s 10th '
+      'percentile, mean and 90th, MFD_GR_N5 (2.65, 3.40, 4.57) the mean N conditioned on each (correlated), MFD_GR_NSCALE '
+      '(0.66, 1.41) the N scaling\'s 2-sigma values; the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
       'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
       'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys

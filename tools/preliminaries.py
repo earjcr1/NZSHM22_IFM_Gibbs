@@ -364,14 +364,14 @@ def main():
                     "section's measurement, so its k rows are divided by sqrt(k); rows unlike their neighbours are "
                     "unchanged; 'none': every row its own measurement (the inputs as given; a sensitivity test); or a file "
                     "of 'original_row section' lines giving every slip-rate row's section")
-    ap.add_argument('--mfd-gr', default=None, metavar='N5_LO,N5,N5_HI,B_LO,B,B_HI',
+    ap.add_argument('--mfd-gr', default=None, metavar='B10,B,B90,N10,N,N90,S_LO,S_HI',
                     help='the magnitude bins\' targets replaced by PDFs: the on-fault supra-seismogenic MFD that NZSHM22\'s '
-                    'OpenSHA code derives from a regional rate of M>=5 earthquakes N5 and a b-value, propagated from N5 a Gamma '
-                    '(mode N5, sd half the triple\'s width; ",log10" or ",linear" after the triples: a split normal) and b a '
-                    'split normal (mode B, each side\'s sd its distance to B_LO or B_HI) (mfd_gr.py; MFD_GR in the notebook), '
-                    'with the rupture set\'s sections from an inversion solution (--rupture-set, or the one beside --A); each '
-                    'bin\'s row its target at the knobs\' modes over its propagated sd, and its curve saved for gibbs.py '
-                    '--mfd-misfit pdf; the inputs\' bins otherwise')
+                    'OpenSHA code derives from a regional rate of M>=5 earthquakes N and a b-value, propagated from b (its 10th '
+                    'percentile, mean and 90th percentile, a split normal), the mean N conditioned on each of those (N and b '
+                    'correlated) and the N scaling (its 2-sigma values about 1, a factor on the whole MFD) (mfd_gr.py; MFD_GR in '
+                    'the notebook), with the rupture set\'s sections from an inversion solution (--rupture-set, or the one beside '
+                    '--A); each bin\'s row its target at b\'s mean and s = 1 over its propagated sd, its curve saved for gibbs.py '
+                    '--mfd-misfit pdf and its 84.135%% point for the prior\'s soft top; the inputs\' bins otherwise')
     ap.add_argument('--mfd-uncertainty', default='as-given',
                     help="the magnitude bins' uncertainty level, their bin-to-bin shape kept as the inputs give it: "
                     "'as-given' (default): the inputs' uncertainties, each bin its own measurement; 'two-measurements': "
@@ -570,7 +570,7 @@ def main():
     else:
         say('   no magnitude-bin rows detected; the per-bin and hierarchical priors need them named in --blocks')
     mfd_gr_info = None
-    if args.mfd_gr:                                      # MFD_GR: each bin's target PDF from N5 and b triples
+    if args.mfd_gr:                                      # MFD_GR: each bin's target PDF from correlated (b, N) and the N scaling
         if args.bins_block not in bnames:
             raise SystemExit('--mfd-gr: there are no magnitude-bin rows to set')
         from cru_common import find_rupture_set
@@ -607,13 +607,15 @@ def main():
             say(line)
         say(f'   the inputs\' bins against the solution\'s stored target: ratio {np.min(R_in / st_b):.6f}-{np.max(R_in / st_b):.6f}'
             + ('' if np.allclose(R_in, st_b, rtol=1e-9) else ' (not the same: cru_D was not built with this solution\'s MFDs)'))
-        say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets (at the knobs\' modes) '
+        say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets (at b\'s mean, N(b) and s = 1) '
             f'{R_new.sum():.5g} per year in all (the inputs\' {R_in.sum():.5g}), sd / target {np.min(s_new / R_new):.3f}-'
             f'{np.max(s_new / R_new):.3f} (the inputs\' {rel_in.min():.3f}-{rel_in.max():.3f}); the sampler scores each bin by its '
-            'PDF (gibbs.py --mfd-misfit pdf; the curves saved with the problem as mfd_pdf_th and mfd_pdf_best)')
-        pdf_th, pdf_best = np.full((len(d), 4), np.nan), np.full(len(d), np.nan)
-        pdf_th[brows], pdf_best[brows] = GB['th'][ib], GB['best'][ib]
-        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best)
+            'PDF (gibbs.py --mfd-misfit pdf; the curves saved with the problem as mfd_pdf_th and mfd_pdf_best), and the '
+            'prior\'s soft top has each bin\'s upper spread, its 84.135% point over its target '
+            f'({np.min(GB["q84"][ib] / R_new):.3f}-{np.max(GB["q84"][ib] / R_new):.3f}; mfd_pdf_q84)')
+        pdf_th, pdf_best, pdf_q84 = np.full((len(d), 4), np.nan), np.full(len(d), np.nan), np.full(len(d), np.nan)
+        pdf_th[brows], pdf_best[brows], pdf_q84[brows] = GB['th'][ib], GB['best'][ib], GB['q84'][ib]
+        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best, pdf_q84)
     sd = detect_slip_rows(d_raw, info, keep_r)          # slip-rate rows: leading rows up to the first zero-forcing row
     if sd is not None and det is not None and np.intersect1d(sd[0], det).size:
         sd = None                                        # overlaps the bin rows: not a usable detection
@@ -804,6 +806,7 @@ def main():
                  mfd_uncertainty=mfd_spec, mfd_scale=mfd_c,
                  mfd_gr=None if mfd_gr_info is None else mfd_gr_info[0],
                  mfd_pdf_th=None if mfd_gr_info is None else mfd_gr_info[1], mfd_pdf_best=None if mfd_gr_info is None else mfd_gr_info[2],
+                 mfd_pdf_q84=None if mfd_gr_info is None else mfd_gr_info[3],
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',
