@@ -40,7 +40,16 @@ CFM_SLIPRATES = True                           # the slip rates from the NZ Comm
                                                # width; with CFM_TIMEFRAME the corrected distribution's mode, 2.5% and 97.5% points); the slip sums
                                                # follow. False only for sensitivity tests (tools/run_nb.py CFM_SLIPRATES=False): the inputs' Gaussians
 # CFM_RATE_LINKS = CFM_TEMPLATE_RHO is not None: the CFM's borrowed rates correlated with their sources whenever CFM_TEMPLATE_RHO is on
-FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS')
+# Fixed since 2026-11-17 (the user's request, moving them out of the notebook):
+DOWN_THE_MIDDLE = False                        # the balance term (gibbs.py --down-the-middle): each data type's relative shortfall s
+                                               # = sum of (prediction - target) / sum of targets, a misfit term A s^2 penalizing a type
+                                               # predicted all low or all high; off since early November 2026 (REPORT.md, "Balance
+                                               # between over- and underprediction"); True (A from the fit check) or 'zero-model'
+                                               # (each type's own weight) for sensitivity tests (tools/run_nb.py DOWN_THE_MIDDLE=True;
+                                               # the smoke test's reference values have it on)
+SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
+FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
+         'SLIP_BLOCK', 'BIN_BLOCK')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
 PLAN_KEYS = ('chains', 'sweeps', 'burn', 'thin', 'replicates')
@@ -64,8 +73,12 @@ def derived_settings(g):
     if g['MFD_GR']:                                # MFD_GR: the bins scored by their own PDFs, whatever MISFIT_MFD says
         out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'
     fixed = dict(BLOCKS=BLOCKS, SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
-                 CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None)
+                 CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None, DOWN_THE_MIDDLE=DOWN_THE_MIDDLE,
+                 SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK)
     fixed.update({k: v for k, v in ov.items() if k in FIXED})
+    if not (isinstance(fixed['DOWN_THE_MIDDLE'], bool) or fixed['DOWN_THE_MIDDLE'] == 'zero-model'):
+        raise ValueError(f"DOWN_THE_MIDDLE = {fixed['DOWN_THE_MIDDLE']!r}: use True (the balance term), 'zero-model' (its "
+                         'per-type weights) or False (the Gaussian misfit alone)')
     out.update(fixed)
     out['SD_MULTIPLIER_'] = 1 if fixed['CFM_SLIPRATES'] else 2.5   # the slip-rate sds' multiplier, no longer a setting
     # (since 2026-11-09, nor SR_pref's reading or the CFM's rounding): the CFM's slip rates (timeframe-corrected or not) with
@@ -88,7 +101,8 @@ def run_name(g, d):
     S = dict(g)
     S.update(d)
     return (('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')
-            + f"MFD_UNCERTAINTY{S['MFD_UNCERTAINTY']}_DOWN_THE_MIDDLE_{S['DOWN_THE_MIDDLE']}"
+            + f"MFD_UNCERTAINTY{S['MFD_UNCERTAINTY']}"
+            + (f"_DOWN_THE_MIDDLE_{S['DOWN_THE_MIDDLE']}" if S['DOWN_THE_MIDDLE'] is not False else '')
             + f"_{S['RUN_MINUTES']:g}min_floor{S['FLOOR']}"
             + (f"_misfit{S['MISFIT']}" if S['MISFIT'] != 'mixed' else
                f"_misfit_slip{S['MISFIT_SLIP']}_mfd{'pdf' if S['MFD_GR'] else S['MISFIT_MFD']}_paleo{S['MISFIT_PALEO']}")

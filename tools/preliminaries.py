@@ -27,8 +27,8 @@ kept (it is set where the inputs are built). Magnitudes count the bin rows up fr
 steps of --bin-width (0.1) in their original order, as plot_rate_magnitude.py does. The cleaned problem records the
 setting and the multiplier (mfd_uncertainty, mfd_scale), and row_scale includes it. The fit check still counts one
 measurement per bin: a draw's bin totals scatter independently, within their widened uncertainties.
-Writes the cleaned problem (--out), all diagnostics (prelim_results.npz), a summary (prelim_summary.txt), a figure
-(prelim.png) and, in a folder of its own next to --out, nnls/, the best fit as rate vectors (nnls_vectors.npz: a
+Writes the cleaned problem (--out), all diagnostics (prelim_results.npz), a summary (prelim_summary.txt), with --figure
+a figure of the diagnostics (prelim.png: on request since 2026-11-17, the notebook does not ask for it) and, in a folder of its own next to --out, nnls/, the best fit as rate vectors (nnls_vectors.npz: a
 `mean` column in the original rupture numbering, as the notebook's rate vectors, for plot_rate_magnitude.py,
 plot_slip_rates.py, plot_paleo_rates.py and make_solution.py; nnls_vectors.csv: the same as a table with the rows of
 rate_vectors.csv, one per rupture of the inputs, columns rupture, penalised and best_fit, removed ruptures 0); for
@@ -352,6 +352,8 @@ def main():
     ap.add_argument('--lo', type=float, default=0.0)
     ap.add_argument('--hi', type=float, default=1.0)
     ap.add_argument('--out', default='cru_clean.npz')
+    ap.add_argument('--figure', action='store_true', help='also draw the diagnostics (prelim.png: per-rupture scales, the '
+                    'spectrum, the resolution diagonal, the best fit\'s residuals)')
     ap.add_argument('--blocks', default=None, help="optional names for row blocks, e.g. 'S=0-387,MFD=695-713,P=714-753' (original row numbers); "
                     "the slip-rate and magnitude-bin rows are detected automatically if not named, and checked if named")
     ap.add_argument('--bins-block', default='MFD', help='name of the magnitude-bin rows (detected automatically if --blocks does not name them)')
@@ -948,7 +950,12 @@ def main():
             os.remove(f)
     open(f_sum, 'w').write('\n'.join(LOG) + '\n')
 
-    # ---- figure
+    # ---- figure (on request)
+    if not args.figure:
+        if os.path.exists(f_png):                     # an earlier cleaning's, which would not match this one
+            os.remove(f_png)
+        say(f'== done in {time.time() - t0:.1f}s: {args.out}, {f_res}, {f_sum}, {f_vec}, {f_csv}')
+        return
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt

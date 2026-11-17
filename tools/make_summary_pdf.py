@@ -773,7 +773,7 @@ def main():
           + ([['PLATE_RATE', f'{plate[1]:g}' if plate[0] is None else f'({plate[0]:g}, {plate[1]:g})',
                f'each strip\u2019s share of the plate rate {plate_txt} (a hard constraint, gibbs.py --plate-rate'
                + ('; PLATE_RATE = True: at SLIP_RATE_FACTOR' if 'misfit' in cfg else '') + ')']] if plate else [])
-          + [['DOWN_THE_MIDDLE', str(dtm), dtm_txt]]
+          + ([['DOWN_THE_MIDDLE', str(dtm), dtm_txt]] if dtm else [])   # a fixed setting since 2026-11-17: shown when on
           + [['FLOOR', f'{floor:g}', f'the lowest rate an active rupture can take, 10<super>{floor:g}</super> per year'],
           ] + ([['PRESET', repr(preset), f'{nrep} replicates' + (f' (of the preset\u2019s {st["replicates"]}; stopped early)'
                                      if st.get('replicates') and nrep < st['replicates'] else '') + f' × {ch} chains × {fmt(sw)} sweeps (burn-in {fmt(bu)}, a draw kept '

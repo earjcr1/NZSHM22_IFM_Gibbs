@@ -18,6 +18,6 @@ mkdir -p "$L"
 mark() { echo "$1 $(date +%T)" >> "$L/progress.txt"; }
 step() { local name=$1; shift; [ -f "$L/done_$name" ] && return; mark "$name start"; "$@" > "$L/$name.txt" 2>&1; local rc=$?
          mark "$name exit $rc"; [ $rc -eq 0 ] && touch "$L/done_$name" || exit $rc; }
-step default_spikeslab "$PY" -u "$R" "$NB" "$RUNS/default" "$DATA" 0 "${PIN[@]}" "MFD_UNCERTAINTY='as-given'" REPRESENTATIVES=20
-step two_spikeslab "$PY" -u "$R" "$NB" "$RUNS/two" "$DATA" 0 "${PIN[@]}" "MFD_UNCERTAINTY='two-measurements'" REPRESENTATIVES=0
+step default_spikeslab "$PY" -u "$R" "$NB" "$RUNS/default" "$DATA" "${PIN[@]}" "MFD_UNCERTAINTY='as-given'" REPRESENTATIVES=20
+step two_spikeslab "$PY" -u "$R" "$NB" "$RUNS/two" "$DATA" "${PIN[@]}" "MFD_UNCERTAINTY='two-measurements'" REPRESENTATIVES=0
 mark "all done"

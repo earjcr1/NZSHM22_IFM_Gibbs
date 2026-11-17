@@ -5,7 +5,17 @@ Design notes: @sampler-design.md (section 0 records what the 2e4 data showed and
 Findings, numbers and run commands: @REPORT.md
 What to test and check before routine use: @TESTING.md
 Workflow notebook: cru_workflow.ipynb (the configuration, then one call per step: it drives the scripts below end to
-end and computes nothing itself; it finds them in tools/ beside it, CODE_DIR).
+end and computes nothing itself; it finds them in tools/ beside it). Since 2026-11-17 (the user's request) the notebook
+keeps only its settings (one-line comments), the path setup and the scripts' calls, with a sentence or two of markdown per
+step; tools/notebook_steps.py holds the plumbing: setup(globals()) (run_config.derived_settings, every setting's check,
+SEED_USED/MFD_GR_SPEC/PLATE_LIMITS/SLIP_AS_GIVEN, DATA_DIR/RUN_DIR resolved, RUN_DIR made and entered, the log, RUPTURE_DIR,
+CONFIG via record_config -> workflow_config.json), sh (SH_SECONDS), show, results_dir, rupture_dir, ref_args,
+cleaning_args/after_cleaning, gibbs_args/_terms/starts_args, plan_runs (calibration from the starts, run_plan.json,
+config), replicate_seed, runs_done, clear_solution, write_timings (timings.json). The old markdown and the settings'
+full comments are in REPORT.md, "The notebook, step by step". DOWN_THE_MIDDLE (False), SLIP_BLOCK, BIN_BLOCK are fixed
+in run_config.py (FIXED; DOWN_THE_MIDDLE shown beside RUN_MINUTES and in the run name only when not False). No self-test
+cell or RUN_SELFTESTS; run_nb.py NOTEBOOK RUN_DIR DATA_DIR [NAME=VALUE ...]. The cleaning figure (preliminaries.py
+--figure) and the target figures (plot_targets.py) are on request.
 Code, all in tools/: preliminaries.py (clean, with soft zero-forcing rows forcing their ruptures to 0 like the penalty rows; diagnostics;
 NNLS, always computed (about 25 s at 211k; the chains start from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
 nnls_vectors.npz, which the notebook draws with the three fit-figure scripts below, and nnls_vectors.csv, a table with
@@ -430,7 +440,7 @@ aside with it.
 - Run `python tools/gibbs.py --selftest` after any change to the sampler, and `python tools/block_fit.py --selftest` after any
   change to the row-block fit report or the problem helpers in cru_common.py (the MFD uncertainty among them); both
   must pass. Any sampler change must also keep the rate-by-rate agreement in compare_runs.py
-  (z-scores ~ N(0,1), |z| > 3 near 0.27%). The notebook's RUN_SELFTESTS runs only `--selftest current`, the cases
+  (z-scores ~ N(0,1), |z| > 3 near 0.27%). `--selftest current` (the notebook's RUN_SELFTESTS until 2026-11-17; now the command line only) runs the cases
   the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance term, swap
   moves, the band). A change meant only to speed things up must leave a fixed-seed run's output arrays
   bit-identical if it is in the sampler (gibbs.py's per-draw bookkeeping works on each chain's nonzero rates, and its
@@ -472,7 +482,7 @@ of b). gibbs.mstep_build (A, c of the quadratic form in lam = ln of each bin row
 coefficient) and mstep_value; kernel stctx (st_fill, st_change, st_bounds, st_update): per-chain LAM/HH, in the on/off decision
 (bounds for off ruptures), the on chain's slice step as a Metropolis proposal, and swap_run (one or two bins); ODD now allocated with
 LW or ST. C only. Recorded as tr['mfd_step'], printed 'MFD steps (--mfd-step-sd B): ... near n_pairs-1'. best_fit_as_fitted.py
---mfd-step-sd (mfd_step_term, exact gradient; terms_key mfd_step=). Notebook: cell 9 and gibbs_run pass it; RUN_NAME _mfdstep{B};
+--mfd-step-sd (mfd_step_term, exact gradient; terms_key mfd_step=). Notebook: notebook_steps._terms passes it (gibbs_args, starts_args); RUN_NAME _mfdstep{B};
 FIGURE_SETTINGS; summary PDF (settings row, model text, recorded term). run_quick_checks pins MFD_STEP_SD=None. selftest_mfdstep at
 B = 2 (tight B mixes slowly in its toy). REPORT.md "The MFD's steps".
 MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
@@ -530,7 +540,7 @@ cru_common.mfd_monotonic (bit-identical). Without the new options the fit is ide
 pass the run's flags and --snap-floor (after the user's 630k run of 2026-11-17).
 
 RUN_MINUTES (240) and TARGETS ('production') replaced PRESET/PRESETS on 2026-11-17 (the user's request; one scheme, not two). tools/run_plan.py:
-plan() at the top of the sampler's cell (cell 11), after cleaning and the best fit: spent = SH_SECONDS (cell 2's sh() times
+plan() in notebook_steps.plan_runs (the sampling cell), after cleaning and the starts: spent = SH_SECONDS (notebook_steps.sh times
 every script; idle time not counted); post = the latest DATA_DIR run's timings.json post_s (the last cell writes it) or = spent;
 budget = 0.9 x RUN_MINUTES x 60 - spent - post; two calibration gibbs runs (CALIB_SWEEPS 120, CALIB_BURN 24, CALIB_THINS 4 and
 24, the run's settings and chains, quiet, deleted) -> calibration(): sweep time a + b / thin (per sweep, per recorded draw; one
@@ -553,11 +563,11 @@ per bin pi ~ U(0,1), on w.p. pi, log-uniform 2 floor..R_j, bin scaled to R_j); n
 polished FOR FEASIBILITY by best_fit_as_fitted.py --max-iter 30 per AL round (--polish-iter; settling polishes collapsed the
 starts: bin totals 0.6% spread vs posterior 8%), prior draws' bins scaled to R_j exp(2 sig/R z); the dispersion reported; the calibration starts from starts.npy too; the run's args (notebook _fit_args after --fit-args), in
 parallel subprocesses one thread each (unpolished starts broke the monotonic MFD and the slab floor's snap left rows at 0);
-cell 11 makes it before the calibration (seed replicate_seed(1000)), gibbs_run(init='starts.npy'); calibration still from the
+the sampling cell runs it (notebook_steps.starts_args, seed replicate_seed(1000)) before plan_runs; gibbs_args(init 'starts.npy'); calibration from the
 NNLS fit. run_plan REPLICATES_MAX = 1 (no splitting). Smoke test pins DISPERSED_STARTS=False. best_fit_as_fitted.py removed
 from the notebook (2026-11-17, the user's choice; 630k trace: 227.5 -> 151.9 at 500 its, 149.1 at 1,500, 147.4 at 5,000;
 default --tol 0.01 took 27 min): chains start from NNLS fits (gibbs_run start = init or 'nnls'; dispersed_starts.py --base
-nnls default, fitted optional); cell 9 draws the NNLS fit's figures only.
+nnls default, fitted optional); the best-fit cell draws the NNLS fit's figures only.
 The old presets (2026-11-11, the user's values, TESTING.md 'Run lengths'): quick 4 x 2,400 (burn 400, thin 8), 1 replicate; conservative
 8 x 100,000 (burn 5,000, thin 32), 1 replicate; very conservative 8 x 300,000 (burn 5,000, thin 32), 2 replicates (about 8.5 h at 211k).
 

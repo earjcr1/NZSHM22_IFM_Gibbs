@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Execute cru_workflow.ipynb's code cells in order in one namespace, as 'Run all' would (no Jupyter here).
 
-    python tools/run_nb.py NOTEBOOK RUN_DIR DATA_DIR RUN_SELFTESTS(0/1) [NAME=VALUE ...] [CELLS=n]
+    python tools/run_nb.py NOTEBOOK RUN_DIR DATA_DIR [NAME=VALUE ...] [CELLS=n]
 
 RUN_DIR and DATA_DIR are best given as absolute paths (the notebook resolves relative ones from its own folder).
 NAME=VALUE replaces a configuration value, e.g. "RUN_MINUTES=10" or "MFD_UNCERTAINTY='two-measurements'"; the
-settings fixed in tools/run_config.py (SLIP_SECTIONS, BLOCKS, CFM_SLIPRATES, ...), RUN_DIR and RUN_PLAN (a fixed plan in
+settings fixed in tools/run_config.py (SLIP_SECTIONS, BLOCKS, CFM_SLIPRATES, DOWN_THE_MIDDLE, ...), RUN_DIR and RUN_PLAN (a fixed plan in
 place of RUN_MINUTES's, e.g. "RUN_PLAN=dict(chains=4, sweeps=2400, burn=400, thin=8, replicates=1)"), not in the
 configuration cell, are passed to it as _OVERRIDES;
 CELLS=n stops after the first n code cells.
@@ -20,8 +20,8 @@ import sys
 import time
 import traceback
 
-nb_path, run_dir, data_dir, selftests = sys.argv[1:5]
-extra = dict(a.split('=', 1) for a in sys.argv[5:])
+nb_path, run_dir, data_dir = sys.argv[1:4]
+extra = dict(a.split('=', 1) for a in sys.argv[4:])   # (the self-tests left the notebook on 2026-11-17: gibbs.py --selftest)
 max_cells = int(extra.pop('CELLS', 10 ** 6))
 nb = json.load(open(nb_path))
 cells = [c for c in nb['cells'] if c['cell_type'] == 'code']
@@ -29,8 +29,7 @@ src0 = ''.join(cells[0]['source'])
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_config import OVERRIDABLE                       # the settings fixed in tools/run_config.py, and RUN_DIR
 overrides = []                                           # those, set through _OVERRIDES (run_config.derived_settings)
-for name, val in (('RUN_DIR', repr(run_dir)), ('DATA_DIR', repr(data_dir)),
-                  ('RUN_SELFTESTS', 'True' if selftests == '1' else 'False')) + tuple(extra.items()):
+for name, val in (('RUN_DIR', repr(run_dir)), ('DATA_DIR', repr(data_dir))) + tuple(extra.items()):
     src0, k = re.subn(rf"^{name} = [^#\n]*?(\s+#)", lambda m: f"{name} = {val}" + m.group(1), src0, count=1, flags=re.M)
     if k == 0 and name in OVERRIDABLE:
         overrides.append(f'{name!r}: {val}')

@@ -917,7 +917,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
-                   ('DOWN_THE_MIDDLE', 'down_the_middle'), ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
+                   ('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
                    ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_STEP_SD', 'mfd_step_sd'), ('SLIP_ALONG_RUPTURE', 'slip_along'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
@@ -925,7 +925,7 @@ FIGURE_SETTINGS = (('MFD_UNCERTAINTY', 'mfd_uncertainty'),
                    ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
                    ('RUN_MINUTES', 'run_minutes'), ('FLOOR', 'floor'))   # the notebook's settings from MFD_UNCERTAINTY to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 17 in 3 lines
+SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 16 in 3 lines
 
 
 def run_config(config, problem):
@@ -961,7 +961,8 @@ def run_settings(config, problem):
     if cfg.get('cfm_sliprates') is False:                # CFM_SLIPRATES (not a setting since 2026-11-09) off: a sensitivity
         for k_ in ('cfm_timeframe', 'cfm_template_rho'):     # test with the inputs' slip rates
             cfg[k_] = 'no CFM'
-    fixed_ = [f'{n_} {cfg[k_]}' for n_, k_, v_ in (('SLIP_SECTIONS', 'slip_sections', 'auto'), ('CROSS_SECTIONS', 'cross_sections', 'all'))
+    fixed_ = [f'{n_} {cfg[k_]}' for n_, k_, v_ in (('SLIP_SECTIONS', 'slip_sections', 'auto'), ('CROSS_SECTIONS', 'cross_sections', 'all'),
+                                                   ('DOWN_THE_MIDDLE', 'down_the_middle', False))   # (a fixed setting since 2026-11-17)
               if k_ in cfg and cfg[k_] != v_]          # the fixed settings (since 2026-11-09) at another value: beside the preset
     if 'run_minutes' in cfg:                             # RUN_MINUTES (2026-11-17): with the plan's chains x sweeps
         st_ = cfg.get('settings') or {}

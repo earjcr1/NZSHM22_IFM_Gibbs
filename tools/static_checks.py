@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py']
+SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -29,6 +29,9 @@ src = {s: open(f'{ROOT}/tools/{s}').read() for s in SCRIPTS}        # the script
 nb = json.load(open(f'{ROOT}/cru_workflow.ipynb'))
 cells = [(i, ''.join(c['source'])) for i, c in enumerate(nb['cells']) if c['cell_type'] == 'code']
 md = [(i, ''.join(c['source'])) for i, c in enumerate(nb['cells']) if c['cell_type'] == 'markdown']
+STEPS = open(f'{ROOT}/tools/notebook_steps.py').read()   # the notebook's plumbing since 2026-11-17 (its settings' checks,
+NBALL = '\n'.join(c for _, c in cells) + '\n' + STEPS    # paths, log, scripts' arguments, plan glue, timings): the notebook
+                                                         # and it, as one text, for the checks of what the run does
 
 print('1. Inventory')
 expected = sorted(['tools/' + s for s in SCRIPTS + TOOLS] + ['cru_workflow.ipynb'] + DOCS)
@@ -107,17 +110,17 @@ def argdefault(tree, opt):
 check(argdefault(trees['gibbs.py'], '--prior') == 'spikeslab', f"gibbs.py --prior default {argdefault(trees['gibbs.py'], '--prior')!r}")
 _cut = [k for k in ('PRIOR_KIND', 'THETA', 'BOX_TOP', 'USE_SWAPS', 'OUTPUT_DRAWS', 'SA_STARTS', 'BEST_FIT')
         if any(re.search(rf'\b{k}\b', c) for _, c in cells)]
-_gr = ''.join(c for _, c in cells if 'def gibbs_run(' in c)
-_gr_all = ''.join(c for _, c in cells if 'MAIN = [gibbs_run(' in c)
-check(not _cut and all(s in _gr for s in ("'--init', start", "start = init or 'nnls'", "'--no-samples'", "'--swap-cos', 0.99"))
-      and not any("sh('best_fit_as_fitted.py'" in c for _, c in cells)
+_gr = STEPS[STEPS.index('\ndef gibbs_args('):STEPS.index('\ndef _terms(')]
+check(not _cut and all(s in _gr for s in ("'--init', init", "init = init or ('starts.npy' if g['DISPERSED_STARTS'] else 'nnls')",
+                                          "'--no-samples'", "'--swap-cos', 0.99"))
+      and not any("best_fit_as_fitted.py'" in c for _, c in cells)
       and "elif a.init == 'fitted':" in src['gibbs.py'] and 'nnls_key' in src['best_fit_as_fitted.py'],
       'notebook: no PRIOR_KIND, THETA, BOX_TOP, USE_SWAPS, OUTPUT_DRAWS, SA_STARTS or BEST_FIT; its runs start from the NNLS '
       'best fit (with DISPERSED_STARTS, chain 1; the others from randomized fits), store no draws and use swap moves; '
       'best_fit_as_fitted.py is for the command line since 2026-11-17 (gibbs.py --init fitted)'
       + (f'; found {_cut}' if _cut else ''))
-check(re.findall(r'^SEED = (\S+)', cells[0][1], re.M) == ['None'] and 'replicate_seed(r)' in _gr_all
-      and "np.random.SeedSequence([SEED_USED, r])" in _gr_all and 'seed=SEED_USED' in ''.join(c for _, c in cells),
+check(re.findall(r'^SEED = (\S+)', cells[0][1], re.M) == ['None'] and 'replicate_seed(r)' in NBALL
+      and "np.random.SeedSequence([s, r])" in STEPS and "seed=g['SEED_USED']" in STEPS,
       "notebook SEED = None (each run's seed from its start time; an integer repeats a run, 'legacy' gives 101, 102, ...), "
       'each replicate\'s seed hashed from it, recorded in the configuration')
 check(bool(re.search(r"hyper_every = a\.hyper_every if a\.hyper_every is not None else \(1 if spike_mode else None\)", src['gibbs.py'])),
@@ -127,15 +130,15 @@ check(argdefault(trees['gibbs.py'], '--slab') == 'log' and "choices=['log', 'sqr
       f"gibbs.py --slab default {argdefault(trees['gibbs.py'], '--slab')!r} (log or sqrt), the square-root slab in the full self-test set")
 _pl = src['run_plan.py']
 check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.findall(r'^TARGETS = (\S+)', cells[0][1], re.M) == ["'production'"]
-      and not re.search(r'^PRESETS? = ', cells[0][1], re.M) and 'run_minutes=RUN_MINUTES, targets=TARGETS' in cells[1][1]
+      and not re.search(r'^PRESETS? = ', cells[0][1], re.M) and "run_minutes=g['RUN_MINUTES'], targets=g['TARGETS']" in STEPS
       and "TARGETS = {'exploratory': (100, 200, 1.01)," in _pl and "'production': (1000, 2000, 1.01)," in _pl
       and "'precise': (10000, 20000, 1.005)}" in _pl and 'PRESET_TARGETS' in src['check_convergence.py']
       and all(f'\ndef {f_}(' in _pl for f_ in ('plan', 'reference', 'run_record', 'calibration', 'post_estimate', 'needs'))
-      and "'RUN_PLAN'" in src['run_config.py'] and 'SH_SECONDS[0] += time.time() - t0_' in cells[1][1]
-      and any('PLAN = run_plan.plan(RUN_MINUTES, THREADS, COST, SH_SECONDS[0], _post, TARGETS, _ref, _diff)' in c
-              and 'for _th in run_plan.CALIB_THINS:' in c
-              and "MAIN = [gibbs_run(f'main_rep{r}', seed=replicate_seed(r), plan=P," in c for _, c in cells)
-      and "json.dump(TIMINGS, open('timings.json', 'w'), indent=1)" in cells[-1][1]
+      and "'RUN_PLAN'" in src['run_config.py'] and 'SH_SECONDS[0] += time.time() - t0' in STEPS
+      and "run_plan.plan(g['RUN_MINUTES'], g['THREADS'], cost, SH_SECONDS[0], post, g['TARGETS'], ref, diff)" in STEPS
+      and 'for th in run_plan.CALIB_THINS:' in STEPS and 'PLAN, P = plan_runs()' in NBALL
+      and "sh('gibbs.py', *gibbs_args(f'main_rep{r}', replicate_seed(r), P))" in NBALL
+      and "json.dump(T, open('timings.json', 'w'), indent=1)" in STEPS and 'write_timings()' in cells[-1][1]
       and 'convergence_summary.json' in src['check_convergence.py']
       and not any("'--slab'" in c for _, c in cells),
       "notebook RUN_MINUTES = 240 and TARGETS = 'production' (2026-11-17, in place of the presets): the runs planned just before "
@@ -143,36 +146,36 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
       'for later plans; the other priors are gibbs.py options')
-check(re.findall(r'^DISPERSED_STARTS = (\S+)', cells[0][1], re.M) == ['True'] and 'dispersed_starts=DISPERSED_STARTS' in cells[1][1]
-      and any("sh('dispersed_starts.py', '--problem', 'cru_clean.npz', '--chains', _chains, '--noise', 2," in c
-              and "*(['--fit-args', *_fit_args] if _fit_args else [])" in c
-              and "'--prior-share', 0.5" in c
-              and "init='starts.npy' if DISPERSED_STARTS else None" in c for _, c in cells)
+check(re.findall(r'^DISPERSED_STARTS = (\S+)', cells[0][1], re.M) == ['True'] and "dispersed_starts=g['DISPERSED_STARTS']" in STEPS
+      and "sh('dispersed_starts.py', *starts_args())" in NBALL and "'--noise', 2," in STEPS and "'--prior-share', 0.5]" in STEPS
+      and "a += ['--fit-args', '--bins-block'," in STEPS
       and 'REPLICATE_MIN, REPLICATES_MAX = 50000, 1' in src['run_plan.py'] and 'noise=a.noise' in src['dispersed_starts.py'] and "SeedSequence([a.seed, 7]).spawn(n_prior)" in src['dispersed_starts.py']
       and 'def ensemble(problem, n_fits, seed, workers, verbose=True, noise=1.0):' in src['randomized_nnls.py']
       and 'DISPERSED_STARTS=False' in open(f'{ROOT}/tools/run_quick_checks.sh').read(),
       'notebook DISPERSED_STARTS = True (2026-11-17): half the chains from randomized best fits at twice the stated noise, '
       'half from prior draws scaled to the bins\' targets (--prior-share 0.5), each polished briefly by best_fit_as_fitted.py in the run\'s model space (dispersed_starts.py, randomized_nnls.ensemble noise), passed to gibbs.py --init starts.npy; one '
       'replicate (run_plan REPLICATES_MAX 1); the smoke test pins it off')
-check(any("sh('plot_targets.py', '--problem', 'cru_clean.npz', '--ruptures', RUPTURE_DIR)" in c for _, c in cells)
+check(not any("plot_targets.py'" in c for _, c in cells) and "'--figure'" in src['preliminaries.py']
+      and not any("show('prelim.png')" in c for _, c in cells)
       and all(f_ in open(f'{ROOT}/tools/make_summary_pdf.py').read() for f_ in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')),
-      'notebook draws the targets old and new after cleaning (plot_targets.py, with the rupture set); the summary PDF shows them')
+      'the targets old and new (plot_targets.py) and the cleaning figure (preliminaries.py --figure) on request, out of the '
+      'notebook since 2026-11-17; the summary PDF shows them when present')
 check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_linear()') == 1,
       "gibbs.py --prior linear (command line only), with its exact test in the full self-test set")
 check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
       "gibbs.py --prior halfway (command line only), with its exact test in the full self-test set")
-_cfg_keys = re.findall(r'(\w+)=', ''.join(c for _, c in cells if 'CONFIG = dict(' in c))
-check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", cells[0][1], re.M) == ['False'] and 'down_the_middle' in _cfg_keys
-      and any("if DOWN_THE_MIDDLE:\n        args += ['--down-the-middle']" in c for _, c in cells)
+_cfg_keys = re.findall(r'(\w+)=', STEPS[STEPS.index("g['CONFIG'] = dict("):STEPS.index("g['CONFIG'].update(more)")])
+check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", src['run_config.py'], re.M) == ['False'] and 'down_the_middle' in _cfg_keys
+      and not re.search(r'^DOWN_THE_MIDDLE = ', cells[0][1], re.M)
+      and "a += ['--down-the-middle'] + (['zero-model'] if g['DOWN_THE_MIDDLE'] == 'zero-model' else [])" in STEPS
       and "'--down-the-middle', nargs='?', const='equal', default=None, choices=['equal', 'zero-model']" in src['gibbs.py']
       and 'balance_rows' in src['gibbs.py'] and "weights='equal'" in src['cru_common.py']
-      and any("if DOWN_THE_MIDDLE == 'zero-model':\n            args += ['zero-model']" in c for _, c in cells)
       and src['gibbs.py'].count('ok &= selftest_balance()') == 2 and '\ndef balance_rows(' in src['cru_common.py'],
-      'notebook DOWN_THE_MIDDLE = False (no balance term), recorded; True and \'zero-model\' passed to gibbs.py '
+      'DOWN_THE_MIDDLE = False (no balance term; fixed in run_config.py since 2026-11-17, run_nb.py overrides it), recorded; True and \'zero-model\' passed to gibbs.py '
       '--down-the-middle (cru_common.balance_rows; its exact test, of both weightings, in both self-test sets)')
 check(not re.findall(r'^SLIP_BAND = ', cells[0][1], re.M) and 'slip_band' not in _cfg_keys
       and not re.findall(r'^PALEO_BAND', cells[0][1], re.M) and not re.findall(r'^BAND = ', cells[0][1], re.M)
-      and any("args += ['--all-positive']" in c for _, c in cells) and not any("'--slip-band'" in c for _, c in cells)
+      and "'--all-positive']" in STEPS and "'--slip-band'" not in NBALL
       and "ap.add_argument('--all-positive'" in src['gibbs.py'] and "pa_b = 'positive'" in src['gibbs.py']
       and "'--slip-band'" in src['gibbs.py'] and "'--paleo-band'" in src['gibbs.py'] and '    def set_groups(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_band()') == 2,
@@ -180,7 +183,7 @@ check(not re.findall(r'^SLIP_BAND = ', cells[0][1], re.M) and 'slip_band' not in
       '--all-positive, Target.set_groups; --slip-band and --paleo-band, with a factor, command-line options), with the band\'s '
       'exact test in both self-test sets and set_groups checked against set_positive and set_band')
 check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 'mfd_monotonic' in _cfg_keys
-      and any("args += ['--mfd-monotonic']" in c for _, c in cells) and not any('MFD_RISE_SD' in c for _, c in cells)
+      and any("a += ['--mfd-monotonic']" in c for c in [NBALL]) and not any('MFD_RISE_SD' in c for c in [NBALL])
       and "'--mfd-monotonic'" in src['gibbs.py'] and argdefault(trees['gibbs.py'], '--mfd-rise-sd') == 0.89
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
       'notebook MFD_MONOTONIC = False (off by default since 2026-11-09; True from November 10th, out of the notebook from November 4th), '
@@ -204,12 +207,12 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       and re.findall(r'^MFD_GR_NSCALE = (\(.*?\))', cells[0][1], re.M) == ['(0.66, 1.41)'] and 'mfd_gr' in _cfg_keys
       and re.findall(r'^RECONSIDER_MAGUNCERT = (\S+)', cells[0][1], re.M) == ['True']
       and 'MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))' in src['mfd_gr.py'] and '_MAGRATIO = 3.92 / 3.40' in src['mfd_gr.py']
-      and 'tuple(MFD_GR_NSCALE) + tuple(_mag)' in cells[0][1] and "S['RECONSIDER_MAGUNCERT']" in src['run_config.py']
-      and 'RECONSIDER_MAGUNCERT' in _md_all and 'RECONSIDER_MAGUNCERT' in open(f'{ROOT}/docs/REPORT.md').read()
+      and '+ tuple(mag))' in STEPS and "S['RECONSIDER_MAGUNCERT']" in src['run_config.py']
+      and "rm = g['RECONSIDER_MAGUNCERT']" in STEPS and 'RECONSIDER_MAGUNCERT' in open(f'{ROOT}/docs/REPORT.md').read()
       and '\ndef parse_knobs(' in src['mfd_gr.py'] and '\ndef n_of_b(' in src['mfd_gr.py'] and "q84=q84" in src['mfd_gr.py']
       and 'mfd_pdf_q84=' in src['preliminaries.py'] and "P.get('mfd_pdf_q84')" in src['gibbs.py']
       and 'MFD_GR_SPREAD' not in cells[0][1] and "out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'" in src['run_config.py']
-      and any("args += ['--mfd-gr', MFD_GR_SPEC, '--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and any("a += ['--mfd-gr', g['MFD_GR_SPEC'], '--rupture-set', g['RUPTURE_DIR']]" in c for c in [NBALL])
       and "'--mfd-gr'" in src['preliminaries.py'] and 'mfd_gr.gr_bins(' in src['preliminaries.py']
       and '\ndef bin_pdfs(' in src['mfd_gr.py'] and '\ndef fit_bin_curves(' in src['mfd_gr.py'] and '\ndef gr_bins(' in src['mfd_gr.py']
       and "'pdf']" in src['gibbs.py'] and '\ndef selftest_mfdpdf(' in src['gibbs.py'] and 'ok &= selftest_mfdpdf()' in src['gibbs.py']
@@ -223,19 +226,19 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
       'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
-      and "PLATE_LIMITS = f'{SLIP_RATE_FACTOR:g}' if PLATE_RATE else None" in cells[0][1]
-      and any("args += ['--plate-rate', PLATE_LIMITS]" in c for _, c in cells)
+      and "g['PLATE_LIMITS'] = f\"{g['SLIP_RATE_FACTOR']:g}\" if g['PLATE_RATE'] else None" in STEPS
+      and any("a += ['--plate-rate', g['PLATE_LIMITS']]" in c for c in [NBALL])
       and "'--plate-rate'" in src['gibbs.py']
       and 'from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows' in src['gibbs.py']
       and "'the plate rate')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0]
-      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "'--limits', PLATE_LIMITS" in c for _, c in cells)
+      and any("sh('plate_rate.py', _rd, '--run', results_dir()" in c and "'--limits', PLATE_LIMITS" in c for c in [NBALL])
       and "'--limits'" in src['plate_rate.py']
       and '\ndef check_problem(' in src['plate_rate.py'] and '\ndef plate_rows(' in src['plate_rate.py'],
       'notebook PLATE_RATE = True (back on November 10th, 2026, as a hard upper bound at SLIP_RATE_FACTOR on each strip\'s '
       'share of the plate rate), recorded and passed to gibbs.py --plate-rate with --rupture-set (rows from plate_rate.py on '
       'the --cross-sections strips) and to plate_rate.py --limits, with its exact test in the band\'s self-test')
 check(re.findall(r'^CROSS_SECTIONS = (\S+)', src['run_config.py'], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
-      and any('if SLIP_SUM or PLATE_RATE:' in c and "'--cross-sections', CROSS_SECTIONS," in c for _, c in cells)
+      and any("if g['SLIP_SUM'] or g['PLATE_RATE']:" in c and "a += ['--cross-sections', g['CROSS_SECTIONS']]" in c for c in [NBALL])
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
       and '\ndef cross_sections(' in src['plate_rate.py'],
@@ -249,14 +252,14 @@ check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_
       and "Wc = W * cs['proj'][None, :]" in src['plate_rate.py']
       and argdefault(trees['gibbs.py'], '--slip-sum-l0') == 8.5
       and re.findall(r'^SLIP_SUM_L0 = (\S+)', cells[0][1], re.M) == ['100'] and 'slip_sum_l0' in _cfg_keys
-      and any("args += ['--slip-sum', '--slip-sum-l0', SLIP_SUM_L0]" in c for _, c in cells)
-      and any("'--cross-sections', CROSS_SECTIONS, '--slip-sum-l0', SLIP_SUM_L0" in c for _, c in cells),
+      and any("a += ['--slip-sum', '--slip-sum-l0', g['SLIP_SUM_L0']]" in c for c in [NBALL])
+      and any("'--cross-sections', CROSS_SECTIONS, '--slip-sum-l0', SLIP_SUM_L0" in c for c in [NBALL]),
       'notebook SLIP_SUM = True (on by default since 2026-11-09; off 2026-11-05 to 11-09) and SLIP_SUM_L0 = 100 (km; 8.5, the '
       'strips\' width, gibbs.py\'s and plate_rate.py\'s default), recorded and passed to gibbs.py --slip-sum with the rupture set (rows from plate_rate.py: each '
       'subsection once, its slip projected on the plate motion), recorded apart from '
       'chi2, with its bookkeeping in the balance term\'s self-test; its term in plate_rate.txt for every run')
 check(not re.findall(r'^SLIP_BAND_SOFT = ', cells[0][1], re.M) and 'slip_band_soft' not in _cfg_keys
-      and not any("'--slip-log-band'" in c for _, c in cells)
+      and not any("'--slip-log-band'" in c for c in [NBALL])
       and "'--slip-log-band'" in src['gibbs.py'] and "'--paleo-log-band'" in src['gibbs.py'] and "'--log-band'" in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_logband()') == 1 and 'static double lw_change(' in src['gibbs.py']
       and 'static inline void col_dots_lw(' in src['gibbs.py'],
@@ -271,7 +274,7 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       and "'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'}" in src['cru_common.py']
       and "('half',) * 3: 'half'}.get((g['MISFIT_SLIP'], g['MISFIT_MFD'], g['MISFIT_PALEO']), 'mixed')" in src['run_config.py']
       and '\ndef misfit_settings(' in src['cru_common.py']
-      and all(f"args += ['--{g_}-misfit', {g_.upper()}_MISFIT]" in ''.join(c for _, c in cells) for g_ in ('paleo', 'mfd', 'slip'))
+      and all(f"a += ['--{g_}-misfit', g['{g_.upper()}_MISFIT']]" in ''.join(c for c in [NBALL]) for g_ in ('paleo', 'mfd', 'slip'))
       and "choices=['gaussian', 'years', 'log', 'gaussian+years', 'gaussian+log']" in src['gibbs.py']
       and "choices=['gaussian', 'log10', 'gaussian+log10', 'pdf']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10']" in src['gibbs.py']
       and "'half': ('split+log10', 'gaussian+log10', 'gaussian+years')" in src['cru_common.py']
@@ -286,10 +289,10 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       'block_fit.py scoring each group as the run did')
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and not re.findall(r'^CFM_SLIPRATES = ', cells[0][1], re.M)
-      and not re.findall(r'^CFM_FILE = ', cells[0][1], re.M) and 'cfm_file=CFM_CSV' in ''.join(c for _, c in cells)
+      and not re.findall(r'^CFM_FILE = ', cells[0][1], re.M) and "cfm_file=g['CFM_CSV']" in ''.join(c for c in [NBALL])
       and "\nCFM_CSV = os.path.join(" in src['cru_common.py'] and os.path.exists(f'{ROOT}/data/NZ_CFM_v1_0.csv')
-      and any("args += ['--cfm-sliprates', CFM_CSV]" in c and "if not SLIP_AS_GIVEN:" in c
-          and "'--slip-sd-multiplier', str(SD_MULTIPLIER_)" in c and "'--rupture-set', RUPTURE_DIR]" in c for _, c in cells)
+      and any("a += ['--cfm-sliprates', g['CFM_CSV']]" in c and "if not g['SLIP_AS_GIVEN']:" in c
+          and "'--slip-sd-multiplier', str(g['SD_MULTIPLIER_'])" in c and "'--rupture-set', g['RUPTURE_DIR']]" in c for c in [NBALL])
       and "'--cfm-sliprates', default=None" in src['preliminaries.py'] and '\ndef rebuild(' in src['cfm_sliprates.py']
       and re.findall(r'^SLIP_RATE_FACTOR = (\S+)', cells[0][1], re.M) == ['0.8'] and 'slip_rate_factor' in _cfg_keys
       and "'--slip-rate-factor', type=float, default=None" in src['preliminaries.py'] and '\ndef rescale_inputs(' in src['cfm_sliprates.py']
@@ -320,7 +323,7 @@ check('\ndef paleo_json(' in src['paleo_misfit.py'] and 'paleo_json(rupture_dir'
       and os.path.exists(f'{ROOT}/data/paleo_constraint_data.json'),
       'paleo sites: the rupture set\'s paleo_constraint_data.json, or, for a rupture set made without an inversion (630k), '
       'data/paleo_constraint_data.json once its sites\' sections match the rupture set\'s (paleo_misfit.paleo_json)')
-check(sum(c.count('*ref_args()') for _, c in cells) == 5 and '\ndef reference_rates(' in src['cru_common.py']
+check(sum(c.count('*ref_args()') for c in [NBALL]) == 5 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
       'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
@@ -334,7 +337,7 @@ check(all("'--config'" in src[sc] and 'figure_settings(' in src[sc] for sc in ('
       and "('FLOOR', 'floor')" in src['cru_common.py'],
       'the fit figures show the model and every one of the run\'s settings, SLIP_SECTIONS to FLOOR, whatever its value, in a '
       'table of fixed size (cru_common.figure_settings, run_settings)')
-check(not any('RANDOMIZED_NNLS' in c or "'randomized_nnls.py'" in c for _, c in cells)
+check(not any('RANDOMIZED_NNLS' in c or "'randomized_nnls.py'" in c for c in [NBALL])
       and "'--selftest'" in src['randomized_nnls.py'],
       'notebook has no RANDOMIZED_NNLS (retired from the notebook on 2026-11-03; randomized_nnls.py stays for the command '
       'line, with its self-test)')
@@ -346,22 +349,23 @@ check(m == ['-10'], f'gibbs.py spike-and-slab default slab floor {m}')
 cfg = cells[0][1]
 check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-10'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
       f"notebook FLOOR = {re.findall(r'^FLOOR = (-?[0-9]+)', cfg, re.M)}, no SLAB_FLOOR or DIAG_FLOOR setting")
+_ARGS = {'preliminaries.py': STEPS[STEPS.index('\ndef cleaning_args('):STEPS.index('\ndef after_cleaning(')],   # the scripts'
+         'gibbs.py': STEPS[STEPS.index('\ndef gibbs_args('):STEPS.index('\ndef _terms(')]}                      # arguments
 for script in ('preliminaries.py', 'gibbs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
-    cc = [i for i, c in cells if 'sh(' in c and f"'{script}'" in c
-          and not (c.count(f"'{script}'") == 1 and re.search(rf"sh\(\s*'{script}',\s*'--selftest'(,\s*'\w+')?\)", c))]
-    ok = bool(cc) and all('--diag-floor={FLOOR}' in c for i, c in cells if i in cc)
+    cc = [i for i, c in cells if 'sh(' in c and f"'{script}'" in c]
+    ok = bool(cc) and all('--diag-floor={FLOOR}' in c or (script in _ARGS and "f\"--diag-floor={g['FLOOR']}\"" in _ARGS[script])
+                          for i, c in cells if i in cc)
     check(ok, f"notebook passes --diag-floor={{FLOOR}} to {script} (cells {cc})")
-check(any("spikeslab:{FLOOR}:soft" in c for _, c in cells), 'notebook uses spikeslab:{FLOOR}:soft')
+check("f\"spikeslab:{g['FLOOR']}:soft\"" in _ARGS['gibbs.py'], 'notebook uses spikeslab:{FLOOR}:soft')
 check(re.search(r'clip = 10\.0 \*\* floor\b', src['check_convergence.py']) is not None and not any('clip = 10.0 **' in c for _, c in cells),
       'check_convergence.py clips the convergence diagnostics at 10 ** --diag-floor (the notebook passes FLOOR); the notebook computes none itself')
 cc = [i for i, c in cells if 'sh(' in c and "'check_convergence.py'" in c]
 check(len(cc) == 1 and all("'--targets', TARGETS, '--plan', 'run_plan.json'" in c for i, c in cells if i in cc) and any("'make_tables.py'" in c for _, c in cells),
       f'notebook runs check_convergence.py once with its TARGETS and the run plan (cells {cc}), then make_tables.py')
 keys = None
-for i, c in cells:
-    for n in ast.walk(ast.parse(c)):
-        if isinstance(n, ast.Assign) and any(getattr(t, 'id', '') == 'CONFIG' for t in n.targets) and isinstance(n.value, ast.Call):
-            keys = [k.arg for k in n.value.keywords]
+for n in ast.walk(ast.parse(STEPS)):                    # the configuration notebook_steps.record_config writes
+    if isinstance(n, ast.Assign) and any(ast.unparse(t) == "g['CONFIG']" for t in n.targets) and isinstance(n.value, ast.Call):
+        keys = [k.arg for k in n.value.keywords]
 check(keys is not None and 'floor' in keys and not {'slab_floor', 'diag_floor'} & set(keys),
       f'recorded configuration keys: {keys}')
 check(argdefault(trees['preliminaries.py'], '--slip-sections') == 'auto',
@@ -369,7 +373,7 @@ check(argdefault(trees['preliminaries.py'], '--slip-sections') == 'auto',
 check(re.findall(r"^SLIP_SECTIONS = ('[a-z]+')", src['run_config.py'], re.M) == ["'auto'"],
       f"run_config.py SLIP_SECTIONS = {re.findall(r'^SLIP_SECTIONS = (.*?) ', src['run_config.py'], re.M)}")
 cc = [i for i, c in cells if 'sh(' in c and "'preliminaries.py'" in c and '--selftest' not in c]
-check(bool(cc) and all("'--slip-sections'" in c for i, c in cells if i in cc), f'notebook passes --slip-sections to preliminaries.py (cells {cc})')
+check(bool(cc) and "'--slip-sections'" in _ARGS['preliminaries.py'], f'notebook passes --slip-sections to preliminaries.py (cells {cc})')
 check(keys is not None and 'slip_sections' in keys, 'recorded configuration includes slip_sections')
 check(argdefault(trees['preliminaries.py'], '--mfd-uncertainty') == 'as-given',
       f"preliminaries.py --mfd-uncertainty default {argdefault(trees['preliminaries.py'], '--mfd-uncertainty')!r}")
@@ -379,8 +383,8 @@ check(lb['preliminaries.py'] == lb['plot_rate_magnitude.py'] == (6.8, 0.1),
 check(re.findall(r"^MFD_UNCERTAINTY = ('[a-z-]+')", cfg, re.M) == ["'as-given'"],
       f"notebook MFD_UNCERTAINTY = {re.findall(r'^MFD_UNCERTAINTY = (.*?) ', cfg, re.M)}")
 cc = [i for i, c in cells if 'sh(' in c and "'preliminaries.py'" in c and '--selftest' not in c]
-cc_args = [i for i, c in cells if "'preliminaries.py'" in c and "'--mfd-uncertainty', MFD_UNCERTAINTY" in c]
-check(bool(cc) and set(cc) <= set(cc_args), f'notebook passes --mfd-uncertainty MFD_UNCERTAINTY to preliminaries.py (cells {cc_args})')
+check(bool(cc) and "'--mfd-uncertainty', g['MFD_UNCERTAINTY']" in _ARGS['preliminaries.py'],
+      f'notebook passes --mfd-uncertainty MFD_UNCERTAINTY to preliminaries.py (cells {cc})')
 check(keys is not None and 'mfd_uncertainty' in keys and not {'block_weights', 'pilot_lengths', 'pilot_tol'} & set(keys),
       'recorded configuration includes mfd_uncertainty and no block-weights settings')
 check(not re.search(r'^(BLOCK_WEIGHTS|PILOT_LENGTHS|PILOT_TOL) =', cfg, re.M) and not any("'block_weights.py'" in c for _, c in cells),
@@ -415,13 +419,13 @@ check('--keep-soft-penalties' in pre_opts and '--no-nnls' not in pre_opts,
 dense_g = re.findall(r'\bG[a-z]?\.toarray\(\)', src['preliminaries.py'])        # a whole G made dense: 4 GB at 2e5, 11 at 5e5
 check(not dense_g and 'qr_insert' in src['preliminaries.py'], 'preliminaries.py makes no dense copy of G (the best fit updates a QR '
       'factorization)' + (f'; found {", ".join(dense_g)}' if dense_g else ''))
-st_cells = [i for i, c in cells if re.search(r"sh\(\s*'gibbs\.py',\s*'--selftest'", c)]
-check(len(st_cells) == 1 and all("sh('gibbs.py', '--selftest', 'current')" in c for i, c in cells if i in st_cells)
+check(not any("'--selftest'" in c or 'RUN_SELFTESTS' in c for _, c in cells)
       and re.search(r"'--selftest', nargs='\?', const='all', choices=\['all', 'current'\]", src['gibbs.py']) is not None,
-      f"notebook's self-tests run gibbs.py --selftest current (cells {st_cells}); gibbs.py --selftest takes 'all' or 'current'")
+      "the self-tests run from the command line since 2026-11-17 (gibbs.py --selftest takes 'all' or 'current'); the "
+      'notebook runs none')
 cc = [i for i, c in cells if "'nnls/nnls_vectors.npz:best fit (NNLS)'" in c]
-clean_c = [i for i, c in cells if "args = ['preliminaries.py'" in c]
-runs_c = [i for i, c in cells if 'MAIN = [gibbs_run(' in c]
+clean_c = [i for i, c in cells if "sh('preliminaries.py', *cleaning_args())" in c]
+runs_c = [i for i, c in cells if 'PLAN, P = plan_runs()' in c]
 check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('plot_slip_rates.py', 'plot_rate_magnitude.py',
       'plot_paleo_rates.py')) and bool(clean_c) and bool(runs_c) and clean_c[0] < cc[0] < runs_c[0]
       and "'nnls_vectors.npz'" in src['preliminaries.py'],
@@ -429,8 +433,8 @@ check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in (
       'to show whether a data type is far off in the fit')
 check("'nnls_vectors.csv'" in src['preliminaries.py'], 'preliminaries.py also writes the best fit as a table, nnls_vectors.csv')
 cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c]   # the solutions cell, the last
-check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'auto'"] and 'find_rupture_set(DATA_DIR)' in cfg
-      and '\ndef rupture_dir():' in cfg and len(cc) == 1 and cc[0] == cells[-1][0]
+check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'auto'"] and "find_rupture_set(g['DATA_DIR'])" in STEPS
+      and '\ndef rupture_dir():' in STEPS and len(cc) == 1 and cc[0] == cells[-1][0]
       and all("'nnls/nnls_vectors.npz'" in c and "'--column', 'mean'" in c and "'--ruptures', _rd" in c and 'rupture_dir()' in c
               for i, c in cells if i in cc)
       and "os.path.join(os.path.dirname(stem), 'nnls')" in src['preliminaries.py'] and {'rupture_set', 'rupture_dir'} <= set(keys or []),
@@ -438,21 +442,22 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['MFD_UNCERTAINTY', 'DOWN_THE_MIDDLE',
+MODEL_SETTINGS = ['MFD_UNCERTAINTY',
                   'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_STEP_SD', 'SLIP_ALONG_RUPTURE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
                   'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'RUN_MINUTES', 'FLOOR']
 _rc = src['run_config.py']
-check('globals().update(derived_settings(globals()))' in cells[0][1]
-      and cells[0][1].index('derived_settings(globals())') > cells[0][1].index('RUN_SELFTESTS = ')
+check('setup(globals())' in cells[0][1] and 'g.update(derived_settings(g))' in STEPS
+      and cells[0][1].index('setup(globals())') > cells[0][1].index('SEED = ')
       and all(re.search(rf'^{s_} = ', _rc, re.M) and not re.search(rf'^{s_} = ', cells[0][1], re.M)
               for s_ in ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES'))
-      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS')" in _rc
+      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK')" in _rc
       and "('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')" in _rc
       and 'from run_config import OVERRIDABLE' in open(f'{ROOT}/tools/run_nb.py').read(),
       'notebook: BLOCKS, SLIP_SECTIONS, RUPTURE_SET, CROSS_SECTIONS, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed '
       'in tools/run_config.py since 2026-11-17 (2026-11-09 below the settings; run_nb.py overrides them through _OVERRIDES, for '
       'sensitivity tests); the notebook calls derived_settings; runs named SLIP_SECTIONS... only off auto')
-_cfgmap = dict((v, k) for k, v in re.findall(r'(\w+)=([A-Z][A-Z0-9_]+)', ''.join(c for _, c in cells if 'CONFIG = dict(' in c)))
+_cfgmap = dict((v, k) for k, v in re.findall(r"(\w+)=g\['([A-Z][A-Z0-9_]+)'\]",
+                                              STEPS[STEPS.index("g['CONFIG'] = dict("):STEPS.index("g['CONFIG'].update(more)")]))
 _runname = src['run_config.py'][src['run_config.py'].index('\ndef run_name('):]
 _figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])
 _md = '\n'.join(''.join(c['source']) for c in nb['cells'] if c['cell_type'] == 'markdown')
@@ -464,12 +469,13 @@ for s_ in MODEL_SETTINGS:
     miss = [w for w, ok_ in (('defined', re.search(rf'^{s_} = ', cfg, re.M) is not None), ('recorded', k_ is not None),
                              ('in FIGURE_SETTINGS', s_ in _figset), ('in RUN_NAME', s_ in _runname),
                              ('in the summary PDF', k_ is not None and (f"'{k_}'" in _pdf or f'"{k_}"' in _pdf)),
-                             ('in the notebook\'s markdown', s_ in _md), ('in REPORT.md', s_ in _docs['docs/REPORT.md']),
+                             ('explained in the configuration cell', re.search(rf'^{s_} = .*#', cfg, re.M) is not None),
+                             ('in REPORT.md', s_ in _docs['docs/REPORT.md']),
                              ('in CLAUDE.md', s_ in _docs['docs/CLAUDE.md'])) if not ok_]
     if miss:
         _gaps.append(f'{s_}: not ' + ', '.join(miss))
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
-      'summary PDF and documented (notebook, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
+      'summary PDF and documented (the configuration cell\'s comment, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)\s+#', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
 _unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_STEP_SD', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'RUN_PLAN', 'TARGETS')
