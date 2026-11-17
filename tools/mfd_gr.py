@@ -31,16 +31,16 @@ b's 10th percentile, mean and 90th percentile (0.823, 0.959, 1.089), read as a s
 conditioned on each (2.65, 3.40, 4.57 per year), so N and b are correlated, N(b) a quadratic in log10 N through the three
 pairs; and the N scaling s, a factor on the whole MFD independent of b, its 2-sigma values (0.66, 1.41) about 1, read as
 a split normal in ln s (parse_knobs); with RECONSIDER_MAGUNCERT, a further factor m on N for the catalogue's magnitude
-uncertainties (MAGUNCERT: 1, 3.92/3.40, 1 + 2 (3.92/3.40 - 1), its -2 sigma, mean and +2 sigma, a normal in m), ln(s m)'s
-density the convolution of the two. A bin's target is s m N(b) f_j(b). Each bin's PDF is propagated exactly (bin_pdfs:
+uncertainties (MAGUNCERT: 1, 3.92/3.40, 1 + 2 (3.92/3.40 - 1), three branches of equal weight), ln(s m)'s density the
+mean of ln s's density shifted by each ln m. A bin's target is s m N(b) f_j(b). Each bin's PDF is propagated exactly (bin_pdfs:
 ln s's density summed over a fine grid of b, in u = ln of the target) and described for the sampler by the paleo sites'
 sinh-arcsinh curve family in log rate (paleo_misfit, mode 'log'; fit_bin_curves): its minimum at the mode of the density
 of log rate, through the exact 2.275/15.865/84.135/97.725% points. Each bin is then scored by -2 ln of its density of log
 rate, from its minimum (gibbs.py --mfd-misfit pdf), as a paleo site by its curve; the bin's row keeps a target, the
-target at b's mean, s = 1 and m's mean, and a sigma, the propagated sd, for its units; the prior's soft top takes each bin's upper
+target at b's mean, s = 1 and m's middle value, and a sigma, the propagated sd, for its units; the prior's soft top takes each bin's upper
 spread, its 84.135% point over its target (q84, saved with the problem as mfd_pdf_q84).
 
-    python mfd_gr.py SOLUTION [--mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI[,M_LO,M,M_HI]]
+    python mfd_gr.py SOLUTION [--mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI[,M1,M2,M3]]
 """
 import argparse
 import csv
@@ -156,15 +156,15 @@ FIXED_KERNEL = 0.01                                     # a knob given without s
 
 Z10 = 1.2815515655446004                                # the 90th percentile of a standard normal
 _MAGRATIO = 3.92 / 3.40                                 # N(M>=5) with half of the magnitudes' downward skew over NZSHM22's 3.40
-MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))   # RECONSIDER_MAGUNCERT's factor on N: -2 sigma, mean, +2 sigma (the
-                                                        # user's, 2026-11-17): magnitude uncertainties downward-skewed (Rhoades,
-                                                        # 1996; 3.40), half that skew (3.92), or none (about twice the rise); to be
-                                                        # revised when the catalogue is reanalysed
+MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))   # RECONSIDER_MAGUNCERT's factor on N, three branches of equal weight
+                                                        # (the user's, 2026-11-17): magnitude uncertainties downward-skewed
+                                                        # (Rhoades, 1996; 3.40), half that skew (3.92), or none (about twice
+                                                        # the rise); to be revised when the catalogue is reanalysed
 
 
 def parse_knobs(spec):
-    """MFD_GR's knobs, 'B10,B,B90,N10,N,N90,S_LO,S_HI[,M_LO,M,M_HI]' (the NZSHM22 logic tree's form; Rollins et al., 2024,
-    Table 1) -> dict(b=(b10, mean, b90), n=(n10, n, n90), s=(lo, hi), m=(lo, mean, hi) or None):
+    """MFD_GR's knobs, 'B10,B,B90,N10,N,N90,S_LO,S_HI[,M1,M2,M3]' (the NZSHM22 logic tree's form; Rollins et al., 2024,
+    Table 1) -> dict(b=(b10, mean, b90), n=(n10, n, n90), s=(lo, hi), m=(m1, m2, m3) or None):
       b: the b-value's 10th percentile, mean and 90th percentile (a split normal, its mode the mean, each side's sd its
          distance to the 10th or 90th percentile over 1.2816);
       n: the mean rate of M>=5 earthquakes conditioned on each of those b-values: N(b), a quadratic in log10 N through the
@@ -172,17 +172,18 @@ def parse_knobs(spec):
       s: the N scaling, a factor on the whole MFD independent of b, its 2.275% and 97.725% (2 sigma) values about 1 (a split
          normal in ln s, its mode at 1, each side's sd half the log distance to its value);
       m: RECONSIDER_MAGUNCERT's factor on every N (MAGUNCERT, 1.0, 3.92/3.40, 1 + 2(3.92/3.40 - 1): N with magnitude uncertainties
-         downward-skewed, half that skew, or Gaussian), its -2 sigma, mean and +2 sigma values, a split normal in m (a
-         normal for a symmetric triple), independent of b and s.
+         downward-skewed, half that skew, or Gaussian), three branches of equal weight (the user's choice, 2026-11-17;
+         earlier that day the -2 sigma, mean and +2 sigma of a normal), independent of b and s; the target's middle value
+         at the middle branch.
     A knob without spread (b10 = b = b90; S_LO = S_HI = 1) is held at its middle value."""
     try:
         v = [float(x) for x in str(spec).split(',')]
     except ValueError:
         v = []
     if len(v) not in (8, 11):
-        raise ValueError(f'MFD_GR {spec}: give B10,B,B90,N10,N,N90,S_LO,S_HI[,M_LO,M,M_HI] (b\'s 10th percentile, mean and 90th '
+        raise ValueError(f'MFD_GR {spec}: give B10,B,B90,N10,N,N90,S_LO,S_HI[,M1,M2,M3] (b\'s 10th percentile, mean and 90th '
                          'percentile, the mean N(M>=5) at each, the N scaling\'s 2-sigma values, and optionally the magnitude-'
-                         'uncertainty factor\'s -2 sigma, mean and +2 sigma), e.g. 0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41,1,1.15294,1.30588')
+                         'uncertainty factor\'s three equally weighted values), e.g. 0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41,1,1.15294,1.30588')
     b, n, sc = tuple(v[:3]), tuple(v[3:6]), tuple(v[6:8])
     m = tuple(v[8:]) if len(v) == 11 else None
     if m is not None and not (0 < m[0] <= m[1] <= m[2]):
@@ -222,8 +223,8 @@ def bin_pdfs(parts, knobs, n_coarse=161, n_b=1201, n_u=6001):
     partitioning), propagated exactly from the knobs (parse_knobs): the density g_j(u) of u = ln(target) on a grid, a sum
     over a fine grid of b, weighted by b's density, of ln s's density at u - ln(N(b) f_j(b)); with its quantiles (PQ), the
     mode of the rate's own density (g(u) / e^u), mean, sd and the probability that the target is 0 or less. With m
-    (RECONSIDER_MAGUNCERT) the factor is s m, ln(s m)'s density the convolution of the two. Returns dict(R: the target at
-    b's mean, N(b) there, s = 1 and m's mean; bins: {j: dict(u, g, q, mode, mean, sd, p_neg)})."""
+    (RECONSIDER_MAGUNCERT) the factor is s m, ln(s m)'s density the mean of ln s's shifted by each branch's ln m. Returns dict(R: the target at
+    b's mean, N(b) there, s = 1 and m's middle value; bins: {j: dict(u, g, q, mode, mean, sd, p_neg)})."""
     bl, bm, bh = knobs['b']
     sl_, sh_ = knobs['s']
     if bl == bh:                                          # b fixed
@@ -247,24 +248,14 @@ def bin_pdfs(parts, knobs, n_coarse=161, n_b=1201, n_u=6001):
         s_lo, s_hi = (s_lo or s_hi), (s_hi or s_lo)
         lps = lambda v: _split_logpdf(v, -s_lo, 0.0, s_hi)
         v_lo, v_hi = -8 * s_lo, 8 * s_hi
-    m_c = 1.0                                             # the magnitude-uncertainty factor's mean (1: none)
+    m_c = 1.0                                             # the magnitude-uncertainty factor's middle branch (1: none)
     if knobs.get('m') is None:
         lpv = lps
-    else:                                                 # ln(s m): ln s's density convolved with ln m's, on a fine grid
-        ml, m_c, mh = knobs['m']
-        sm_lo, sm_hi = (m_c - ml) / 2.0, (mh - m_c) / 2.0
-        sm_lo, sm_hi = (sm_lo or sm_hi or FIXED_KERNEL * m_c), (sm_hi or sm_lo or FIXED_KERNEL * m_c)
-        w_lo, w_hi = math.log(max(m_c - 8 * sm_lo, 1e-3 * m_c)), math.log(m_c + 8 * sm_hi)
-        dv = 2e-4
-        vg = np.arange(v_lo + w_lo, v_hi + w_hi + dv, dv)
-        wg = np.arange(w_lo, w_hi + dv, dv)
-        pm = np.exp(_split_logpdf(np.exp(wg), m_c - sm_lo, m_c, m_c + sm_hi) + wg)   # ln m's density
-        pm /= pm.sum() * dv
-        sg = np.arange(v_lo, v_hi + dv, dv)
-        conv = np.convolve(np.exp(lps(sg)), pm)[:len(vg)] * dv                       # ln(s m)'s density on vg
-        lc = np.log(np.maximum(conv, 1e-300))
-        lpv = lambda v: np.interp(v, vg, lc, left=-690.0, right=-690.0)
-        v_lo, v_hi = vg[0], vg[-1]
+    else:                                                 # ln(s m): three branches of m, equal weights (exactly, no grid)
+        lm = np.log(np.asarray(knobs['m'], float))
+        m_c = float(knobs['m'][1])
+        lpv = lambda v: np.logaddexp.reduce([lps(np.asarray(v) - l_) for l_ in lm], axis=0) - math.log(len(lm))
+        v_lo, v_hi = v_lo + lm.min(), v_hi + lm.max()
     R = components(parts, float(n_of_b(knobs, bm)) * m_c, bm)['supra']
     out = {}
     for j in np.flatnonzero(R > 1e-19):
@@ -351,8 +342,8 @@ def knob_text(knobs):
     return (f'b {b[1]:g} (10th-90th percentile {b[0]:g}-{b[2]:g}, a split normal) with the mean N(M>=5) at each '
             f'{n[1]:g} ({n[0]:g}, {n[2]:g}; N(b) a quadratic in log10 N), and the N scaling, 2-sigma {sc[0]:g}-{sc[1]:g} '
             '(a split normal in ln s about 1)'
-            + (f', times the magnitude-uncertainty factor m {knobs["m"][1]:g} (2-sigma {knobs["m"][0]:g}-{knobs["m"][2]:g}; '
-               'RECONSIDER_MAGUNCERT)' if knobs.get('m') else ''))
+            + (f', times the magnitude-uncertainty factor m, {"/".join(f"{x_:g}" for x_ in knobs["m"])} with equal weights '
+               '(RECONSIDER_MAGUNCERT)' if knobs.get('m') else ''))
 
 
 def report_lines(parts, GB, lo=None):
@@ -366,7 +357,7 @@ def report_lines(parts, GB, lo=None):
          f'sections, the seismicity PDF\'s share on the faults {parts["f_on"]:.4f}; minimum supra-seismogenic magnitudes '
          f'{parts["minm"].min():.2f}-{parts["minm"].max():.2f}; the off-fault MFD\'s kink at the {X[parts["kink"]]:.2f} bin',
          '   each bin scored by -2 ln of its PDF in log rate from its minimum (a sinh-arcsinh curve through the exact quantiles, its '
-         'minimum at the exact mode; gibbs.py --mfd-misfit pdf); x target: relative to the target at b\'s mean, s = 1 and m\'s mean',
+         'minimum at the exact mode; gibbs.py --mfd-misfit pdf); x target: relative to the target at b\'s mean, s = 1 and m\'s middle value',
          f'   {"bin":>5s} {"target":>10s} {"cru_D":>10s} {"mode":>6s} {"2.3%":>6s} {"16%":>6s} {"50%":>6s} {"84%":>6s} {"97.7%":>6s} '
          f'{"sd":>6s} {"(x target)":>10s} {"fit: q err":>10s} {"misfit diff":>11s}']
     i0 = ci(parts['minMag'] if lo is None else lo + DELTA / 2)
@@ -387,7 +378,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('rupture_set', help='an OpenSHA inversion solution\'s folder or its ruptures/')
     ap.add_argument('--mfd-gr', default='0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41',
-                    help='B10,B,B90,N10,N,N90,S_LO,S_HI[,M_LO,M,M_HI] (default: NZSHM22\'s upper-plate IFM, Rollins et al. 2024, Table 1; '
+                    help='B10,B,B90,N10,N,N90,S_LO,S_HI[,M1,M2,M3] (default: NZSHM22\'s upper-plate IFM, Rollins et al. 2024, Table 1; '
                     'append the magnitude-uncertainty factor, e.g. ' + ','.join(f'{x_:g}' for x_ in MAGUNCERT) + ', for RECONSIDER_MAGUNCERT)')
     a = ap.parse_args()
     parts = load_parts(a.rupture_set)

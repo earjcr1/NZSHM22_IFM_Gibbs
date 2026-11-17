@@ -203,7 +203,7 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       'mfd_gr.py; cru_D\'s bins by default) from NZSHM22\'s upper-plate knobs: MFD_GR_B (0.823, 0.959, 1.089) b\'s 10th '
       'percentile, mean and 90th, MFD_GR_N5 (2.65, 3.40, 4.57) the mean N conditioned on each (correlated), MFD_GR_NSCALE '
       '(0.66, 1.41) the N scaling\'s 2-sigma values, RECONSIDER_MAGUNCERT = True a further factor on N, 1 / 3.92/3.40 / '
-      '1 + 2(3.92/3.40 - 1) as -2 sigma, mean, +2 sigma (mfd_gr.MAGUNCERT); the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
+      '1 + 2(3.92/3.40 - 1), three branches of equal weight (mfd_gr.MAGUNCERT); the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
       'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
       'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
