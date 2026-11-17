@@ -42,7 +42,7 @@ log-log, with each prediction's posterior 16-84% range; with kept draws, the def
 plot_slip_sections.py's draw each kept draw as an x instead (cru_common.kept_draws, kept_predictions, draw_xs); the three ranges come from the predictions the runs next to
 the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions; the slip-rate sections and paleo rows are
 coloured from cru_common.CATEGORICAL (Tableau's Color Blind 10, outlined in grey as several are pale), cycled
-along the targets so that neighbours differ, neighbour_colours, and the reference model is black), plot_slip_sections.py (the posterior slip-rate predictions of the rupture set's named
+along the targets so that neighbours differ, neighbour_colours, and the reference model is black), covariance.py (2026-11-17, the user's request: from the runs' kept draws, the correlation between the named faults' event rates and between the bins' totals, beside the data-only correlation of their resolved parts from G G^T's eigenvectors, and each one's resolved fraction; corr_faults.png, corr_bins.png, covariance_report.txt, covariance.npz in the results folder; the notebook's fault cell runs it when the kept draws exist), plot_slip_sections.py (the posterior slip-rate predictions of the rupture set's named
 faults, named_faults.json, each the subsections whose parent, fault_sections.geojson's ParentID, is one of its own: one
 column each, from the most isolated to the most connected by the number of other sections sharing a rupture with them,
 with each one's share of draws without an event; a second figure counting each fault's ruptures by posterior mean
