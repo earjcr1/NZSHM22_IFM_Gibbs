@@ -8,7 +8,7 @@ Three figures, written next to --problem (or in --outdir), each with its table v
 
 fig_targets_slip.png: each fault section's slip rate, in mm/yr, linear and log panels as in fig_slip_rates.png. The
   x axis is the inputs' target, NZSHM22's Gaussian: 0.8 SlipRate from the rupture set's fault_sections.geojson, its sd
-  2 SlipRateStdDev (or 0.8 SlipRate where that is 0; the inputs' 0.8 on the target only). At each section, a wide grey
+  2 SlipRateStdDev (--old-sd K: K SlipRateStdDev) (or 0.8 SlipRate where that is 0; the inputs' 0.8 on the target only). At each section, a wide grey
   bar is that Gaussian's 16-84% range (the 1:1 line its centre); a coloured bar is the same range of the distribution
   this run scores the section by, read from the cleaned problem (with the CFM's slip rates, a split normal with its own
   sd each side, timeframe-corrected with CFM_TIMEFRAME, the slip-rate factor on the whole distribution: its 15.9-84.1%
@@ -92,7 +92,7 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
     plt.close(fig)
 
 
-def slip_figure(P, rd, cfg, outdir, slip_block='S'):
+def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     """fig_targets_slip.png and its table (see the module docstring)."""
     from cfm_sliprates import load_subsections
     from plate_rate import _sections, check_problem, rupture_matrix
@@ -116,8 +116,8 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S'):
         raise SystemExit('the slip-rate rows are not the rupture set\'s subsections (raw rows 0 .. subsections - 1)')
     f_in = 0.8                                           # the inputs' factor on the targets (NZSHM22; checked by cleaning)
     rate, sd = sub['rate'][orig], sub['sd'][orig]
-    o_m = f_in * rate                                    # the inputs' Gaussian: mean 0.8 SlipRate, sd 2 SD (0.8 SlipRate if 0)
-    o_s = np.where(sd > 0, 2.0 * sd, f_in * rate)
+    o_m = f_in * rate                                    # the inputs' Gaussian: mean 0.8 SlipRate, sd 2 SD (0.8 SlipRate if 0);
+    o_s = np.where(sd > 0, old_k * sd, f_in * rate)      # --old-sd K: K SD in its place (1: SlipRateStdDev itself as 1 sd)
     ts, sl, sh, om, os_ = (mean_s(v) for v in (t, s_lo, s_hi, o_m, o_s))
     n16, n84 = sn_quantile(ts, sl, sh, 0.158655), sn_quantile(ts, sl, sh, 0.841345)
     col = neighbour_colours(ts, RDYLBU6_CYCLE)
@@ -126,8 +126,8 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S'):
     what = (('CFM split normal' + (', timeframe-corrected' if tf else '')) if cfm else 'the inputs’ Gaussian, rescaled')
     fac = cfg.get('slip_rate_factor', 0.8)
     med = lambda v: float(np.median(v))
-    sub_txt = (f'{S} fault sections. Grey: NZSHM22’s Gaussian, mean 0.8 SlipRate, sd 2 SlipRateStdDev (the 0.8 on the mean '
-               f'only). Coloured: this run’s {what}, the slip-rate factor {fac:g} on the whole distribution '
+    sub_txt = (f'{S} fault sections. Grey: NZSHM22’s Gaussian, mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev (the 0.8 on the mean '
+               f'only' + ('' if old_k == 2 else '; NZSHM22’s inputs use 2') + f'). Coloured: this run’s {what}, the slip-rate factor {fac:g} on the whole distribution '
                f'(MISFIT_SLIP {cfg.get("misfit_slip", "linear")!r}). Median ratios, this run / inputs: centre '
                f'{med(ts[om > 0] / om[om > 0]):.2f}, 16–84% width '
                f'{med((n84 - n16)[om > 0] / (2 * os_[om > 0])):.2f}. Ranges below 0 stop at the log panel’s axis.')
@@ -271,6 +271,8 @@ def main():
     ap.add_argument('--config', default=None, help='the run\'s workflow_config.json (default: the one next to --problem)')
     ap.add_argument('--outdir', default=None, help='where the figures go (default: next to --problem)')
     ap.add_argument('--only', default='slip,paleo,mfd', help='which figures (default slip,paleo,mfd)')
+    ap.add_argument('--old-sd', type=float, default=2.0, metavar='K',
+                    help='the slip figure\'s grey Gaussian: sd K SlipRateStdDev (default 2, as NZSHM22\'s inversion inputs have it; 1: SlipRateStdDev itself as 1 sd)')
     a = ap.parse_args()
     cfg = run_config(a.config, a.problem) or {}
     rd = find_rupture_set(a.ruptures or cfg.get('rupture_dir') or '')
@@ -279,7 +281,7 @@ def main():
     outdir = a.outdir or os.path.dirname(os.path.abspath(a.problem))
     want = set(a.only.split(','))
     P = load_problem(a.problem) if want & {'slip', 'paleo'} else None
-    for k, fn in (('slip', lambda: slip_figure(P, rd, cfg, outdir)), ('paleo', lambda: paleo_figure(P, rd, cfg, outdir)),
+    for k, fn in (('slip', lambda: slip_figure(P, rd, cfg, outdir, old_k=a.old_sd)), ('paleo', lambda: paleo_figure(P, rd, cfg, outdir)),
                   ('mfd', lambda: mfd_figure(rd, cfg, outdir))):
         if k in want:
             try:
