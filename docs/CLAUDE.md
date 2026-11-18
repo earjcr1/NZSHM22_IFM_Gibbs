@@ -29,12 +29,14 @@ run's summary as a PDF, about a paragraph per step with the run's figures, every
 line only, needs reportlab (uv run --no-project --with reportlab --with pillow --with numpy python ...); --md FILE writes
 the same as Markdown instead, without reportlab, figures linked from --fig-dir, --pdf-link naming the PDF; --skip-figs
 leaves figures out of either, the rest renumbered and the text naming a left-out one's file; --ref-name shortens the
-reference solution's name. The example (since 2026-11-17: the very conservative 630k run _1794825297, 16 x 100,000) is
-example/workflow_summary.pdf and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
+reference solution's name. The example (since 2026-11-19: the 630k run _1794997938, MFD_GR + DATATYPES_EQUAL, 240 min,
+16 x 56,000; before, _1794909134 and _1794825297) is the summary PDF, kept outside the repository at
+Inversions/Material/workflow_summary.pdf (the user's move, a678da1), and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
 fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png
 fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png (the README with --md README.md --fig-dir
 example/output_figs --pdf-link example/workflow_summary.pdf --no-preamble: the user trimmed the README to open on the
 overview's text, no run line, folder, dates, Overview heading or how-written line); example/output_figs holds only the figures shown (the three
+target figures, made by hand in RUN_DIR with plot_targets.py --old-sd 1 (and --old-sd 2 saved as fig_targets_slip_sd2), the three
 fits and the 33 named faults' MFDs) with their tables, example/NZSHM22_InversionSolution-630k.zip the OpenSHA solution;
 cru_A/cru_D are not in the example (148 MB zipped at 630k)), gibbs.py (production sampler; Gaussian
 likelihood), check_convergence.py (a result set's convergence checks and PASS/CHECK verdict, with each rupture's R-hat

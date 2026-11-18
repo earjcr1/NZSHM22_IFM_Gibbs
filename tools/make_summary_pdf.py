@@ -62,6 +62,12 @@ def fmt(v, spec='{:,.0f}'):
     return 'n/a' if v is None else spec.format(v).replace('-', '\u2212')    # a true minus sign
 
 
+def ordn(p):
+    """A percentile as an ordinal: 71 -> '71st', 84 -> '84th'."""
+    k = int(round(p))
+    return f'{k}' + ('th' if 10 <= k % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(k % 10, 'th'))
+
+
 def rng(v, spec='{:,.0f}'):
     """The range of the values v, as 'low\u2013high', or one value if both print the same."""
     if not v:
@@ -382,6 +388,29 @@ def main():
     ratios = [(float(m.group(1)), float(m.group(3))) for m in
               re.finditer(r'^(\d\.\d\d)-(\d\.\d\d)\s+\d+\s+\S+\s+\S+\s+([\d.]+)', post_part, re.M)][:n_bins or 99]
 
+    gr_sd, gr_pct = None, []                           # MFD_GR: its PDFs' widths against the inputs', and where each bin total
+    if mfdgr:                                          # falls within its PDF (cleaning's quantile table, in x target)
+        import math
+        m_ = re.search(r"sd / target ([\d.]+)-([\d.]+) \(the inputs' ([\d.]+)-([\d.]+)\)", pre)
+        gr_sd = m_.groups() if m_ else None
+        hq = pre.find('97.7%')
+        qt = {round(float(m_.group(1)), 2): [float(m_.group(k)) for k in range(2, 7)] for m_ in
+              re.finditer(r'^\s+(\d\.\d\d)\s+\S+\s+\S+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s',
+                          pre[hq:] if hq >= 0 else '', re.M)}
+        pz = [-2.0, -1.0, 0.0, 1.0, 2.0]
+        for m0_, r_ in ratios:
+            q_ = qt.get(round(m0_ + 0.05, 2))
+            if q_ and r_ > 0:
+                z_ = float(np.interp(np.log(r_), np.log(q_), pz, left=-3.0, right=3.0))
+                gr_pct.append((m0_, 50.0 * (1.0 + math.erf(z_ / math.sqrt(2.0)))))
+    nz_pat = r'NZSHM22 bins ½/½ χ² (\S+) \(linear (\S+), log10 (\S+)\)'
+    nz_m = re.search(nz_pat, post_part)                # the bins as MISFIT_MFD 'half' scores NZSHM22's (plot_rate_magnitude.py)
+    nz_r = re.search(nz_pat, rm[:rm.find('\n' + a.prior + ' (')]) if ref and nz_m else None
+    gw_ = re.search(r'group weights \(--group-weights equal\).*', log0) if gwts else None
+    gwv = ({g_: (float(n_), float(w_)) for g_, n_, w_ in re.findall(r'(slip|mfd|paleo) ([\d.]+) measurements x ([\d.]+)', gw_.group(0))}
+           if gw_ else {})
+    gw_each = grab(gw_.group(0), r'= ([\d.]+) each', 'group weights', float) if gw_ else None
+
     sr = read(os.path.join(PR, 'fig_slip_rates.txt'))
     s_chi2, s_in1, s_in2, s_med = grab(sr, r'^' + re.escape(a.prior) + r' \(.*?(?:chi2|misfit) over the slip-rate rows, as the '
                                        r'likelihood weights them(?: \([^)]*\))?, (?:chi2(?: as fitted)? )?([\d.]+|inf)\b.*?(\d+)% of sections within one .*?(\d+)% within '
@@ -574,7 +603,9 @@ def main():
          'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
          'its own chosen misfit measure): '
          'either way a choice, to be treated as epistemic uncertainty (Gerstenberger et al., 2024). Here each datum counts '
-         'by its own uncertainty in the likelihood, with no weights between data types'
+         'by its own uncertainty in the likelihood'
+         + (', and this run then weights the data types to count equally (DATATYPES_EQUAL, step 4), a weighting fixed in '
+            'advance by how many measurements each type has, not tuned to the fit' if gwts else ', with no weights between data types')
          + (', and the MFD bins’ uncertainties too come from N and b (MFD_GR)' if mfdgr else
             '; with MFD_GR even the MFD bins’ uncertainties come from N and b rather than a set level') + '. The '
          'annealing’s perturbations, cooling schedule, start and iteration count also shape its solution; a posterior '
@@ -988,6 +1019,36 @@ def main():
             'plate boundary counts as one measurement, and it is recorded apart from χ² (' + tt('plate_rate.txt') + ').'
             if ssum else ''))
 
+    if mfdgr:                                          # MFD_GR's nuances: wide, independent bins, and what holds them
+        para('<b>What MFD_GR changes, and its nuances.</b> Its central targets are cru_D\u2019s'
+             + (f', but its PDFs are much wider: sd over target {gr_sd[0]}\u2013{gr_sd[1]}, against the inputs\u2019 '
+                f'{gr_sd[2]}\u2013{gr_sd[3]}' if gr_sd else ', but its PDFs are much wider than the inputs\u2019 Gaussians')
+             + ', widening with magnitude, because each carries the whole uncertainty in N(M\u22655), b and the N scaling '
+             'rather than a set level. ' + ('Scored one by one, such wide bins hold the MFD\u2019s level only loosely and '
+             'its shape hardly at all: a shift in level is charged once per bin, while a shape no Gutenberg\u2013Richter '
+             'curve could make costs little. Without anything else holding them, the paleo rates on the major faults pull '
+             'the bins from about M7.2 to M7.9 up towards the tops of their PDFs, as more mid-size events carrying much '
+             'the same moment (REPORT.md, \u201cThe MFD from N5 and b\u201d). Two settings hold them: DATATYPES_EQUAL, '
+             'which weights the bins as a group (in effect narrowing each PDF by about the square root of its weight), and '
+             'MFD_GR_TAU, which scores the bins jointly about a drawn G-R curve. '
+             + ('This run uses the first. ' if gwts and not mtau else 'This run uses both. ' if gwts and mtau
+                else 'This run uses the second. ' if mtau else 'This run uses neither, so read its M7.2\u20137.9 bins with '
+                'that in mind. ') if not mtau or gwts else '')
+             + 'The prior\u2019s soft top on each bin is its PDF\u2019s 84% point (a 97.7% top changed nothing beyond noise), '
+             'and the MFD figure also scores each model against NZSHM22\u2019s own bins, as the runs without MFD_GR do, '
+             'so the two kinds of run can be compared (step 9).')
+    if gwv:                                            # DATATYPES_EQUAL: the weights, and what they mean
+        nm_ = {'slip': 'the slip rates', 'mfd': 'the MFD bins', 'paleo': 'the paleo sites'}
+        para('<b>Equal weight for the data types</b> (DATATYPES_EQUAL). Each type\u2019s log likelihood is multiplied by '
+             'a weight so that ' + ', '.join(nm_[g_] for g_ in ('slip', 'mfd', 'paleo') if g_ in gwv)
+             + ' (' + ', '.join(f'{gwv[g_][0]:g}' for g_ in ('slip', 'mfd', 'paleo') if g_ in gwv)
+             + f' effective measurements) each count as {gw_each:g}: weights '
+             + ', '.join(f'{gwv[g_][1]:.2f}' for g_ in ('slip', 'mfd', 'paleo') if g_ in gwv) + ', the total kept; the summed slip rates take the slip rates\u2019 weight, and every misfit reported here is '
+             'unweighted. It is a design choice, not a correction for misfit: a type fitted worse than its uncertainties '
+             'allow is held more tightly, not less (a variance-component estimate would weight the other way), so the '
+             'posterior is surer of the MFD and the paleo rates than their stated uncertainties alone would make it, and '
+             'the slip rates bear the cost (step 7\u2019s table).')
+
     # the targets: the inputs' Gaussians against the distributions this run scores the data by (plot_targets.py)
     if any(f in num for f in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')):
         para('<b>The targets, old and new.</b> NZSHM22\u2019s inversion scores every datum by a Gaussian in rate, as its '
@@ -1204,7 +1265,16 @@ def main():
             'rate over many ruptures at low mean rates, where the best fit puts a few ruptures high and the rest at zero. '
             + (f'The bin totals are {span(lo_bins)}% from their targets below M7.1 and '
                f'{span(hi_bins)}% from M7.1 upward. '
-               if lo_bins and hi_bins else ''))
+               if lo_bins and hi_bins else '')
+            + (f'Within their own MFD_GR PDFs they sit between the {ordn(min(p_ for _, p_ in gr_pct))} and '
+               f'{ordn(max(p_ for _, p_ in gr_pct))} percentiles' + (
+               f' (M7.2\u20137.9: {ordn(min(p_ for m_, p_ in gr_pct if 7.15 < m_ < 7.95))}\u2013'
+               f'{ordn(max(p_ for m_, p_ in gr_pct if 7.15 < m_ < 7.95))})'
+               if any(7.15 < m_ < 7.95 for m_, _ in gr_pct) else '') + '. ' if gr_pct else '')
+            + (f'Scored as the runs without MFD_GR score them (half in rate, half in log10, against NZSHM22\u2019s bins), '
+               f'the mean model\u2019s χ² is {nz_m.group(1)} (linear {nz_m.group(2)}, log10 {nz_m.group(3)})'
+               + (f'; {refname}\u2019s {nz_r.group(1)} ({nz_r.group(2)}, {nz_r.group(3)})' if nz_r else '') + '. '
+               if nz_m else ''))
          + f'<b>Slip rates</b> ({fref(a.prior + "/fig_slip_rates.png")}): {fmt(s_in1)}% of the {fmt(n_sec)} sections\u2019 '
          f'posterior means lie within one measurement uncertainty of their targets and {fmt(s_in2)}% within two'
          + (f' ({refname}: {r_sin1:.0f}% within one)' if r_sin1 is not None else '')
@@ -1325,6 +1395,18 @@ def main():
     if reps and s_verdict[1] and 'miss' in s_verdict[1]:
         pts.append(f'<b>Representative models.</b> The {reps} representatives miss some of their tolerances; the '
                    'posterior-mean rate vector is the exact input for mean hazard.')
+    if mfdgr:
+        pts.append('<b>The MFD under MFD_GR.</b> Its bins are wide and, without MFD_GR_TAU, scored independently, so the '
+                   'MFD\u2019s shape rests on ' + ('the bins\u2019 weight (DATATYPES_EQUAL)' if gwts else 'the other data alone')
+                   + (f'; this run\u2019s M7.2\u20137.9 bins sit at the {ordn(min(p_ for m_, p_ in gr_pct if 7.15 < m_ < 7.95))}'
+                      f'\u2013{ordn(max(p_ for m_, p_ in gr_pct if 7.15 < m_ < 7.95))} percentiles of their PDFs'
+                      if any(7.15 < m_ < 7.95 for m_, _ in gr_pct) else '') + '.')
+    if gwv:
+        pts.append('<b>Equal weights.</b> DATATYPES_EQUAL holds ' + ' and '.join(
+                   {'mfd': 'the MFD bins', 'paleo': 'the paleo sites', 'slip': 'the slip rates'}[g_] + f' {gwv[g_][1]:.1f}\u00d7'
+                   for g_ in ('mfd', 'paleo', 'slip') if g_ in gwv and gwv[g_][1] > 1)
+                   + ' as tightly as their own uncertainties would, and the slip rates less; their uncertainties in the '
+                   'posterior follow from that choice.')
     pts.append('<b>What the data determine.</b> Sums of rates (fault, subsection and bin rates) and the probability that a '
                'rupture exceeds about 10<super>−5</super> per year are well determined; individual rates below that are '
                'largely set by the prior.')

@@ -1,0 +1,66 @@
+paleo-rate targets per site (per year): the inputs' Gaussian (bestEstimate, sd) and the site's PDF (its 2.3, 15.9, 84.1 and 97.7% points)
+Alpine George to Jacksons - Hokuri Creek 2.9850e-03 2.8500e-04 2.2770e-03 2.5920e-03 3.1620e-03 3.4210e-03
+Akatore - Big Creek trench               2.6000e-05 1.5000e-05 1.5000e-05 2.0000e-05 5.0000e-05 9.7000e-05
+Alpine George to Jacksons - Lake Ellery  3.7520e-03 8.8000e-04 1.8370e-03 2.5780e-03 4.3380e-03 5.4410e-03
+Alpine George to Jacksons - John O'Groat 3.2910e-03 8.3500e-04 1.4990e-03 2.1910e-03 3.8610e-03 4.9120e-03
+Alpine Jacksons to Kaniere - Lake Paring 3.8310e-03 4.6500e-04 2.5000e-03 3.0470e-03 3.9770e-03 4.2870e-03
+Alpine Jacksons to Kaniere - Lake Mapour 3.0670e-03 6.4400e-04 1.9230e-03 2.3760e-03 3.6640e-03 4.6040e-03
+Alpine Jacksons to Kaniere - Staples 2 t 3.5300e-03 1.3815e-03 8.0000e-04 1.5310e-03 4.2940e-03 6.7330e-03
+Alpine Jacksons to Kaniere - Staples 3 t 3.7060e-03 1.2875e-03 1.1260e-03 1.9150e-03 4.4900e-03 6.5020e-03
+Alpine Jacksons to Kaniere - Haast South 2.6970e-03 6.7700e-04 1.6980e-03 2.0850e-03 3.4390e-03 4.6830e-03
+Alpine Kaniere to Springs Junction - Lak 3.8250e-03 5.3600e-04 2.2550e-03 2.9320e-03 4.0040e-03 4.4680e-03
+Alpine Kaniere to Springs Junction - Lak 3.6290e-03 1.1760e-03 1.3820e-03 2.1340e-03 4.4860e-03 6.2860e-03
+Alpine Springs Junction to Tophouse - Ma 2.7190e-03 7.3500e-04 1.4260e-03 1.9130e-03 3.3830e-03 4.5920e-03
+Alpine Springs Junction to Tophouse - Ma 2.7210e-03 7.6050e-04 1.4100e-03 1.9020e-03 3.4230e-03 4.7030e-03
+Awatere Northeast 1 - Upcot 1 trench     9.9400e-04 3.0850e-04 3.8300e-04 5.9000e-04 1.2070e-03 1.6830e-03
+Clarence Northeast - Ravine Stream expos 5.4400e-04 1.1900e-04 3.5100e-04 4.2800e-04 6.6600e-04 8.6400e-04
+Cloudy 2 - Cloudy seismic lines          3.1600e-04 9.7000e-05 1.2400e-04 1.9100e-04 3.8500e-04 5.3100e-04
+Dunstan - T04/2                          2.2300e-04 8.7000e-05 3.8000e-05 8.8000e-05 2.6200e-04 3.9000e-04
+Te Ikaarongamai - Pakarae River mouth    8.6700e-04 2.2750e-04 4.6500e-04 6.1400e-04 1.0690e-03 1.4250e-03
+Gable End North - Puatai Beach trench    1.0210e-03 2.8500e-04 5.1200e-04 7.0200e-04 1.2720e-03 1.7450e-03
+Hohonu South - Lower Mikonui River expos 6.1000e-05 2.6000e-05 1.2000e-05 2.4000e-05 7.6000e-05 1.3100e-04
+Inglewood - Egmont Road trenches         1.6600e-04 6.5500e-05 3.8000e-05 7.0000e-05 2.0100e-04 3.1800e-04
+Inglewood - Everett Park trench          1.6500e-04 6.6000e-05 3.8000e-05 7.0000e-05 2.0200e-04 3.1800e-04
+Kekerengu 1 - Kekerengu Trench 1         2.4550e-03 7.2950e-04 1.3120e-03 1.7040e-03 3.1630e-03 4.5300e-03
+Kina - Kina Fault trench                 5.2800e-04 1.6450e-04 2.4900e-04 3.5000e-04 6.7900e-04 9.8800e-04
+Lachlan 3 - Table Cape trenches          8.4100e-04 2.9450e-04 2.5200e-04 4.3100e-04 1.0200e-03 1.4920e-03
+Mohaka South - McCool 1 Trench           3.2900e-04 1.2800e-04 8.9000e-05 1.5700e-04 4.1300e-04 6.4100e-04
+Mokonui Southwest - Viewfield Trench     5.1600e-04 1.8200e-04 1.6800e-04 2.7700e-04 6.4100e-04 9.5000e-04
+Oaonui - Oaonui coastal cliff exposure   2.1100e-04 7.8500e-05 6.4000e-05 1.1000e-04 2.6700e-04 4.0100e-04
+Ohariu - Taupo Swamp                     6.3400e-04 2.5200e-04 1.4400e-04 2.7300e-04 7.7700e-04 1.2370e-03
+Ohariu - MacKays Crossing Trench         4.4300e-04 1.7500e-04 1.0300e-04 1.9400e-04 5.4400e-04 8.5400e-04
+Pihama - Pihama coastal cliff exposure   1.8600e-04 6.0000e-05 9.3000e-05 1.2500e-04 2.4500e-04 3.6600e-04
+Porters Pass - Porters Pass Trench 1     5.8300e-04 1.7400e-04 2.3100e-04 3.5200e-04 7.0000e-04 9.5400e-04
+Ruahine North - Davis Trenches           5.4400e-04 1.9450e-04 1.6200e-04 2.7800e-04 6.6700e-04 9.7900e-04
+Titri Central - Clarendon T16/03 trench  9.8000e-05 3.8500e-05 2.3000e-05 4.6000e-05 1.2300e-04 1.9300e-04
+Waimana North - Moana trench             3.1200e-04 1.4200e-04 3.7000e-05 8.9000e-05 3.7300e-04 7.1100e-04
+Waimana North - Te Hoe / Hautapu Trench  5.5500e-04 2.5600e-04 9.3000e-05 1.9400e-04 7.0600e-04 1.3230e-03
+Waimana North - Ahirau 1 trench          2.9900e-04 1.2400e-04 6.4000e-05 1.2300e-04 3.7100e-04 6.2000e-04
+Waipukaka - Hendricksen Trench 1         2.5800e-04 1.3200e-04 1.9000e-05 4.8000e-05 3.1200e-04 9.9700e-04
+Wairarapa - Turakirae Head               3.7700e-04 1.1700e-04 1.4100e-04 2.2400e-04 4.5800e-04 6.3200e-04
+Wairarapa - Lake Kohangapiripiri KP99-1& 4.7200e-04 1.9150e-04 1.0500e-04 2.0000e-04 5.8300e-04 9.5200e-04
+Wairarapa 3 - Tea Creek Road             3.8800e-04 1.3600e-04 1.9400e-04 2.5900e-04 5.3100e-04 8.3100e-04
+Wairau - Wadsworth Trench                9.0900e-04 3.7050e-04 2.1600e-04 4.0300e-04 1.1440e-03 1.8800e-03
+Wairau - Dillon Trench                   5.0700e-04 2.0200e-04 1.2300e-04 2.2900e-04 6.3300e-04 1.0100e-03
+Wairau 2 - Wairau seismic lines          4.0700e-04 1.0450e-04 1.8900e-04 2.7200e-04 4.8100e-04 6.2000e-04
+Wellington Hutt Valley 3 - Te Kopahou-1  7.4600e-04 3.3650e-04 8.1000e-05 1.8900e-04 8.6200e-04 1.6810e-03
+Wellington Hutt Valley 5 - KAF-1         8.0900e-04 1.8950e-04 4.9200e-04 6.1800e-04 9.9700e-04 1.3050e-03
+Wellington Hutt Valley 5 - KAF-3         1.0800e-03 3.2400e-04 5.7600e-04 7.5700e-04 1.4050e-03 2.0410e-03
+Wellington Pahiatua - Dougan-1           1.1010e-03 4.1100e-04 3.1400e-04 5.4500e-04 1.3670e-03 2.0580e-03
+Wellington Pahiatua - Hughes-1 Trench    9.7500e-04 3.2800e-04 3.4000e-04 5.4700e-04 1.2030e-03 1.7220e-03
+Wellington Pahiatua - Dougan-2           1.4420e-03 5.4350e-04 3.9500e-04 7.1100e-04 1.7980e-03 2.7660e-03
+Whakatane North - Te Whetu trench        1.1100e-04 3.7000e-05 3.8000e-05 6.1000e-05 1.3500e-04 1.9400e-04
+Whakatane South - Thalassa trench        3.5400e-04 1.2500e-04 1.0600e-04 1.8100e-04 4.3100e-04 6.3100e-04
+Awatere Northeast 1 - Combined Taylors P 9.4500e-04 8.8500e-05 7.1500e-04 8.3700e-04 1.0140e-03 1.1410e-03
+Hope Conway - Combined Greenburn East an 4.2260e-03 1.1860e-03 2.3170e-03 2.9890e-03 5.3610e-03 7.3860e-03
+Hope Hope River - Hope Shelter trenches  3.6140e-03 1.1545e-03 1.3150e-03 2.0840e-03 4.3930e-03 6.1290e-03
+Poukawa - Combined Poukawa trenches      1.7600e-04 6.9000e-05 4.8000e-05 8.5000e-05 2.2300e-04 3.5800e-04
+Wairarapa 2 - Cross Creek combined       7.3400e-04 1.6500e-04 4.5100e-04 5.6100e-04 8.9100e-04 1.1490e-03
+Flaxmore - Waimea - Tahunanui_5507_Wairo 1.9100e-04 6.5500e-05 1.1000e-04 1.4300e-04 2.7400e-04 4.6100e-04
+Fox Peak_4035_Trench 4                   4.0900e-04 2.0900e-04 1.0500e-04 2.4100e-04 6.5900e-04 1.1640e-03
+Hope Conway_666-675_Combined             3.7620e-03 2.3390e-03 1.8390e-03 2.4600e-03 7.1380e-03 2.6630e-02
+Hope Hope River_648_Matagouri Flat       2.4220e-03 1.4795e-03 1.1440e-03 1.5740e-03 4.5330e-03 1.6015e-02
+The Humps_5565-5696_Combined             2.1300e-04 1.5800e-04 4.7000e-05 1.1200e-04 4.2800e-04 1.4900e-03
+Wairau_5519-5522_Combined Zinke          7.4200e-04 4.4650e-04 3.6600e-04 4.9000e-04 1.3830e-03 4.9000e-03
+Waitawhiti_5369-5379_Combined            1.8500e-04 1.2400e-04 6.8000e-05 1.1100e-04 3.5900e-04 1.2930e-03
+Whitemans Valley_1023_Whitemans Valley t 5.0000e-05 3.3000e-05 1.9000e-05 3.0000e-05 9.6000e-05 3.3400e-04
