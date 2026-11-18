@@ -5399,7 +5399,11 @@ def main():
                 n_cross = int(xs_.sum())
                 sel = (sel & same_) | xs_
                 if not n_cross:
-                    print('swap moves: --swap-cos-cross found no pairs across bins (clean with preliminaries.py --dup-cross-cos)')
+                    dc_ = float(pr['dup_cross_cos']) if 'dup_cross_cos' in pr.files else np.nan   # cleaning's search:
+                    lo_ = dc_ if np.isfinite(dc_) else 0.99                                         # down to 0.99 by default
+                    print(f'swap moves: no pairs across bins with cosine above {a.swap_cos_cross:g}'
+                          + (f' (cleaning searched down to {lo_:g} only: preliminaries.py --dup-cross-cos for more)'
+                             if a.swap_cos_cross < lo_ - 1e-9 else ' (the bins\' rows set the columns apart)'))
             else:
                 sel &= same_
         elif a.swap_cos_cross > 0:

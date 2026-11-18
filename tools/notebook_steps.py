@@ -235,8 +235,7 @@ def cleaning_args():
     a = ['--A', os.path.join(D, g['A_FILE']), '--d', os.path.join(D, g['D_FILE']), '--out', 'cru_clean.npz',
          '--bins-block', g['BIN_BLOCK'], '--slip-block', g['SLIP_BLOCK'], f"--diag-floor={g['FLOOR']}",
          '--slip-sections', g['SLIP_SECTIONS'] if g['SLIP_SECTIONS'] in ('auto', 'none') else os.path.join(D, g['SLIP_SECTIONS']),
-         '--mfd-uncertainty', g['MFD_UNCERTAINTY'],
-         '--dup-cross-cos', '0.95']                         # near-duplicates across magnitude bins, for the cross-bin swaps
+         '--mfd-uncertainty', g['MFD_UNCERTAINTY']]
     if g['BLOCKS']:
         a += ['--blocks', g['BLOCKS']]
     if g['CFM_SLIPRATES']:                             # the slip-rate rows rebuilt from the CFM, as split normals
@@ -302,7 +301,7 @@ def gibbs_args(out, seed, plan, keep=True, init=None):
          '--slip-block', g['SLIP_BLOCK'], '--bins-block', g['BIN_BLOCK'], '--no-samples']
     if g['REPRESENTATIVES'] > 0 and keep:
         a += ['--keep-draws', 1000]                   # whole draws kept for the representatives
-    a += ['--swap-cos', 0.99, '--swap-cos-cross', 0.95,   # swaps between near-duplicates, and across bins at 0.95
+    a += ['--swap-cos', 0.99, '--swap-cos-cross', 0.99,   # swaps between near-duplicates, one threshold within a bin and across
           '--hyper-every', plan.get('hyper_every', 1), '--all-positive']
     return a + _terms(gibbs=True)
 

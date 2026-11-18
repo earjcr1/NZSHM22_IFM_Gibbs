@@ -496,7 +496,8 @@ mstep A/c x w, slip-sum rows and folded B x sqrt(w_slip) (recorded / w). tr grou
 MISFIT_PALEO; RUN_NAME _dtequal; FIGURE_SETTINGS, run_plan MODEL_KEYS. MFD_UNCERTAINTY moved to run_config.py FIXED
 ('as-given') the same day: out of FIGURE_SETTINGS (shown with the fixed settings when not as-given), RUN_NAME only when
 not as-given, summary row only then.
---swap-cos-cross C (2026-11-19; notebook 0.95, cleaning --dup-cross-cos 0.95: near_duplicates(low, keep_low) keeps
+--swap-cos-cross C (2026-11-19; notebook 0.99 since the same day, one threshold within and across bins, the user's choice; first
+0.95 with cleaning --dup-cross-cos 0.95, no longer passed by the notebook: near_duplicates(low, keep_low) keeps
 pairs in (C, 0.99] only across bins, columns' bins from the bin rows; prelim dup_cross_cos): pair selection keeps same-bin
 pairs > swap_cos and cross-bin pairs > C (spike-and-slab with per-bin boxes only). swap_run gets SBIN, SB, LOD (per chain),
 ZLO, KU, LLO/LHI/SC (kernel_consts) and zlo, zhi, gam; ss_on_lp (twin _ss_on_lp_py) = LOD + lb_prior - log(wp + wt), 0 off,
