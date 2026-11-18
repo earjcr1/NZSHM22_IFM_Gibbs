@@ -110,6 +110,10 @@ def convergence(name, floor, stats):
         pi, on = z['hyper_pi'][:, w:, :], z['n_on'][:, w:]
         row.update(on=float(on.mean()), rhat_on=float(split_rhat(on[:, :, None])[0]), worst_rhat_pi=float(np.nanmax(split_rhat(pi))),
                    ess_pi_min=float(min(ess(pi[..., k]) for k in range(pi.shape[2]))))
+    if 'mfd_gr_b' in z:                   # MFD_GR_TAU: the G-R curve's b and level, each chain's hyperparameters
+        cb, cl = z['mfd_gr_b'][:, w:], z['mfd_gr_level'][:, w:]
+        row.update(ess_mfd_curve=float(min(ess(cb), ess(cl))),
+                   rhat_mfd_curve=max(float(split_rhat(cb[:, :, None])[0]), float(split_rhat(cl[:, :, None])[0])))
     return row
 
 
@@ -177,6 +181,12 @@ def main():
         if r['rhat_summaries'] >= rhat_sum:
             why.append(f"R-hat of chi2 or the total rate {r['rhat_summaries']:.4f} (below {rhat_sum} needed)")
             modes = True
+        if 'ess_mfd_curve' in r:          # MFD_GR_TAU: the curve's b and level, held to the total rate's targets
+            if r['ess_mfd_curve'] < need_sum:
+                why.append(f"the MFD curve's b and level need {need_sum:,} effective draws (fewest {r['ess_mfd_curve']:,.0f})")
+            if r['rhat_mfd_curve'] >= rhat_sum:
+                why.append(f"R-hat of the MFD curve's b or level {r['rhat_mfd_curve']:.4f} (below {rhat_sum} needed)")
+                modes = True
         if 'on' in r:
             if max(r['rhat_on'], r['worst_rhat_pi']) >= 1.01:
                 why.append(f"R-hat of the ruptures on or of a bin's fraction on {max(r['rhat_on'], r['worst_rhat_pi']):.4f} (below 1.01 needed)")

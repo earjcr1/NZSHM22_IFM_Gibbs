@@ -2646,10 +2646,6 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         if MFr is not None and MFr.get('joint'):             # --mfd-gr-tau: the bins' misfit about each chain's G-R curve
             mr_ = MFr['rows']
             tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = mjoint_value(T.mstep, R)
-            tr.setdefault('mfd_gr_b', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 0]
-            tr.setdefault('mfd_gr_level', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 1] + math.log(T.mstep['m_c'])
-            tr.setdefault('mfd_gr_n5', np.zeros((K, n_rec)))[:, rec] = (T.mstep['m_c'] * np.exp(T.mstep['theta'][:, 1])
-                                                                        * T.mstep['n5'][T.mstep['ib']])   # s m N(b), per year
             y = y.copy()
             y[:, mr_] /= MFr['eps']
             Rd = y - Dd
@@ -2700,6 +2696,11 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
         if T.mstep is not None and not T.mstep.get('joint'):   # --mfd-step-sd: the MFD steps' term, on its own
             tr.setdefault('mfd_step', np.zeros((K, n_rec)))[:, rec] = mstep_value(T.mstep, R)
+        elif T.mstep is not None:                            # --mfd-gr-tau: each chain's curve, its b, ln(s m) and N(M>=5)
+            tr.setdefault('mfd_gr_b', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 0]
+            tr.setdefault('mfd_gr_level', np.zeros((K, n_rec)))[:, rec] = T.mstep['theta'][:, 1] + math.log(T.mstep['m_c'])
+            tr.setdefault('mfd_gr_n5', np.zeros((K, n_rec)))[:, rec] = (T.mstep['m_c'] * np.exp(T.mstep['theta'][:, 1])
+                                                                        * T.mstep['n5'][T.mstep['ib']])   # s m N(b), per year
         if T.lw is not None and T.lw.get('tau') is not None:   # --log-band: the soft band's penalty, on its own
             lr_ = T.lw['rows']
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -2843,7 +2844,7 @@ def report(tr, burn, thin, names=None):
         print(f'soft band (--log-band; its chi2-equivalent, sum (log10(prediction / target) / tau)^2): {v.mean():.1f} on average (5-95% '
               f'{np.quantile(v, .05):.1f}-{np.quantile(v, .95):.1f}), not counted in chi2 above; rows predicted beyond its '
               f'tau of their targets: {o.mean():.1f} per draw')
-    if 'mfd_gr_b' in tr:                             # --mfd-gr-tau: the bins about each draw's G-R curve, and its b and level
+    if 'mfd_gr_b' in tr and 'mfd_pdf_rows' in tr:    # --mfd-gr-tau: the bins about each draw's G-R curve, and its b and level
         v, bb, lv = tr['mfd_misfit'][:, nb:], tr['mfd_gr_b'][:, nb:], np.exp(tr['mfd_gr_level'][:, nb:])
         q_ = lambda x: f'{np.mean(x):.3f} (5-95% {np.quantile(x, .05):.3f}-{np.quantile(x, .95):.3f})'
         print(f'MFD misfit (--mfd-gr-tau {float(tr["mfd_gr_tau"]):g}, the bins about each draw\'s G-R curve): {v.mean():.1f} on average '
@@ -3516,6 +3517,90 @@ def selftest_mfdstep(backends=('c',)):
         ok &= bool(np.allclose(S_, tr['mfd_step'][:, sw // 10:].ravel(), rtol=1e-7, atol=1e-9))
         print(f'   {be:5s} the term: {S_.mean():.3f} on average; swap acceptance {tr["swap_rate"].mean():.2f}')
     print('SELFTEST (MFD steps)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_mfdjoint(backends=('c',)):
+    """The bins scored jointly about each draw's G-R curve (--mfd-gr-tau) on three spike-and-slab rates, one per magnitude
+    bin, with a Gaussian row across all three and the bins' rows scaled out of the Gaussian (as with MFD_GR), and swap moves,
+    against a sum over the curve's grids (b on 5 values, the level on 9: the sampler draws on the same grids) of a grid
+    integral over the rates: E[log10 m] of each rate, the posterior of b on its grid and E[L]. The rates stay on (the term is
+    infinite with a bin at 0). A toy shape, a G-R tilt pivoting at M6; MFD_GR's priors on b and the level; tau 0.2 decades a
+    step (tight tolerances mix slowly in a toy where every rate is a whole bin, as with --mfd-step-sd). C backend only;
+    the standard errors are the spread of the 16 chains' own means."""
+    print('MFD bins jointly (--mfd-gr-tau): spike-and-slab with swaps, b and the level drawn, vs a grid integral')
+    ok = True
+    c0, d0, sig, kap = np.array([1.0, 0.6, 0.8]), 0.06, 0.02, 1e-3
+    db = np.array([0.05, 0.03, 0.02])                  # the bins' targets (their rows scaled by kap, out of the Gaussian)
+    Gs = np.vstack([c0, kap * np.eye(3)])
+    dv = np.r_[d0, kap * db]
+    lo10, su = -4.0, 0.1
+    U = np.linspace(lo10, 0.8, 81)
+    ww = np.full(len(U), U[1] - U[0])
+    ww[[0, -1]] *= 0.5
+    gw = np.where(U > 0, np.exp(-U ** 2 / (2 * su ** 2)), 1.0) * ww
+    gw /= gw.sum()
+    M = 10.0 ** U
+    bg0 = np.linspace(0.75, 1.15, 5)
+    Mj = np.array([7.05, 7.15, 7.25])
+    shape = np.full((4, len(bg0)), np.nan)
+    shape[1:] = -LN10 * (bg0[None, :] - 0.959) * (Mj[:, None] - 6.0)
+    P = dict(mfd_gr='0.823,0.959,1.089,2.65,3.4,4.57,0.66,1.41,1,1.15294,1.30588', mfd_gr_bgrid=bg0, mfd_gr_shape=shape)
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dv, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0, 1]), np.array([1, 2]), np.array([Gs[:, i] @ Gs[:, i + 1] for i in range(2)])))
+        T.zlo_vec = np.ascontiguousarray(np.full(3, lo10 * LN10))
+        T.ku_vec = np.ascontiguousarray(np.full(3, 1.0 / (2.0 * (su * LN10) ** 2)))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(3, np.int64), B=1, nb=np.array([3.0]), a=1.0, b=1.0)
+        K, sw = 16, 40000
+        T.mstep = mjoint_build(T, P, np.array([1, 2, 3]), np.array([1, 2, 3]), 0.2, 0.1, K, n_b=5, n_l=9)
+        ms = T.mstep
+        if be == backends[0]:                          # the exact posterior, on the sampler's own grids of b and L
+            Q = ms['Q']
+            m0, m1, m2 = M[:, None, None], M[None, :, None], M[None, None, :]
+            g_ = (c0[0] * m0 + c0[1] * m1 + c0[2] * m2 - d0) ** 2 + kap ** 2 * ((m0 - db[0]) ** 2 + (m1 - db[1]) ** 2
+                                                                               + (m2 - db[2]) ** 2)
+            lw_ = np.log(gw[:, None, None] * gw[None, :, None] * gw[None, None, :]) - 0.5 * g_ / sig ** 2
+            lr = [np.log(M)[:, None, None] - np.log(db[0]), np.log(M)[None, :, None] - np.log(db[1]),
+                  np.log(M)[None, None, :] - np.log(db[2])]
+            Z, Eu, Pb, EL = 0.0, np.zeros(3), np.zeros(len(ms['bgrid'])), 0.0
+            res = []
+            for i_, b_ in enumerate(ms['bgrid']):
+                for l_, L_ in enumerate(ms['lgrid']):
+                    rho = [lr[j] - L_ - ms['shape'][j, i_] for j in range(3)]
+                    S_ = sum(Q[a_, c_] * rho[a_] * rho[c_] for a_ in range(3) for c_ in range(3))
+                    res.append((i_, l_, ms['lpb'][i_] + ms['lpl'][l_] + lw_ - 0.5 * S_))
+            top = max(float(r_[2].max()) for r_ in res)
+            for i_, l_, lp_ in res:
+                w_ = np.exp(lp_ - top)
+                W_ = w_.sum()
+                Z += W_
+                Pb[i_] += W_
+                EL += ms['lgrid'][l_] * W_
+                Eu += np.array([w_.sum((1, 2)) @ U, w_.sum((0, 2)) @ U, w_.sum((0, 1)) @ U])
+            Eu, Pb, EL = Eu / Z, Pb / Z, EL / Z
+        tr = sample(T, np.tile([0.05, 0.02, 0.015], (K, 1)), sw, sw // 10, 1, be, 1, 43, monitor=(0, 1, 2),
+                    verbose=False, keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        ok &= bool((Mo > 0).all())
+        for i in range(3):
+            uc = np.log10(Mo[:, :, i]).mean(1)
+            z_ = (uc.mean() - Eu[i]) / (uc.std(ddof=1) / np.sqrt(K))
+            ok &= abs(z_) < 4
+            print(f'   {be:5s} rate {i}: E[log10 m] {uc.mean():.4f} (exact {Eu[i]:.4f}, z {z_:+.2f})')
+        bb = tr['mfd_gr_b'][:, sw // 10:]
+        for i_, b_ in enumerate(ms['bgrid']):
+            pc = np.isclose(bb, b_).mean(1)
+            se = pc.std(ddof=1) / np.sqrt(K)
+            z_ = 0.0 if se == 0 and abs(pc.mean() - Pb[i_]) < 1e-3 else (pc.mean() - Pb[i_]) / max(se, 1e-300)
+            ok &= abs(z_) < 4
+            print(f'   {be:5s} b = {b_:.2f}: posterior {pc.mean():.4f} (exact {Pb[i_]:.4f}, z {z_:+.2f})')
+        lc = (tr['mfd_gr_level'][:, sw // 10:] - math.log(ms['m_c'])).mean(1)
+        z_ = (lc.mean() - EL) / (lc.std(ddof=1) / np.sqrt(K))
+        ok &= abs(z_) < 4
+        print(f'   {be:5s} E[L] {lc.mean():.4f} (exact {EL:.4f}, z {z_:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+    print('SELFTEST (MFD bins jointly)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -4728,6 +4813,7 @@ def main():
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_mfdpdf()
         ok &= selftest_mfdstep()
+        ok &= selftest_mfdjoint()
         ok &= selftest_slipgeo()
         ok &= selftest_slipgeo(b=1.0)
         ok &= selftest_fold()

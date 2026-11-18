@@ -494,7 +494,9 @@ V = 2); mfd_misfit = S (in chi2 as fitted); tr mfd_gr_b, mfd_gr_level (ln(s m)),
 mfd_gr.level_logpdf (shared with bin_pdfs), joint_grid, b_logpdf; preliminaries.py --mfd-gr saves mfd_gr_bgrid and mfd_gr_shape
 (cru_common.load_problem). Notebook: _terms passes it to gibbs.py only (the starts' polish keeps each bin's PDF); RUN_NAME _mfdtau{TAU};
 FIGURE_SETTINGS and run_plan's MODEL_KEYS mfd_gr_tau (older runs None); summary PDF row, model text, results (b, s m). gibbs.py
---mfd-step-sd is kept for direct use (selftest_mfdstep). REPORT.md "The bins jointly about a G-R curve".
+--mfd-step-sd is kept for direct use (selftest_mfdstep). selftest_mfdjoint (full set) against a grid integral on the sampler's own
+grids; b, level, N(M>=5) recorded wherever the term is on (tr mfd_gr_*). check_convergence: ess_mfd_curve, rhat_mfd_curve in the
+row and the verdict (the total rate's targets). REPORT.md "The bins jointly about a G-R curve".
 MFD_GR (2026-11-17, the user's request; False by default, cru_D's bins as before): each MFD bin scored by its own target PDF.
 preliminaries.py --mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI --rupture-set DIR (MFD_GR_SPEC from MFD_GR_B = (0.823, 0.959, 1.089),
 MFD_GR_N5 = (2.65, 3.40, 4.57), MFD_GR_NSCALE = (0.66, 1.41); the user's revision 2026-11-17 from Rollins et al. 2024 BSSA Table 1,
