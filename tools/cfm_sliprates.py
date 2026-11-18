@@ -39,8 +39,34 @@ NSIG_DEFAULT, FACTOR_DEFAULT = 2.0, 2.0       # SR_min and SR_max at 2 sd, doubl
 LINK_KM = 5.0                                 # --cfm-rate-links: identical triples on traces this close are one estimate
 
 
+RATE_FIXES = 'cfm_rate_fixes.csv'                # beside the CFM's CSV: faults whose rate is another's (Name, same_as, reason)
+
+
+def rate_fixes(path):
+    """The CFM's rate fixes kept beside the CSV at path (cfm_rate_fixes.csv; data/ for cru_common.CFM_CSV): fault name ->
+    (the fault whose rate and range it takes, the reason), {} without the file. A fault whose comment says its rate was
+    borrowed but whose numbers differ from its source's takes the source's, in the CFM's rates, its rounding steps, the
+    timeframe-corrected table and the template and link triples alike (the user's choice for Teviot, 2026-11-18)."""
+    f_ = os.path.join(os.path.dirname(os.path.abspath(path)), RATE_FIXES)
+    if not os.path.exists(f_):
+        return {}
+    with open(f_, encoding='utf-8-sig', newline='') as f:
+        return {r['Name'].strip(): (r['same_as'].strip(), r.get('reason', '').strip()) for r in csv.DictReader(f)
+                if r.get('Name', '').strip()}
+
+
+def _apply_fixes(out, path):
+    """out (name -> value) with each fixed fault's value its source's (rate_fixes)."""
+    for p, (src, _) in rate_fixes(path).items():
+        if src not in out:
+            raise ValueError(f'{RATE_FIXES}: {p} takes the rate of {src!r}, which is not in {os.path.basename(path)}')
+        if p in out:
+            out[p] = out[src]
+    return out
+
+
 def load_cfm(path):
-    """The CFM's slip rates by fault name: name -> (SR_pref, SR_min, SR_max), mm/yr."""
+    """The CFM's slip rates by fault name: name -> (SR_pref, SR_min, SR_max), mm/yr (with rate_fixes applied)."""
     out = {}
     with open(path, encoding='utf-8-sig', newline='') as f:
         for row in csv.DictReader(f):
@@ -52,7 +78,7 @@ def load_cfm(path):
             if nm in out and out[nm] != v:
                 raise ValueError(f'{path}: fault {nm!r} appears twice with different slip rates')
             out[nm] = v
-    return out
+    return _apply_fixes(out, path)
 
 
 def load_cfm_steps(path):
@@ -64,7 +90,7 @@ def load_cfm_steps(path):
     with open(path, encoding='utf-8-sig', newline='') as f:
         for row in csv.DictReader(f):
             out[row['Name'].strip()] = min(10.0 ** -dec(str(row[k]).strip()) for k in ('SR_pref', 'SR_min', 'SR_max'))
-    return out
+    return _apply_fixes(out, path)
 
 
 def load_rate_sources(path):
@@ -105,6 +131,9 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False, sources=None):
                 rows[nm] = row
     if any(info[p][1] == '' for p in used):
         raise ValueError(f'{cfm_csv}: --cfm-template-rho needs the QualCode column for every fault')
+    for p, (src_, _) in rate_fixes(cfm_csv).items():   # a fixed fault's triple is its source's (rate_fixes), so the links
+        if p in info and src_ in rows:             # and templates see it as the source's numbers
+            info[p] = (tuple(str(rows[src_][k]).strip() for k in ('SR_pref', 'SR_min', 'SR_max')), info[p][1])
     src = {} if sources is None else dict(sources)
     groups = {}
     for p in sorted(used):
@@ -407,7 +436,7 @@ def load_timeframe(path, shape='fit', nsig=NSIG_DEFAULT):
             else:
                 c, lo, hi = float(row['sn_centre']), float(row['sn_sd_lo']), float(row['sn_sd_hi'])
                 out[row['Name'].strip()] = (c, c - nsig * lo, c + nsig * hi)
-    return out
+    return _apply_fixes(out, path)                 # a fixed fault takes its source's corrected distribution too
 
 
 def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False,
@@ -488,7 +517,10 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
                sig_old=sig_old, rate_old=sub['rate'], f=f, f_in=I['f'], d_old=np.array(d[:ns], float), pref_as=pref_as,
                fallback=fallback, rounding=rounding, widen=widen, qstep=qstep, timeframe=timeframe,
                timeframe_shape=timeframe_shape if timeframe else None)
-    return A2, d2, L2, H2, tab, report_lines(tab, nsig, factor, cfm_csv)
+    fx_ = {p: v for p, v in rate_fixes(cfm_csv).items() if p in set(sub['parent'])}
+    lines_ = report_lines(tab, nsig, factor, cfm_csv) + ([f'   rate fixes ({RATE_FIXES}): ' + '; '.join(
+        f'{p} takes {src_}\'s rate and range' for p, (src_, _) in sorted(fx_.items()))] if fx_ else [])
+    return A2, d2, L2, H2, tab, lines_
 
 
 def report_lines(tab, nsig, factor, cfm_csv):
