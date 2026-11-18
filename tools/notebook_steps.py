@@ -35,6 +35,8 @@ def setup(g):
     """The configuration cell's work after the settings (see the module's description). g: the notebook's globals()."""
     _G.clear()
     _G['g'] = g
+    SH_SECONDS[0] = 0.0                                   # a new run: its own time from zero (the module outlives a run in
+    TIMES.clear()                                         # one Jupyter kernel, and the plan subtracts the time spent)
     sys.path.insert(0, HERE)
     from run_config import derived_settings
     g.update(derived_settings(g))
