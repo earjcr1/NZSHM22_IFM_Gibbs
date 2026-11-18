@@ -5214,12 +5214,12 @@ def main():
         T.zlo_vec = zlo_vec
         T.ku_vec = ku_vec
         T.mixw = mixw
-    if GW is not None:                             # DATATYPES_EQUAL: recorded on the run, the summed slip rates' weight with it
-        T.group_weights, T.temper_slip_sum = GW, gw('slip')
         if spike_mode:                               # pkind 3: x_i = 0 (off) or its slab value (on)
             T.pkind = 3
             T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
             T.gam = 0.5 if a.slab == 'sqrt' else 0.0
+    if GW is not None:                             # DATATYPES_EQUAL: recorded on the run, the summed slip rates' weight with it
+        T.group_weights, T.temper_slip_sum = GW, gw('slip')
     T.n_data = P['G'].shape[0]                     # the data rows; the balance term's rows follow them
     T.n_bal = n_bal                                # the summed slip rates' rows, after the balance term's (None: none)
     T.n_fit = n_fit                                # and then --mfd-monotonic's and --plate-rate's constraint rows
