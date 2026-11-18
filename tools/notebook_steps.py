@@ -236,7 +236,8 @@ def cleaning_args():
     if g['CFM_SLIPRATES']:                             # the slip-rate rows rebuilt from the CFM, as split normals
         a += ['--cfm-sliprates', g['CFM_CSV']]
         a += ['--cfm-timeframe', os.path.join(os.path.dirname(HERE), 'data', 'cfm_timeframe_sliprates.csv')] if g['CFM_TIMEFRAME'] else []
-        a += ['--cfm-template-rho', str(g['CFM_TEMPLATE_RHO'])] if g['CFM_TEMPLATE_RHO'] is not None else []
+        a += (['--cfm-template-rho', str(g['CFM_TEMPLATE_RHO']), '--cfm-rate-sources',   # templates without coincidences
+               os.path.join(os.path.dirname(HERE), 'data', 'cfm_rate_sources.csv')] if g['CFM_TEMPLATE_RHO'] is not None else [])
         a += ['--cfm-rate-links'] if g['CFM_RATE_LINKS'] and g['CFM_TEMPLATE_RHO'] is not None else []
     if g['MFD_GR']:                                    # each bin's target PDF from (b, N), with the inversion solution
         a += ['--mfd-gr', g['MFD_GR_SPEC'], '--rupture-set', g['RUPTURE_DIR']]

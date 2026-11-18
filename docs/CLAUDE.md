@@ -220,7 +220,7 @@ from 3, Ariel Bank 2, George to Jacksons / Caswell - South George, Kowai - View 
 cfm_sliprates.rate_links (comment names after copy words, the fault-system and family-name fallbacks; identical
 triples within LINK_KM = 5 km or on one family name), union-find clusters; weight 1/sqrt(1 + m rho), m = template mates
 plus cluster mates, not a merged partition (a merge chained 0.2/0.1/0.3 x15 with 2/1/3 x9 through Clear Hills);
-links listed in cfm_rate_links.csv; recorded as cfm_rate_links. Since 2026-11-05 (the user's choice, option A over
+links listed in cfm_rate_links.csv; recorded as cfm_rate_links. Since 2026-11-18 data/cfm_rate_sources.csv (63 faults: own sites 43, own measurement 14, borrowed 6, with source and evidence; compiled by hand from the NZPSDB, CFM comments and the 2014 AFM descriptions for the 630k template members) is passed as --cfm-rate-sources whenever CFM_TEMPLATE_RHO is set: those faults leave the template groups (coincidental identical triples), borrowed ones get a 'listed' link to their source (cfm_sliprates.load_rate_sources, template_factors(sources=)); 630k templates 299 faults/74 groups -> 224/57. Since 2026-11-05 (the user's choice, option A over
 section-level correlation with cross-fault sections) slip sections never span two parent faults (cru_common.slip_sections
 parents=, from --rupture-set or find_rupture_set beside --A; recorded as sections_by_fault): 211k 507 -> 551 sections,
 2e4 68 -> 75; template weights applied per section by cfm_sliprates.section_factors (equal to the faults' weights when

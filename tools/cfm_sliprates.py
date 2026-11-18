@@ -67,7 +67,16 @@ def load_cfm_steps(path):
     return out
 
 
-def template_factors(cfm_csv, rupture_dir, rho, links=False):
+def load_rate_sources(path):
+    """The faults whose CFM slip rate is their own or borrowed, not a template (data/cfm_rate_sources.csv: Name, kind
+    ('own sites', 'own measurement' or 'borrowed'), source (the fault a borrowed rate comes from), evidence): name ->
+    (kind, source or None)."""
+    with open(path, encoding='utf-8-sig', newline='') as f:
+        return {r['Name'].strip(): (r['kind'].strip(), (r.get('source') or '').strip() or None)
+                for r in csv.DictReader(f) if r.get('Name', '').strip()}
+
+
+def template_factors(cfm_csv, rupture_dir, rho, links=False, sources=None):
     """--cfm-template-rho: the faults whose slip rates share one estimate, their errors correlated (rho). Two kinds:
       - templates: faults of QualCode 2-5 (rates from comparisons with nearby faults, geomorphology, geodesy, or none:
         Seebeck et al.'s quality codes) with an identical SR_pref, SR_min and SR_max as written;
@@ -77,7 +86,10 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
     Faults i and j are correlated (C_ij = rho) when they share a template or a cluster, and each fault's rows are weighted
     1 / sqrt(sum_j C_ij) = 1 / sqrt(1 + m rho), m the faults it is correlated with: for a template alone (m = n - 1), at
     rho = 1, a group of n counts as one measurement, as a section's subsections do; a fault in both a template and a
-    cluster is correlated with both, without the two groups being merged. Returns (the factor per raw slip-rate row,
+    cluster is correlated with both, without the two groups being merged. sources (--cfm-rate-sources,
+    load_rate_sources): faults whose identical triple is a coincidence, their rate their own (from their own sites or
+    measurement) or borrowed from a named fault, are left out of the templates; a borrowed one is linked to its source
+    (with links). Returns (the factor per raw slip-rate row,
     subsections in FaultID order; report lines; the links, one (rule, fault, source, evidence) per line, or []; each raw
     slip-rate row's parent fault and each fault's set of correlated faults, for section_factors)."""
     if not (0.0 < rho <= 1.0):
@@ -93,10 +105,11 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
                 rows[nm] = row
     if any(info[p][1] == '' for p in used):
         raise ValueError(f'{cfm_csv}: --cfm-template-rho needs the QualCode column for every fault')
+    src = {} if sources is None else dict(sources)
     groups = {}
     for p in sorted(used):
         t, q = info[p]
-        if q in ('2', '3', '4', '5'):
+        if q in ('2', '3', '4', '5') and p not in src:   # a rate of its own, or borrowed, is no template
             groups.setdefault(t, []).append(p)
     mates = {p: set() for p in used}                 # the faults each one is correlated with
     for ps in groups.values():
@@ -109,6 +122,10 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
         if any('Comments' not in r for r in rows.values()):
             raise ValueError(f'{cfm_csv}: --cfm-rate-links needs the Comments column')
         L_links = rate_links({p: (info[p][0], rows[p]['Comments']) for p in used}, fault_traces(rupture_dir))
+        have = {frozenset((a_, b_)) for _, a_, b_, _ in L_links}
+        for p, (kind, s_) in sorted(src.items()):         # --cfm-rate-sources: a borrowed rate linked to its source
+            if kind == 'borrowed' and p in used and s_ in used and frozenset((p, s_)) not in have:
+                L_links.append(('listed', p, s_, 'its rate borrowed from this fault (--cfm-rate-sources)'))
         par = {p: p for p in used}
         def root(x):
             while par[x] != x:
@@ -125,18 +142,22 @@ def template_factors(cfm_csv, rupture_dir, rho, links=False):
                 mates[p] |= c - {p}
     fac = {p: 1.0 / np.sqrt(1.0 + len(mates[p]) * rho) if mates[p] else 1.0 for p in used}
     per_row = np.array([fac[p] for p in sub['parent']])
+    n_src = sum(1 for p in used if p in src and info[p][1] in ('2', '3', '4', '5'))
     big = sorted(((len(ps), t) for t, ps in groups.items() if len(ps) > 1), reverse=True)
     n_in = sum(n for n, _ in big)
     L = [f'== slip-rate templates (--cfm-template-rho {rho:g}): {n_in} faults of QualCode 2-5 share their SR_pref / SR_min / '
          f'SR_max with another, in {len(big)} groups; each fault\'s rows weighted 1 / sqrt(1 + (n - 1) x {rho:g}) for a group of '
          f'n, so {"each group counts as one measurement" if rho == 1 else f"a group of n counts as n / (1 + (n - 1) x {rho:g}) measurements"}; '
-         'largest: ' + ', '.join(f'{"/".join(t)} ({n})' for n, t in big[:5])]
+         'largest: ' + ', '.join(f'{"/".join(t)} ({n})' for n, t in big[:5])] + ([f'   {n_src} faults of QualCode 2-5 left out of the templates, their rates their own or borrowed (--cfm-rate-sources: '
+           + ', '.join(f'{k} {sum(1 for p in used if src.get(p, ("",))[0] == k)}' for k in ('own sites', 'own measurement', 'borrowed'))
+           + ')'] if src else [])
     if links:
-        kinds = {k: sum(1 for l in L_links if l[0] == k) for k in ('comment', 'adjacent', 'same name')}
+        kinds = {k: sum(1 for l in L_links if l[0] == k) for k in ('comment', 'adjacent', 'same name', 'listed')}
         more = sorted(p for p in used if len(mates[p]) > m_tmpl[p])
         n1 = sum(1 for p in more if info[p][1] == '1')
         L.append(f'== borrowed slip rates (--cfm-rate-links): {len(L_links)} links ({kinds["comment"]} from the CFM\'s comments, '
-                 f'{kinds["adjacent"]} identical triples within {LINK_KM:g} km, {kinds["same name"]} on faults of one name); '
+                 f'{kinds["adjacent"]} identical triples within {LINK_KM:g} km, {kinds["same name"]} on faults of one name'
+                 + (f', {kinds["listed"]} listed as borrowed (--cfm-rate-sources)' if kinds['listed'] else '') + '); '
                  f'{len(more)} faults correlated with more faults than their template\'s ({n1} of QualCode 1), each weighted '
                  f'1 / sqrt(1 + m x {rho:g}) for the m faults it shares a template or a cluster with')
     return per_row, L, L_links, (list(sub['parent']), mates)

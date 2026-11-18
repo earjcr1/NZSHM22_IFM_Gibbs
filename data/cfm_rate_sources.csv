@@ -1,0 +1,64 @@
+Name,kind,source,evidence
+Alfredton North,borrowed,Alfredton South,reduced from Alfredton South's rate (NZPSDB/CFM comment: Rate reduced from Alfredton South because of partitionining to Saunder)
+Clarence: Central,borrowed,Clarence: Southwest,"2/3 of Clarence Southwest's rate (NZPSDB/CFM comment: 2/3 of Clarence Southwest SR, remainder on the Elliott Fault. Consiste)"
+Clear Hills - Waikopiro,borrowed,Oruawharo - Mangatoro,taken from the Oruawharo source (NZPSDB/CFM comment: Unchanged from 2014 AFM and consistent with site SR)
+Elliott,borrowed,Clarence: Southwest,"1/3 of Clarence Southwest's rate (NZPSDB/CFM comment: 1/3 of Clarence Southwest SR, remainder on the Clarence Central. Consi)"
+Pongaroa - Weber,borrowed,Saunders Road,half of Saunders Road's rate (NZPSDB/CFM comment: Half of Saunders Road fault SR assigned to this and Waipukaka)
+Waimana: South,borrowed,Mohaka: North,a portion of Mohaka: North's rate (NZPSDB/CFM comment: Assigned as a portion of Mohaka: North rate)
+Barn,own measurement,,2014 AFM:  The slip rate is inferred from marine terrace-derived coastal uplift rates (Sutherland et al.  The slip rate 
+Caswell High 1,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 10,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 3,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 4,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 5,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 67,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 8,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Caswell High 9,own measurement,,2014 AFM:  The slip rates are based on offset of Plio-Quaternary seismic reflectors (Barnes et al.
+Pukerua - Shepherds Gully: 1,own measurement,,2014 AFM:  The slip rates are estimated from a combination of fluvial terrace offset data from the Pukerua Fault (Van Di
+Pukerua - Shepherds Gully: 2,own measurement,,2014 AFM:  The slip rates are estimated from a combination of fluvial terrace offset data from the Pukerua Fault (Van Di
+Wellington: Tararua 1,own measurement,,2014 AFM:  The slip rate is from preliminary analysis of offset fluvial terraces (Little et al.
+Wellington: Tararua 2,own measurement,,2014 AFM:  The slip rate is from preliminary analysis of offset fluvial terraces (Little et al.
+Wellington: Tararua 3,own measurement,,2014 AFM:  The slip rate is from preliminary analysis of offset fluvial terraces (Little et al.
+Alfredton South,own sites,,4 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Ben McLeod,own sites,,6 site rates in NZPSDB; comment: From Barrell and Stahl CFM compilation 2020
+Dry River - Huangarua: 2,own sites,,2 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Fern Gully,own sites,,1 site rates in NZPSDB; comment: SR changed using preferred age range rather than maximum age range.
+Hanmer,own sites,,"1 site rates in NZPSDB; comment: Rounded to 1 DP, but otherwise unchanged from 2014 AFM"
+Himatangi,own sites,,2 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site data
+Hohonu: South,own sites,,1 site rates in NZPSDB; comment: Min based on site 1303 rate (58 ka). Max based on 5 Ma rate. Preferred
+Hope: Seaward,own sites,,2 site rates in NZPSDB; comment: From Hapuka R T2 site and partitioned onto this fault and KaikouraMS05
+Inangahua,own sites,,1 site rates in NZPSDB; comment: From Ghisetti CFM compilation 2021.
+Kairakau South,own sites,,2 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Leader: North,own sites,,1 site rates in NZPSDB; comment: ND
+Levin Anticline,own sites,,1 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site data
+London Hill,own sites,,1 site rates in NZPSDB; comment: Min and mean unchanged from 2014 AFM. Max increased to bound poorly co
+Mataikona,own sites,,6 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site uplift rates
+Mohaka: North,own sites,,4 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Mohaka: South,own sites,,30 site rates in NZPSDB; comment: Slightly reduced because junction with Wellington F has moved south an
+Mokonui Southwest,own sites,,"5 site rates in NZPSDB; comment: Unchanged from 2014 AFM, consistent with the low quality minimum verti"
+Mt Stewart,own sites,,4 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site SR values
+Ohariu,own sites,,7 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Oruawharo - Mangatoro,own sites,,6 site rates in NZPSDB; comment: Increased because of new site data and to be consistent with faults to
+Ostler North,own sites,,104 site rates in NZPSDB; comment: Preferred value from reported max of 1.9 mm/yr for whole fault. Uncert
+Ostler South,own sites,,47 site rates in NZPSDB; comment: Preferred value from reported max of 1.9 mm/yr for whole fault. Uncert
+Pa Valley,own sites,,1 site rates in NZPSDB; comment: From the Baker site SR and rounded with consideration of slip rate bal
+Pancake,own sites,,2 site rates in NZPSDB; comment: From Barrell CFM compilation 2020 and consistent with available site S
+Papatea,own sites,,3 site rates in NZPSDB; comment: SR from Kaikoura SHM and part of a SR balance with Hope F
+Pohangina,own sites,,3 site rates in NZPSDB; comment: From Langridge 2020 compilation and consistent with site data
+Poroutawhao,own sites,,2 site rates in NZPSDB; comment: From Langridge 2020 compilation and consistent with site data
+Pukerua - Shepherds Gully: 3,own sites,,1 site rates in NZPSDB; comment: Updated from Van Dissen and Berryman (1996)
+Rangefront,own sites,,1 site rates in NZPSDB; comment: From Langridge 2020 compilation and consistent with lower half of site
+Rauoterangi,own sites,,6 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site data
+Riversdale,own sites,,10 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Riversdale North,own sites,,3 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Ruahine: Central,own sites,,3 site rates in NZPSDB; comment: Unchanged from 20214 AFM
+Ruahine: North,own sites,,5 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Saunders Road,own sites,,2 site rates in NZPSDB; comment: Reduced to acknowledge Haunui site SR. 
+St Stephens,own sites,,1 site rates in NZPSDB; comment: From Townsend CFM compilation 2020
+Tokomaru,own sites,,3 site rates in NZPSDB; comment: Unchanged from 2014 AFM and consistent with site values
+Vernon 1,own sites,,2 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Vernon 2,own sites,,2 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Waitawhiti,own sites,,1 site rates in NZPSDB; comment: Reduced based on Waitawhiti site
+Wakarara,own sites,,2 site rates in NZPSDB; comment: From Langridge 2021 CFM compilation
+Wharekauhau,own sites,,1 site rates in NZPSDB; comment: Unchanged from 2014 AFM
+Whitemans Valley,own sites,,1 site rates in NZPSDB; comment: Unchanged from 2014 AFM

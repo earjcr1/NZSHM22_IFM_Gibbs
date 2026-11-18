@@ -426,6 +426,10 @@ def main():
                     help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
                          'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
                          'counts as one measurement (default: off)')
+    ap.add_argument('--cfm-rate-sources', default=None, metavar='CSV',
+                    help='--cfm-template-rho: the faults whose identical triple is a coincidence, their rate their own or '
+                         'borrowed from a named fault (a CSV: Name, kind, source, evidence; e.g. data/cfm_rate_sources.csv), '
+                         'left out of the templates; with --cfm-rate-links a borrowed one is linked to its source')
     ap.add_argument('--cfm-rate-links', action='store_true',
                     help='--cfm-template-rho: also the faults whose rate the CFM borrowed from another\'s, of any QualCode '
                          '(named in its comment as the source, or an identical triple on an adjacent trace or a fault of the '
@@ -485,8 +489,11 @@ def main():
                                                                timeframe_shape=args.cfm_timeframe_shape)
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
+                    from cfm_sliprates import load_rate_sources
                     t_sub, lines_t, links_t, corr_t = template_factors(args.cfm_sliprates, rd_c, args.cfm_template_rho,
-                                                               links=args.cfm_rate_links)
+                                                               links=args.cfm_rate_links,
+                                                               sources=load_rate_sources(args.cfm_rate_sources)
+                                                               if args.cfm_rate_sources else None)
                     if args.cfm_rate_links:
                         f_links = os.path.join(os.path.dirname(stem), 'cfm_rate_links.csv') if not pre else pre + 'cfm_rate_links.csv'
                         with open(f_links, 'w', newline='') as fh:
