@@ -919,7 +919,7 @@ def reference_rates(spec, P):
 
 
 FIGURE_SETTINGS = (('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
-                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_GR_TAU', 'mfd_gr_tau'), ('GROUP_WEIGHTS', 'group_weights'), ('SLIP_ALONG_RUPTURE', 'slip_along'),
+                   ('MISFIT_PALEO', 'misfit_paleo'), ('MFD_MONOTONIC', 'mfd_monotonic'), ('MFD_GR', 'mfd_gr'), ('MFD_GR_TAU', 'mfd_gr_tau'), ('DATATYPES_EQUAL', 'datatypes_equal'), ('SLIP_ALONG_RUPTURE', 'slip_along'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
@@ -982,8 +982,8 @@ def run_settings(config, problem):
             cfg['misfit_mfd'] = 'pdf'                    # the bins scored by their PDFs, whatever MISFIT_MFD says
         else:
             cfg['mfd_gr'] = 'False'
-    if 'group_weights' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):   # GROUP_WEIGHTS (2026-11-18): before it, none
-        cfg['group_weights'] = None
+    if 'datatypes_equal' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):   # DATATYPES_EQUAL (2026-11-18): before it, off
+        cfg['datatypes_equal'] = False
     if 'mfd_gr_tau' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):      # MFD_GR_TAU (2026-11-18, in place of MFD_STEP_SD):
         cfg['mfd_gr_tau'] = None                                                     # a run from before it scored the bins one by one
     if 'slip_along' not in cfg and ('preset' in cfg or 'run_minutes' in cfg):      # SLIP_ALONG_RUPTURE (2026-11-17): before it, always the inputs' uniform

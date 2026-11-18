@@ -13,7 +13,7 @@ DATA=$(cd "$1" && pwd)
 mkdir -p "$2" && RUNS=$(cd "$2" && pwd)
 L=$RUNS/logs; NB=$CODE/cru_workflow.ipynb; R=$CODE/tools/run_nb.py; PY=${PYTHON:-python3}
 PIN=("RUN_PLAN=dict(chains=4, sweeps=2400, burn=400, thin=8, replicates=1)" "TARGETS='exploratory'" DISPERSED_STARTS=False "SLIP_SECTIONS='auto'" FLOOR=-10 BLOCKS=None DOWN_THE_MIDDLE=True
-     "MISFIT_SLIP='linear'" "MISFIT_MFD='linear'" "MISFIT_PALEO='rate'" MFD_MONOTONIC=False MFD_GR=False MFD_GR_TAU=None GROUP_WEIGHTS=None "SLIP_ALONG_RUPTURE='uniform'" PLATE_RATE=False CFM_SLIPRATES=False CFM_TIMEFRAME=False CFM_TEMPLATE_RHO=None CFM_RATE_LINKS=True SEED="'legacy'" SLIP_RATE_FACTOR=0.8 SLIP_SUM=False)                                             # the settings TESTING.md's reference values were measured under
+     "MISFIT_SLIP='linear'" "MISFIT_MFD='linear'" "MISFIT_PALEO='rate'" MFD_MONOTONIC=False MFD_GR=False MFD_GR_TAU=None DATATYPES_EQUAL=False "SLIP_ALONG_RUPTURE='uniform'" PLATE_RATE=False CFM_SLIPRATES=False CFM_TIMEFRAME=False CFM_TEMPLATE_RHO=None CFM_RATE_LINKS=True SEED="'legacy'" SLIP_RATE_FACTOR=0.8 SLIP_SUM=False)                                             # the settings TESTING.md's reference values were measured under
 mkdir -p "$L"
 mark() { echo "$1 $(date +%T)" >> "$L/progress.txt"; }
 step() { local name=$1; shift; [ -f "$L/done_$name" ] && return; mark "$name start"; "$@" > "$L/$name.txt" 2>&1; local rc=$?

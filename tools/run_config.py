@@ -48,7 +48,7 @@ DOWN_THE_MIDDLE = False                        # the balance term (gibbs.py --do
                                                # (each type's own weight) for sensitivity tests (tools/run_nb.py DOWN_THE_MIDDLE=True;
                                                # the smoke test's reference values have it on)
 MFD_UNCERTAINTY = 'as-given'                   # the MFD bins' uncertainties (preliminaries.py --mfd-uncertainty): as the inputs give
-                                               # them; out of the notebook since 2026-11-18 (the user's choice: GROUP_WEIGHTS does
+                                               # them; out of the notebook since 2026-11-18 (the user's choice: DATATYPES_EQUAL does
                                                # what it was for). 'two-measurements' or the M7.0-7.1 bin's relative sd for
                                                # sensitivity tests (tools/run_nb.py MFD_UNCERTAINTY='two-measurements')
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
@@ -117,7 +117,7 @@ def run_name(g, d):
                + ('m' + '-'.join(f'{x_:g}' for x_ in (MAGUNCERT if S['RECONSIDER_MAGUNCERT'] is True else S['RECONSIDER_MAGUNCERT']))
                   if S.get('RECONSIDER_MAGUNCERT') else '') if S['MFD_GR'] else '')
             + (f"_mfdtau{S['MFD_GR_TAU']:g}" if S['MFD_GR'] and S.get('MFD_GR_TAU') is not None else '')
-            + (f"_gw{S['GROUP_WEIGHTS']}" if S.get('GROUP_WEIGHTS') else '')
+            + ('_dtequal' if S.get('DATATYPES_EQUAL') else '')
             + (f"_platemax{S['SLIP_RATE_FACTOR']:g}{S['CROSS_SECTIONS']}" if S['PLATE_RATE'] else '')
             + ('_cfm' + ('tf' if S['CFM_TIMEFRAME'] else '')
                + (f"tmpl{S['CFM_TEMPLATE_RHO']:g}" + ('links' if S['CFM_RATE_LINKS'] else '')

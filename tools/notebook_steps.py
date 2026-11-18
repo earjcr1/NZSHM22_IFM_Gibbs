@@ -67,8 +67,8 @@ def setup(g):
         parse_knobs(g['MFD_GR_SPEC'])
     _check(g['SLIP_ALONG_RUPTURE'] in ('uniform', 'tapered'), 'SLIP_ALONG_RUPTURE', g['SLIP_ALONG_RUPTURE'],
            "use 'uniform' (the inputs') or 'tapered' (UCERF3's sqrt-sine taper)")
-    _check(g['GROUP_WEIGHTS'] in (None, 'equal'), 'GROUP_WEIGHTS', g['GROUP_WEIGHTS'],
-           "use 'equal' (the slip rates, MFD bins and paleo rates counting equally) or None")
+    _check(isinstance(g['DATATYPES_EQUAL'], bool), 'DATATYPES_EQUAL', g['DATATYPES_EQUAL'],
+           'use True (the slip rates, MFD bins and paleo rates counting equally) or False')
     tau = g['MFD_GR_TAU']
     _check(tau is None or (num(tau) and tau > 0), 'MFD_GR_TAU', tau,
            'give the G-R shape\'s tolerance above 0, in decades a step (0.025 about 6%), or None for each bin by its own PDF')
@@ -131,7 +131,7 @@ def record_config(**more):
             misfit=g['MISFIT'], misfit_slip=g['MISFIT_SLIP'], misfit_mfd=g['MISFIT_MFD'],
             mfd_gr=g['MFD_GR'] and g['MFD_GR_SPEC'], misfit_paleo=g['MISFIT_PALEO'], mfd_monotonic=g['MFD_MONOTONIC'],
             mfd_gr_tau=g['MFD_GR_TAU'] if g['MFD_GR'] else None, slip_along=g['SLIP_ALONG_RUPTURE'],
-            group_weights=g['GROUP_WEIGHTS'],
+            datatypes_equal=g['DATATYPES_EQUAL'],
             plate_rate=g['PLATE_RATE'] and g['SLIP_RATE_FACTOR'] or None, paleo_misfit=g['PALEO_MISFIT'],
             mfd_misfit=g['MFD_MISFIT'], slip_misfit=g['SLIP_MISFIT'], cfm_sliprates=g['CFM_SLIPRATES'], cfm_file=g['CFM_CSV'],
             cfm_pref='mode', cfm_rounding=False, cfm_timeframe=g['CFM_TIMEFRAME'] and g['CFM_SLIPRATES'],
@@ -318,8 +318,8 @@ def _terms(gibbs=False):
         a += ['--slip-misfit', g['SLIP_MISFIT']] + ([] if gibbs else ['--slip-block', g['SLIP_BLOCK']])
     if g['MFD_MONOTONIC']:
         a += ['--mfd-monotonic']
-    if gibbs and g['GROUP_WEIGHTS']:                     # each data group's log likelihood weighted (the sampler only)
-        a += ['--group-weights', g['GROUP_WEIGHTS']]
+    if gibbs and g['DATATYPES_EQUAL']:                   # each data type's log likelihood weighted (the sampler only)
+        a += ['--group-weights', 'equal']
     if gibbs and g['MFD_GR'] and g['MFD_GR_TAU'] is not None:   # the bins jointly about each draw's G-R curve (the sampler only:
         a += ['--mfd-gr-tau', g['MFD_GR_TAU']]                   # the starts' polish scores each bin by its own PDF)
     if g['PLATE_RATE']:

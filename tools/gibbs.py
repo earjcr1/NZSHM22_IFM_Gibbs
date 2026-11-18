@@ -2561,7 +2561,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     if T.slip_sum is not None:
         tr['slip_sum_expect'] = float(T.slip_sum['expect'])
-    if getattr(T, 'group_weights', None) is not None:     # GROUP_WEIGHTS: each group's weight and effective measurements
+    if getattr(T, 'group_weights', None) is not None:     # DATATYPES_EQUAL: each group's weight and effective measurements
         gw_ = T.group_weights
         tr['group_weights'] = np.array([[gw_['w'][g_], gw_['n'][g_]] for g_ in ('slip', 'mfd', 'paleo') if g_ in gw_['w']])
         tr['group_names'] = np.array([g_ for g_ in ('slip', 'mfd', 'paleo') if g_ in gw_['w']])
@@ -2644,7 +2644,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr['paleo_mode'] = np.array(PMr['mode'])
             tr.setdefault('paleo_misfit', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(   # the curve's whole misfit (the
                 _pm_f_np(PMr, np.tile(np.arange(len(pr_)), (K, 1)), np.log(np.maximum(y[:, pr_], 1e-300))), 1) / b_p   # tables carry b)
-            tr['paleo_misfit'][:, rec] /= float(PMr.get('w', 1.0))   # and GROUP_WEIGHTS' w: recorded unweighted
+            tr['paleo_misfit'][:, rec] /= float(PMr.get('w', 1.0))   # and DATATYPES_EQUAL' w: recorded unweighted
             y = y.copy()
             y[:, pr_] /= PMr['eps']
             Rd = y - Dd
@@ -2681,7 +2681,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             Rd = y - Dd
         if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
             C_ = _sp_w(T, np.arange(nd), Rd) * Rd ** 2
-            if getattr(T, 'temper', None) is not None:       # GROUP_WEIGHTS: each group's misfit recorded unweighted
+            if getattr(T, 'temper', None) is not None:       # DATATYPES_EQUAL: each group's misfit recorded unweighted
                 C_ = C_ / T.temper[:nd]
         else:
             C_ = Rd ** 2
@@ -4468,7 +4468,7 @@ def mstep_build(T, rows, orig, sigma_s, width):
 
 
 def group_weights(P, mode, slip_block='S', bins_block='MFD'):
-    """--group-weights (GROUP_WEIGHTS): each data group's weight on its log likelihood, so that the slip rates, the MFD
+    """--group-weights (DATATYPES_EQUAL): each data group's weight on its log likelihood, so that the slip rates, the MFD
     bins and the paleo rates (every other block holding data) count equally. mode 'equal': each group's effective
     measurements N_g (cru_common.block_measurements, as the fit check counts them: a slip-rate section once, a template
     or link group as its weights say, each bin and each site once) made a third of their sum, w_g = sum N / (3 N_g), so
@@ -4513,7 +4513,7 @@ def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801, w=1.0):
     if len(ms['pairs']) != len(rows) - 1:
         raise SystemExit('--mfd-gr-tau: the magnitude bins must be contiguous')
     nb_, tau = len(rows), tau_dec * LN10
-    Q = (ms['D'].T @ ms['D'] / tau ** 2 + np.ones((nb_, nb_)) / (nb_ ** 2 * tau ** 2)) * float(w)   # GROUP_WEIGHTS' w
+    Q = (ms['D'].T @ ms['D'] / tau ** 2 + np.ones((nb_, nb_)) / (nb_ ** 2 * tau ** 2)) * float(w)   # DATATYPES_EQUAL' w
     knobs = mg.parse_knobs(P['mfd_gr'])
     bg0 = np.asarray(P['mfd_gr_bgrid'], float)
     sh0 = np.asarray(P['mfd_gr_shape'], float)[rows]
@@ -4564,7 +4564,7 @@ def mjoint_value(ms, R):
     with np.errstate(divide='ignore', invalid='ignore'):
         lam = np.log(R[:, ms['row']] + ms['dy'])
     rho = lam - ms['lnd'] - ms['theta'][:, 1:2] - ms['shape'][:, ms['ib']].T
-    out = np.einsum('kb,bc,kc->k', rho, ms['Q'], rho) / ms.get('w', 1.0)   # recorded without GROUP_WEIGHTS' w
+    out = np.einsum('kb,bc,kc->k', rho, ms['Q'], rho) / ms.get('w', 1.0)   # recorded without DATATYPES_EQUAL' w
     return np.where(np.isfinite(lam).all(1), out, np.inf)
 
 
@@ -4739,7 +4739,7 @@ def main():
                     help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
                          '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
     ap.add_argument('--group-weights', default=None, choices=['equal'],
-                    help='GROUP_WEIGHTS: weight each data group\'s log likelihood so that the slip rates (with the summed '
+                    help='DATATYPES_EQUAL: weight each data group\'s log likelihood so that the slip rates (with the summed '
                          'slip rates), the MFD bins and the paleo rates count equally: each as a third of their effective '
                          'measurements in all (the fit check\'s counts); chi2 as fitted and every group\'s misfit are '
                          'recorded unweighted')
@@ -4864,7 +4864,7 @@ def main():
     report_to(a.out + '_log.txt')                        # everything printed below is also kept with the run
     P = load_problem(a.problem)
     n = P['G'].shape[1]
-    GW = group_weights(P, a.group_weights, a.slip_block, a.bins_block) if a.group_weights else None   # GROUP_WEIGHTS
+    GW = group_weights(P, a.group_weights, a.slip_block, a.bins_block) if a.group_weights else None   # DATATYPES_EQUAL
     gw = (lambda g_: 1.0) if GW is None else (lambda g_: GW['w'].get(g_, 1.0))
     if GW is not None:
         print('group weights (--group-weights equal): each data group\'s log likelihood weighted so that the groups count '
@@ -4904,7 +4904,7 @@ def main():
         except (OSError, ValueError) as e:
             raise SystemExit(f'--slip-sum: {e}')
         n_bal = G_fit.shape[0]
-        if GW is not None:                         # GROUP_WEIGHTS: the summed slip rates with the slip rates' weight
+        if GW is not None:                         # DATATYPES_EQUAL: the summed slip rates with the slip rates' weight
             A_ss, b_ss = sp.csr_matrix(A_ss) * np.sqrt(gw('slip')), b_ss * np.sqrt(gw('slip'))
         G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), A_ss])), np.r_[d_fit, b_ss]
         print('summed slip rates: along each cross-section, the model\'s slip along the plate motion added up against the '
@@ -5214,7 +5214,7 @@ def main():
         T.zlo_vec = zlo_vec
         T.ku_vec = ku_vec
         T.mixw = mixw
-    if GW is not None:                             # GROUP_WEIGHTS: recorded on the run, the summed slip rates' weight with it
+    if GW is not None:                             # DATATYPES_EQUAL: recorded on the run, the summed slip rates' weight with it
         T.group_weights, T.temper_slip_sum = GW, gw('slip')
         if spike_mode:                               # pkind 3: x_i = 0 (off) or its slab value (on)
             T.pkind = 3
@@ -5244,7 +5244,7 @@ def main():
             raise SystemExit('swap moves: the pairs\' inner products do not match the columns (a bookkeeping error)')
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
-    if P.get('split_lo2') is not None or GW is not None:   # --cfm-sliprates (and GROUP_WEIGHTS): each row's Gaussian weights
+    if P.get('split_lo2') is not None or GW is not None:   # --cfm-sliprates (and DATATYPES_EQUAL): each row's Gaussian weights
         if not spike_mode or a.transfers:
             raise SystemExit('the problem\'s slip rates are split normals (preliminaries.py --cfm-sliprates): the sampler '
                              'handles them under spike-and-slab, without --transfers')
@@ -5253,7 +5253,7 @@ def main():
         if P.get('split_lo2') is not None:
             L2_[:nd_], H2_[:nd_] = P['split_lo2'], P['split_hi2']
         sk_ = np.flatnonzero((L2_ != 1.0) | (H2_ != 1.0))
-        if GW is not None:                         # GROUP_WEIGHTS: each group's Gaussian x its weight (recorded chi2 without)
+        if GW is not None:                         # DATATYPES_EQUAL: each group's Gaussian x its weight (recorded chi2 without)
             T.temper = np.ones(T.N)
             T.temper[:nd_] = GW['row']
             L2_, H2_ = L2_ * T.temper, H2_ * T.temper
@@ -5691,7 +5691,7 @@ def main():
         from cru_common import magnitude_bins
         rows_ms, R_ms, orig_ms, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
         T.mstep = mstep_build(T, rows_ms, orig_ms, a.mfd_step_sd, a.bin_width)
-        if GW is not None:                         # GROUP_WEIGHTS: the steps' term with the bins' weight (recorded without)
+        if GW is not None:                         # DATATYPES_EQUAL: the steps' term with the bins' weight (recorded without)
             T.mstep['A'], T.mstep['c'] = np.ascontiguousarray(T.mstep['A'] * gw('mfd')), np.ascontiguousarray(T.mstep['c'] * gw('mfd'))
         Us = T.init(X0 if scale is None else X0 / scale)
         s0 = mstep_value(T.mstep, T.residual(Us))

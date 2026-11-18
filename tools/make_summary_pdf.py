@@ -143,7 +143,7 @@ def main():
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
     mtau = cfg.get('mfd_gr_tau')                       # MFD_GR_TAU (2026-11-18): the bins scored jointly about each draw's G-R curve
-    gwts = cfg.get('group_weights')                    # GROUP_WEIGHTS (2026-11-18): the data groups weighted to count equally
+    gwts = bool(cfg.get('datatypes_equal'))            # DATATYPES_EQUAL (2026-11-18): the data types weighted to count equally
     dsr = cfg.get('slip_along') or 'uniform'          # SLIP_ALONG_RUPTURE (2026-11-17): each rupture's slip along it
     mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from (b, N) pairs
     if mfdgr:
@@ -760,7 +760,7 @@ def main():
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
                  'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
                                           'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + (
-          [['GROUP_WEIGHTS', str(gwts), 'each data group\u2019s log likelihood weighted so that the slip rates (with the summed '
+          [['DATATYPES_EQUAL', str(gwts), 'each data group\u2019s log likelihood weighted so that the slip rates (with the summed '
             'slip rates), the MFD bins and the paleo rates count equally, each a third of their effective measurements in all '
             '(gibbs.py --group-weights); \u03c7\u00b2 as fitted and each group\u2019s misfit are reported unweighted']] if gwts else []) + (
           [['MFD_GR_TAU', f'{mtau:g}', f'the bins scored jointly about each draw\u2019s G-R curve, its b and level drawn under '

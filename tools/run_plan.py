@@ -49,9 +49,9 @@ CALIB_THINS = (4, 24)         # its two recording rates, to split the time per s
 MIN_SWEEPS = 500              # a plan never goes below this, whatever the budget
 METRICS = (('ess_rate_5pct', '95% of ruptures'), ('ess_total', 'the total rate'), ('ess_pi_min', "each bin's fraction on"))
 MODEL_KEYS = ('mfd_uncertainty', 'down_the_middle', 'misfit_slip', 'misfit_mfd', 'misfit_paleo', 'mfd_monotonic', 'mfd_gr',
-              'mfd_gr_tau', 'group_weights', 'slip_along', 'cfm_timeframe', 'cfm_template_rho', 'slip_rate_factor', 'slip_sum', 'slip_sum_l0',
+              'mfd_gr_tau', 'datatypes_equal', 'slip_along', 'cfm_timeframe', 'cfm_template_rho', 'slip_rate_factor', 'slip_sum', 'slip_sum_l0',
               'plate_rate', 'floor')
-OLD_DEFAULTS = {'slip_along': 'uniform', 'mfd_gr_tau': None, 'mfd_gr': False, 'group_weights': None}   # a setting a run made before it existed did
+OLD_DEFAULTS = {'slip_along': 'uniform', 'mfd_gr_tau': None, 'mfd_gr': False, 'datatypes_equal': False}   # a setting a run made before it existed did
                                                                                    # not record: its value then
 
 
