@@ -34,7 +34,8 @@ reference solution's name. The example (since 2026-11-19: the 630k run _17949979
 Inversions/Material/workflow_summary.pdf (the user's move, a678da1), and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
 fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png
 fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png (the README with --md README.md --fig-dir
-example/output_figs --pdf-link example/workflow_summary.pdf --no-preamble: the user trimmed the README to open on the
+example/output_figs --pdf-link example/workflow_summary.pdf --no-preamble --no-alternatives (2026-11-19, the user's request:
+no "Other ways to explore the model space" in the README; the PDF keeps it): the user trimmed the README to open on the
 overview's text, no run line, folder, dates, Overview heading or how-written line); example/output_figs holds only the figures shown (the three
 target figures, made by hand in RUN_DIR with plot_targets.py --old-sd 1 (and --old-sd 2 saved as fig_targets_slip_sd2), the three
 fits and the 33 named faults' MFDs) with their tables, example/NZSHM22_InversionSolution-630k.zip the OpenSHA solution;

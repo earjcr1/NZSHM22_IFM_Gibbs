@@ -90,6 +90,9 @@ def main():
                          'folder; each figure by its file name), e.g. example/output_figs; default: their paths in the run')
     ap.add_argument('--pdf-link', default=None, metavar='PATH',
                     help='--md: the summary PDF\'s path, as linked from FILE (e.g. example/workflow_summary.pdf)')
+    ap.add_argument('--no-alternatives', action='store_true',
+                    help='leave out "Other ways to explore the model space" (the repository\'s README.md), and the '
+                         'references only it cites')
     ap.add_argument('--no-preamble', action='store_true',
                     help='start at the overview\'s text: no line naming the run, its folder and dates, no Overview heading '
                          'and, with --md, no line on how the file was written (the repository\'s README.md)')
@@ -655,40 +658,45 @@ def main():
          'rates in one step, address this. The slowest quantities are the fractions of ruptures on in the highest '
          'magnitude bins, which change only as individual ruptures switch (step 6).')
 
-    head('Other ways to explore the model space', new_page=True)
-    para('The sampler suits this problem’s shape: hundreds of thousands of unknowns, a sparse linear forward model, '
-         'exact zeros and hard limits. How other approaches would fare, judged from how they scale (none was run here):'
-         '<br/>• <b>Simulated annealing</b> (NZSHM22, UCERF3) is an optimizer: the spread of many runs reflects the search '
-         '(seed, start, stopping point), not a stated probability.'
-         '<br/>• <b>Random-walk Metropolis</b> must step small enough for the most tightly fit direction; with '
-         f'{fmt(n_cols)} unknowns on scales many decades apart, nearly every proposal is rejected or barely moves.'
-         '<br/>• <b>Hamiltonian Monte Carlo and NUTS</b> (Neal, 2011; Hoffman and Gelman, 2014) move all rates along the '
-         'gradient, at about a Gibbs sweep’s cost, and excel on smooth, correlated posteriors. But spike-and-slab’s '
-         'exact zeros are discrete, which they cannot sample; the hard limits need reflections or transformations (log rate '
-         'makes a funnel near the floor); and the stiffest direction (sums fit within a few percent) sets a step size that '
-         'leaves the loosest (single rates unresolved over decades) thousands of steps from mixing. The discreteness is the '
-         'single point of slowdown.'
-         '<br/>• <b>The Neighbourhood Algorithm</b> (Sambridge, 1999a, 1999b) partitions parameter space into Voronoi '
-         f'cells around the models tried: effective for tens of unknowns, unable to cover {fmt(n_cols)}.'
-         '<br/>• <b>Ensemble samplers</b> (Goodman and Weare, 2010) need more walkers than twice the number of unknowns. '
-         '<b>Parallel tempering</b> helps with separated modes, around an inner sampler such as this one, at several times '
-         'its cost.'
-         '<br/>• <b>Analytic and approximate posteriors</b> (Gaussian, Laplace, variational) are fast, but the exact zeros, '
-         'hard limits and long tails toward zero break their assumptions.'
-         '<br/>• <b>This Gibbs sampler</b>’s single point of slowdown is correlation its one-at-a-time updates cannot '
-         'cross in one move: near-duplicate ruptures (handled by the swaps) and the fraction on in each bin. Its cost per '
-         'sweep grows only with the nonzero entries of <i>G</i>, so it scales to the full rupture sets.')
+    if not a.no_alternatives:                        # the section on other samplers (left out of the README)
+        head('Other ways to explore the model space', new_page=True)
+        para('The sampler suits this problem’s shape: hundreds of thousands of unknowns, a sparse linear forward model, '
+             'exact zeros and hard limits. How other approaches would fare, judged from how they scale (none was run here):'
+             '<br/>• <b>Simulated annealing</b> (NZSHM22, UCERF3) is an optimizer: the spread of many runs reflects the search '
+             '(seed, start, stopping point), not a stated probability.'
+             '<br/>• <b>Random-walk Metropolis</b> must step small enough for the most tightly fit direction; with '
+             f'{fmt(n_cols)} unknowns on scales many decades apart, nearly every proposal is rejected or barely moves.'
+             '<br/>• <b>Hamiltonian Monte Carlo and NUTS</b> (Neal, 2011; Hoffman and Gelman, 2014) move all rates along the '
+             'gradient, at about a Gibbs sweep’s cost, and excel on smooth, correlated posteriors. But spike-and-slab’s '
+             'exact zeros are discrete, which they cannot sample; the hard limits need reflections or transformations (log rate '
+             'makes a funnel near the floor); and the stiffest direction (sums fit within a few percent) sets a step size that '
+             'leaves the loosest (single rates unresolved over decades) thousands of steps from mixing. The discreteness is the '
+             'single point of slowdown.'
+             '<br/>• <b>The Neighbourhood Algorithm</b> (Sambridge, 1999a, 1999b) partitions parameter space into Voronoi '
+             f'cells around the models tried: effective for tens of unknowns, unable to cover {fmt(n_cols)}.'
+             '<br/>• <b>Ensemble samplers</b> (Goodman and Weare, 2010) need more walkers than twice the number of unknowns. '
+             '<b>Parallel tempering</b> helps with separated modes, around an inner sampler such as this one, at several times '
+             'its cost.'
+             '<br/>• <b>Analytic and approximate posteriors</b> (Gaussian, Laplace, variational) are fast, but the exact zeros, '
+             'hard limits and long tails toward zero break their assumptions.'
+             '<br/>• <b>This Gibbs sampler</b>’s single point of slowdown is correlation its one-at-a-time updates cannot '
+             'cross in one move: near-duplicate ruptures (handled by the swaps) and the fraction on in each bin. Its cost per '
+             'sweep grows only with the nonzero entries of <i>G</i>, so it scales to the full rupture sets.')
     para('<i>References.</i> Coffey, G. L., et al. (accepted), Reassessing geologic fault slip rates and their '
          'uncertainties in Aotearoa New Zealand, <i>Bull. Seismol. Soc. Am.</i> Field, E. H., et al. (2014), <i>Bull. Seismol. Soc. Am.</i> 104, 1122–1180 (UCERF3). '
          'Gerstenberger, M. C., et al. (2022), <i>GNS Science Report</i> 2022/47, doi:10.21420/2EXG-NP48; (2024), '
-         '<i>Bull. Seismol. Soc. Am.</i>, doi:10.1785/0120230165 (the NZSHM22 seismicity rate model). Goodman, J., and J. '
-         'Weare (2010), <i>Commun. Appl. Math. Comput. Sci.</i> 5, 65–80. Hoffman, M. D., and A. Gelman (2014), <i>J. Mach. '
-         'Learn. Res.</i> 15, 1593–1623. Milner, K. R., and E. H. Field (2023), <i>Bull. Seismol. Soc. Am.</i>, '
-         'doi:10.1785/0120230122. Neal, R. M. (2003), <i>Ann. Stat.</i> 31, 705–767 (slice sampling); (2011), in '
-         '<i>Handbook of Markov Chain Monte Carlo</i>, CRC Press, 113–162 (HMC). Page, M. T., et al. (2014), <i>Bull. '
+         '<i>Bull. Seismol. Soc. Am.</i>, doi:10.1785/0120230165 (the NZSHM22 seismicity rate model). '
+         + ('' if a.no_alternatives else 'Goodman, J., and J. Weare (2010), <i>Commun. Appl. Math. Comput. Sci.</i> 5, '
+            '65–80. Hoffman, M. D., and A. Gelman (2014), <i>J. Mach. Learn. Res.</i> 15, 1593–1623. ')
+         + 'Milner, K. R., and E. H. Field (2023), <i>Bull. Seismol. Soc. Am.</i>, '
+         'doi:10.1785/0120230122. Neal, R. M. (2003), <i>Ann. Stat.</i> 31, 705–767 (slice sampling)'
+         + ('. ' if a.no_alternatives else '; (2011), in <i>Handbook of Markov Chain Monte Carlo</i>, CRC Press, '
+            '113–162 (HMC). ')
+         + 'Page, M. T., et al. (2014), <i>Bull. '
          'Seismol. Soc. Am.</i> 104, 1181–1204 (the UCERF3 grand inversion). Seebeck, H., et al. (2023), <i>N. Z. J. '
-         'Geol. Geophys.</i> (the NZ Community Fault Model, version 1.0). Sambridge, M. (1999a, b), <i>Geophys. J. '
-         'Int.</i> 138, 479–494 and 727–746. Szu, H., and R. Hartley (1987), <i>Phys. Lett. A</i> 122, 157–162.')
+         'Geol. Geophys.</i> (the NZ Community Fault Model, version 1.0). '
+         + ('' if a.no_alternatives else 'Sambridge, M. (1999a, b), <i>Geophys. J. Int.</i> 138, 479–494 and 727–746. ')
+         + 'Szu, H., and R. Hartley (1987), <i>Phys. Lett. A</i> 122, 157–162.')
 
     head('This run, step by step', new_page=True)
     para(f'The sections below follow the notebook {tt("cru_workflow.ipynb")} step by step for one run; each figure is '
