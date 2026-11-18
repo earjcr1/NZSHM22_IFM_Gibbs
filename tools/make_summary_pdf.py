@@ -143,6 +143,7 @@ def main():
     band = band if isinstance(band, (int, float)) and not isinstance(band, bool) else None   # the band's factor, or None
     mono = bool(cfg.get('mfd_monotonic'))
     mtau = cfg.get('mfd_gr_tau')                       # MFD_GR_TAU (2026-11-18): the bins scored jointly about each draw's G-R curve
+    gwts = cfg.get('group_weights')                    # GROUP_WEIGHTS (2026-11-18): the data groups weighted to count equally
     dsr = cfg.get('slip_along') or 'uniform'          # SLIP_ALONG_RUPTURE (2026-11-17): each rupture's slip along it
     mfdgr = cfg.get('mfd_gr') or None                  # MFD_GR (2026-11-17): each bin's target PDF from (b, N) pairs
     if mfdgr:
@@ -676,9 +677,9 @@ def main():
                + (f', last step {t_end}' if t_end else '')]] if not a.no_preamble else []) + [
            ['SLIP_SECTIONS', repr(cfg.get('slip_sections')), 'how the slip-rate rows count (\u2019auto\u2019: each fault '
             'section\u2019s slip rate as one measurement, however many subsections it is copied to)'],
-           ['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level (\u2019as-given\u2019: '
-            'as the inputs give them)'],
-          ] + ([['MFD_GR', mgr_txt, 'each MFD bin scored by its own target PDF in log rate, propagated from b, N(M\u22655) and the N scaling '
+          ] + ([['MFD_UNCERTAINTY', repr(cfg.get('mfd_uncertainty')), 'the MFD bins\u2019 uncertainty level, not as the inputs '
+                 'give them (a fixed setting since 2026-11-18, here for a sensitivity test)']]
+               if cfg.get('mfd_uncertainty') not in (None, 'as-given') else []) + ([['MFD_GR', mgr_txt, 'each MFD bin scored by its own target PDF in log rate, propagated from b, N(M\u22655) and the N scaling '
                  'through NZSHM22\u2019s partitioning of the total GR (less the off-fault and sub-seismogenic MFDs; mfd_gr.py), '
                  'in place of cru_D\u2019s targets (gibbs.py --mfd-misfit pdf)']]
                if mfdgr else []) + ([[f'{nm}_BAND', repr(g_band[k]) if g_band[k] in (None, 'positive') else f'{float(g_band[k]):g}',
@@ -759,6 +760,9 @@ def main():
           ] + ([['MFD_MONOTONIC', str(mono), 'no magnitude bin\u2019s total above its lower neighbour\u2019s where the '
                  'targets do not rise' + (f', and where they rise, the rise capped {rise_cap[2]:g} sd above the target '
                                           'difference' if rise_cap else '') + ' (a hard constraint, gibbs.py --mfd-monotonic)']] if mono else []) + (
+          [['GROUP_WEIGHTS', str(gwts), 'each data group\u2019s log likelihood weighted so that the slip rates (with the summed '
+            'slip rates), the MFD bins and the paleo rates count equally, each a third of their effective measurements in all '
+            '(gibbs.py --group-weights); \u03c7\u00b2 as fitted and each group\u2019s misfit are reported unweighted']] if gwts else []) + (
           [['MFD_GR_TAU', f'{mtau:g}', f'the bins scored jointly about each draw\u2019s G-R curve, its b and level drawn under '
             f'MFD_GR\u2019s priors; each pair of neighbouring bins\u2019 step within about {100 * (10 ** mtau - 1):.0f}% of the '
             'curve\u2019s, their mean level within the same (gibbs.py --mfd-gr-tau), in place of each bin\u2019s own PDF']]

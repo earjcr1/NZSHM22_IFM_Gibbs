@@ -2561,6 +2561,10 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['balance_A'], tr['balance_types'] = T.balance['A'], np.array(T.balance['names'])
     if T.slip_sum is not None:
         tr['slip_sum_expect'] = float(T.slip_sum['expect'])
+    if getattr(T, 'group_weights', None) is not None:     # GROUP_WEIGHTS: each group's weight and effective measurements
+        gw_ = T.group_weights
+        tr['group_weights'] = np.array([[gw_['w'][g_], gw_['n'][g_]] for g_ in ('slip', 'mfd', 'paleo') if g_ in gw_['w']])
+        tr['group_names'] = np.array([g_ for g_ in ('slip', 'mfd', 'paleo') if g_ in gw_['w']])
     if T.mstep is not None and T.mstep.get('joint'):     # --mfd-gr-tau: its tolerance (decades a step)
         tr['mfd_gr_tau'] = T.mstep['tau_dec']
     elif T.mstep is not None:                            # --mfd-step-sd: its tolerance, and its value if the steps scatter so
@@ -2640,6 +2644,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr['paleo_mode'] = np.array(PMr['mode'])
             tr.setdefault('paleo_misfit', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(   # the curve's whole misfit (the
                 _pm_f_np(PMr, np.tile(np.arange(len(pr_)), (K, 1)), np.log(np.maximum(y[:, pr_], 1e-300))), 1) / b_p   # tables carry b)
+            tr['paleo_misfit'][:, rec] /= float(PMr.get('w', 1.0))   # and GROUP_WEIGHTS' w: recorded unweighted
             y = y.copy()
             y[:, pr_] /= PMr['eps']
             Rd = y - Dd
@@ -2652,7 +2657,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         elif MFr is not None and MFr.get('pdf'):             # MFD_GR: each bin's curve misfit, -2 ln of its PDF from its minimum
             mr_ = MFr['rows']
             tr.setdefault('mfd_misfit', np.zeros((K, n_rec)))[:, rec] = 2.0 * np.sum(
-                _pm_f_np(T.lw['PM'], np.tile(MFr['idx'], (K, 1)), np.log(np.maximum(y[:, mr_], 1e-300))), 1)
+                _pm_f_np(T.lw['PM'], np.tile(MFr['idx'], (K, 1)), np.log(np.maximum(y[:, mr_], 1e-300))), 1) / float(MFr.get('w', 1.0))
             y = y.copy()
             y[:, mr_] /= MFr['eps']
             Rd = y - Dd
@@ -2676,6 +2681,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             Rd = y - Dd
         if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
             C_ = _sp_w(T, np.arange(nd), Rd) * Rd ** 2
+            if getattr(T, 'temper', None) is not None:       # GROUP_WEIGHTS: each group's misfit recorded unweighted
+                C_ = C_ / T.temper[:nd]
         else:
             C_ = Rd ** 2
         tr['chi2'][:, rec] = np.sum(C_, 1) / T.sigma ** 2
@@ -2693,7 +2700,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:nbal] ** 2, 1) / T.sigma ** 2
             tr.setdefault('balance_s', np.zeros((K, n_rec, nbal - nd)))[:, rec] = R[:, nd:nbal] / np.sqrt(T.balance['A'])
         if T.slip_sum is not None:                           # the summed slip rates' term, on its own
-            tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
+            tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = (np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
+                                                                       / float(getattr(T, 'temper_slip_sum', 1.0)))
         if T.mstep is not None and not T.mstep.get('joint'):   # --mfd-step-sd: the MFD steps' term, on its own
             tr.setdefault('mfd_step', np.zeros((K, n_rec)))[:, rec] = mstep_value(T.mstep, R)
         elif T.mstep is not None:                            # --mfd-gr-tau: each chain's curve, its b, ln(s m) and N(M>=5)
@@ -4459,7 +4467,33 @@ def mstep_build(T, rows, orig, sigma_s, width):
                 width=float(width), pairs=np.array(pairs, np.int64), const=float(e @ Pc @ e / tau ** 2))
 
 
-def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801):
+def group_weights(P, mode, slip_block='S', bins_block='MFD'):
+    """--group-weights (GROUP_WEIGHTS): each data group's weight on its log likelihood, so that the slip rates, the MFD
+    bins and the paleo rates (every other block holding data) count equally. mode 'equal': each group's effective
+    measurements N_g (cru_common.block_measurements, as the fit check counts them: a slip-rate section once, a template
+    or link group as its weights say, each bin and each site once) made a third of their sum, w_g = sum N / (3 N_g), so
+    the total is kept. Returns dict(w: group -> weight, n: group -> N_g, row: each problem row's weight)."""
+    from cru_common import block_measurements
+    if mode != 'equal':
+        raise SystemExit(f'--group-weights {mode!r}: use equal')
+    grp = {}
+    for b_ in block_measurements(P):
+        g_ = 'slip' if b_['name'] == slip_block else 'mfd' if b_['name'] == bins_block else 'paleo'
+        if g_ == 'paleo' and 'paleo' in grp:
+            raise SystemExit('--group-weights: more than one row block besides the slip rates and the MFD bins')
+        grp[g_] = (b_['index'], float(b_['expect']))
+    if len(grp) < 2:
+        raise SystemExit('--group-weights: needs at least two data groups')
+    tot = sum(n_ for _, n_ in grp.values())
+    w = {g_: tot / (len(grp) * n_) for g_, (_, n_) in grp.items()}
+    row = np.ones(P['G'].shape[0])
+    blk = np.asarray(P['block'])
+    for g_, (i_, _) in grp.items():
+        row[blk == i_] = w[g_]
+    return dict(w=w, n={g_: n_ for g_, (_, n_) in grp.items()}, row=row)
+
+
+def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801, w=1.0):
     """--mfd-gr-tau (MFD_GR_TAU): the bins scored jointly about each draw's G-R curve. b and the level L = ln(s m / m_mid)
     are each chain's hyperparameters, under their MFD_GR priors (mfd_gr.b_logpdf, level_logpdf); the draw's curve over the
     bins' targets is exp(L + shape(b)) (mfd_gr.joint_grid, saved with the problem by cleaning), and the residual rho = lam -
@@ -4479,7 +4513,7 @@ def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801):
     if len(ms['pairs']) != len(rows) - 1:
         raise SystemExit('--mfd-gr-tau: the magnitude bins must be contiguous')
     nb_, tau = len(rows), tau_dec * LN10
-    Q = ms['D'].T @ ms['D'] / tau ** 2 + np.ones((nb_, nb_)) / (nb_ ** 2 * tau ** 2)
+    Q = (ms['D'].T @ ms['D'] / tau ** 2 + np.ones((nb_, nb_)) / (nb_ ** 2 * tau ** 2)) * float(w)   # GROUP_WEIGHTS' w
     knobs = mg.parse_knobs(P['mfd_gr'])
     bg0 = np.asarray(P['mfd_gr_bgrid'], float)
     sh0 = np.asarray(P['mfd_gr_shape'], float)[rows]
@@ -4496,7 +4530,7 @@ def mjoint_build(T, P, rows, orig, tau_dec, width, K, n_b=481, n_l=801):
               lnd=np.log(ms['dy']), shape=sh, bgrid=bg, lgrid=lg, lpb=np.asarray(mg.b_logpdf(knobs, bg), float),
               lpl=np.asarray(lpv(lg + math.log(m_c)), float), QG=Q @ sh, GQG=np.sum(sh * (Q @ sh), 0),
               oQG=Q.sum(0) @ sh, Q1=Q.sum(1), oQo=float(Q.sum()), knobs=knobs, m_c=float(m_c),
-              theta=np.zeros((K, 2)), ib=np.zeros(K, np.int64), il=np.zeros(K, np.int64),
+              theta=np.zeros((K, 2)), ib=np.zeros(K, np.int64), il=np.zeros(K, np.int64), w=float(w),
               n5=np.asarray(mg.n_of_b(knobs, bg), float))   # N(M>=5) at each b (s = m = 1): the draw's is s m N(b)
     ms.pop('const', None)
     return ms
@@ -4530,7 +4564,7 @@ def mjoint_value(ms, R):
     with np.errstate(divide='ignore', invalid='ignore'):
         lam = np.log(R[:, ms['row']] + ms['dy'])
     rho = lam - ms['lnd'] - ms['theta'][:, 1:2] - ms['shape'][:, ms['ib']].T
-    out = np.einsum('kb,bc,kc->k', rho, ms['Q'], rho)
+    out = np.einsum('kb,bc,kc->k', rho, ms['Q'], rho) / ms.get('w', 1.0)   # recorded without GROUP_WEIGHTS' w
     return np.where(np.isfinite(lam).all(1), out, np.inf)
 
 
@@ -4704,6 +4738,11 @@ def main():
     ap.add_argument('--all-positive', action='store_true',
                     help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
                          '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
+    ap.add_argument('--group-weights', default=None, choices=['equal'],
+                    help='GROUP_WEIGHTS: weight each data group\'s log likelihood so that the slip rates (with the summed '
+                         'slip rates), the MFD bins and the paleo rates count equally: each as a third of their effective '
+                         'measurements in all (the fit check\'s counts); chi2 as fitted and every group\'s misfit are '
+                         'recorded unweighted')
     ap.add_argument('--mfd-gr-tau', type=float, default=None, metavar='TAU',
                     help='MFD_GR_TAU, with --mfd-misfit pdf (MFD_GR): the bins scored jointly about each draw\'s G-R curve, '
                          'its b and level (ln of the N scaling times the magnitude-uncertainty factor) each chain\'s '
@@ -4825,6 +4864,13 @@ def main():
     report_to(a.out + '_log.txt')                        # everything printed below is also kept with the run
     P = load_problem(a.problem)
     n = P['G'].shape[1]
+    GW = group_weights(P, a.group_weights, a.slip_block, a.bins_block) if a.group_weights else None   # GROUP_WEIGHTS
+    gw = (lambda g_: 1.0) if GW is None else (lambda g_: GW['w'].get(g_, 1.0))
+    if GW is not None:
+        print('group weights (--group-weights equal): each data group\'s log likelihood weighted so that the groups count '
+              'equally, ' + ', '.join(f'{g_} {GW["n"][g_]:.1f} measurements x {GW["w"][g_]:.3f}' for g_ in GW['w'])
+              + f' = {sum(GW["n"].values()) / len(GW["w"]):.1f} each (the summed slip rates with the slip rates\' weight); '
+              'chi2 as fitted and each group\'s misfit recorded unweighted')
     G_fit, d_fit, B_bal = P['G'], P['d'], None       # the rows the sampler fits: the data, and the balance term's rows
     if a.down_the_middle:
         B_bal, b_bal, A_bal, info_bal = balance_rows(P, a.slip_block, a.bins_block, weights=a.down_the_middle)
@@ -4858,6 +4904,8 @@ def main():
         except (OSError, ValueError) as e:
             raise SystemExit(f'--slip-sum: {e}')
         n_bal = G_fit.shape[0]
+        if GW is not None:                         # GROUP_WEIGHTS: the summed slip rates with the slip rates' weight
+            A_ss, b_ss = sp.csr_matrix(A_ss) * np.sqrt(gw('slip')), b_ss * np.sqrt(gw('slip'))
         G_fit, d_fit = sp_csc(sp.vstack([sp.csr_matrix(G_fit), A_ss])), np.r_[d_fit, b_ss]
         print('summed slip rates: along each cross-section, the model\'s slip along the plate motion added up against the '
               'targets\' added up, '
@@ -5166,6 +5214,8 @@ def main():
         T.zlo_vec = zlo_vec
         T.ku_vec = ku_vec
         T.mixw = mixw
+    if GW is not None:                             # GROUP_WEIGHTS: recorded on the run, the summed slip rates' weight with it
+        T.group_weights, T.temper_slip_sum = GW, gw('slip')
         if spike_mode:                               # pkind 3: x_i = 0 (off) or its slab value (on)
             T.pkind = 3
             T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
@@ -5180,7 +5230,7 @@ def main():
         rows_s = np.asarray(cs['rows'])            # of slip (sigma_i / row scale, and the row's own rescaling, lin_sc)
         rs_s = lin_sc(b_s) if sm_rows is not None else 1.0
         vals = (ss_info['scale'][:, None] * ss_info['W'] * ss_info['proj'][None, :]
-                * (ss_info['sig_i'] / (np.asarray(P['row_scale'], float)[rows_s] * rs_s))[None, :])
+                * (ss_info['sig_i'] / (np.asarray(P['row_scale'], float)[rows_s] * rs_s))[None, :]) * np.sqrt(gw('slip'))
         kk, jj = np.nonzero(vals)
         B_ss = sp.csr_matrix((vals[kk, jj], (kk, rows_s[jj])), shape=(vals.shape[0], T.N))
     note_ = column_passes(T, B_ss)
@@ -5194,18 +5244,24 @@ def main():
             raise SystemExit('swap moves: the pairs\' inner products do not match the columns (a bookkeeping error)')
     if B_bal is not None:
         T.balance = dict(A=A_bal, names=[t['name'] for t in info_bal])
-    if P.get('split_lo2') is not None:             # --cfm-sliprates: the slip-rate rows' split misfit, from the problem
+    if P.get('split_lo2') is not None or GW is not None:   # --cfm-sliprates (and GROUP_WEIGHTS): each row's Gaussian weights
         if not spike_mode or a.transfers:
             raise SystemExit('the problem\'s slip rates are split normals (preliminaries.py --cfm-sliprates): the sampler '
                              'handles them under spike-and-slab, without --transfers')
         L2_, H2_ = np.ones(T.N), np.ones(T.N)
         nd_ = P['G'].shape[0]
-        L2_[:nd_], H2_[:nd_] = P['split_lo2'], P['split_hi2']
-        T.split = dict(L2=np.ascontiguousarray(L2_), H2=np.ascontiguousarray(H2_))
+        if P.get('split_lo2') is not None:
+            L2_[:nd_], H2_[:nd_] = P['split_lo2'], P['split_hi2']
         sk_ = np.flatnonzero((L2_ != 1.0) | (H2_ != 1.0))
+        if GW is not None:                         # GROUP_WEIGHTS: each group's Gaussian x its weight (recorded chi2 without)
+            T.temper = np.ones(T.N)
+            T.temper[:nd_] = GW['row']
+            L2_, H2_ = L2_ * T.temper, H2_ * T.temper
+        T.split = dict(L2=np.ascontiguousarray(L2_), H2=np.ascontiguousarray(H2_))
         sk_ = np.log10(np.sqrt(L2_[sk_] / H2_[sk_]))            # log10 (sigma_hi / sigma_lo)
         c_ = P.get('cfm_sliprates') or ['?', '?', '?']
-        print(f'slip rates from the CFM ({c_[0]}; SR_min and SR_max at {c_[1]} sigma, times {c_[2]}): each slip-rate row a split '
+        if len(sk_) and P.get('split_lo2') is not None:
+          print(f'slip rates from the CFM ({c_[0]}; SR_min and SR_max at {c_[1]} sigma, times {c_[2]}): each slip-rate row a split '
               f'normal, {len(sk_)} of them lopsided, sd above / below the mode median {10 ** np.median(sk_):.2f} (5-95% {10 ** np.percentile(sk_, 5):.2f}-'
               f'{10 ** np.percentile(sk_, 95):.2f}); their misfit evaluated exactly in every update and swap')
     band_rows = None
@@ -5438,8 +5494,8 @@ def main():
         from cru_common import geo_moments, slip_log_sds
         s_lo, s_hi, wk_ = slip_log_sds(P, sm_rows)[:3]   # each row's log10 sds, below and above: its effective sd's (1/k: a
         W, WL = np.zeros(T.N), np.zeros(T.N)           # section's copies count once)
-        W[sm_rows] = b_s * wk_ / (2.0 * (s_hi * LN10) ** 2)   # 2 W (ln y - ln d)^2 = b (1/k) (log10(y / d) / s)^2, each side's s
-        WL[sm_rows] = b_s * wk_ / (2.0 * (s_lo * LN10) ** 2)
+        W[sm_rows] = gw('slip') * b_s * wk_ / (2.0 * (s_hi * LN10) ** 2)   # 2 W (ln y - ln d)^2 = b (1/k) (log10(y / d) / s)^2, each side's s
+        WL[sm_rows] = gw('slip') * b_s * wk_ / (2.0 * (s_lo * LN10) ** 2)
         LD = np.zeros(T.N)
         LD[sm_rows] = np.log(T.d[sm_rows])
         T.lw = dict(W=np.ascontiguousarray(W), WL=np.ascontiguousarray(WL), LD=np.ascontiguousarray(LD),
@@ -5465,9 +5521,10 @@ def main():
         I_p[pm_rows] = np.arange(len(pm_rows), dtype=np.int32)
         sc_p = lin_sc(b_p)                         # the tables carry b: b x the curve's half misfit
         T.lw['PM'] = dict(I=I_p, V0=np.ascontiguousarray(pm_tab['U0'] - np.log(sd_p / sc_p)),   # in v = ln(row's y)
-                          F=np.ascontiguousarray(b_p * pm_tab['F']), D=np.ascontiguousarray(b_p * pm_tab['DF']),
-                          K=np.ascontiguousarray(b_p * pm_tab['KAPPA']), H=pm_tab['H'], NG=pm_tab['NG'], rows=pm_rows,
-                          eps=sc_p, d_data=d_data, mode=a.paleo_misfit, b=b_p)
+                          F=np.ascontiguousarray(b_p * gw('paleo') * pm_tab['F']),
+                          D=np.ascontiguousarray(b_p * gw('paleo') * pm_tab['DF']),
+                          K=np.ascontiguousarray(b_p * gw('paleo') * pm_tab['KAPPA']), H=pm_tab['H'], NG=pm_tab['NG'], rows=pm_rows,
+                          eps=sc_p, d_data=d_data, mode=a.paleo_misfit, b=b_p, w=gw('paleo'))
         from paleo_misfit import site_moments_mixed     # each site's curve, and its misfit's mean and variance (fit check)
         T.lw['PM']['sd'] = np.asarray(sd_p, float)
         T.lw['PM']['th'] = np.array([f_[0] for f_ in pm_tab['fits']], float)
@@ -5476,7 +5533,7 @@ def main():
                          for th_, b_, sd_ in zip(T.lw['PM']['th'], T.lw['PM']['best'], T.lw['PM']['sd'])])
         T.lw['PM']['E'], T.lw['PM']['V'] = mom_[:, 0], mom_[:, 1]
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, pm_rows]
-        f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], np.arange(len(pm_rows)), np.log(np.maximum(y0, 1e-300))))) / b_p
+        f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], np.arange(len(pm_rows)), np.log(np.maximum(y0, 1e-300))))) / b_p / gw('paleo')
         print(f'paleo misfit ({a.paleo_misfit}): {len(pm_rows)} paleo rows '
               + (f'out of the Gaussian (scaled by {sc_p:g}), ' if b_p >= 1 else 'with half their Gaussian in rate (scaled by 1/sqrt 2) and half ')
               + 'each scored by -2 ln of ' + ('its recurrence-interval PDF in years' if curve_mode(a.paleo_misfit) == 'years'
@@ -5500,24 +5557,24 @@ def main():
         if PM_ is None:                            # the bins alone (the paleo rows Gaussian)
             I_m = np.full(T.N, -1, np.int32)
             n_p0 = 0
-            T.lw['PM'] = dict(I=I_m, V0=np.ascontiguousarray(V0_b), F=np.ascontiguousarray(tb_['F']),
-                              D=np.ascontiguousarray(tb_['DF']), K=np.ascontiguousarray(tb_['KAPPA']), H=tb_['H'],
+            T.lw['PM'] = dict(I=I_m, V0=np.ascontiguousarray(V0_b), F=np.ascontiguousarray(gw('mfd') * tb_['F']),
+                              D=np.ascontiguousarray(gw('mfd') * tb_['DF']), K=np.ascontiguousarray(gw('mfd') * tb_['KAPPA']), H=tb_['H'],
                               NG=tb_['NG'], rows=np.array([], np.int64), eps=1.0, d_data=d_data, mode='gaussian', b=0.0)
         else:                                      # after the paleo sites' tables, with weight 1 (theirs carry b_p)
             if PM_['NG'] != tb_['NG'] or PM_['H'] != tb_['H']:
                 raise SystemExit('--mfd-misfit pdf: the bins\' tables and the paleo tables differ in their grid')
             n_p0 = len(PM_['V0'])
             PM_['V0'] = np.ascontiguousarray(np.concatenate([PM_['V0'], V0_b]))
-            PM_['F'] = np.ascontiguousarray(np.concatenate([PM_['F'], tb_['F']]))
-            PM_['D'] = np.ascontiguousarray(np.concatenate([PM_['D'], tb_['DF']]))
-            PM_['K'] = np.ascontiguousarray(np.concatenate([PM_['K'], tb_['KAPPA']]))
+            PM_['F'] = np.ascontiguousarray(np.concatenate([PM_['F'], gw('mfd') * tb_['F']]))
+            PM_['D'] = np.ascontiguousarray(np.concatenate([PM_['D'], gw('mfd') * tb_['DF']]))
+            PM_['K'] = np.ascontiguousarray(np.concatenate([PM_['K'], gw('mfd') * tb_['KAPPA']]))
         idx_b = n_p0 + np.arange(len(mf_rows))
         T.lw['PM']['I'][mf_rows] = idx_b.astype(np.int32)
         mom_ = np.array([site_moments(th_, b_, 'log') for th_, b_ in zip(th_b, best_b)])
         T.lw['MF'] = dict(rows=mf_rows, pdf=True, idx=idx_b, th=th_b, best=best_b, sd=sd_b, E=mom_[:, 0], V=mom_[:, 1],
-                          eps=sc_m, d_data=d_data, b=b_m)
+                          eps=sc_m, d_data=d_data, b=b_m, w=gw('mfd'))
         y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, mf_rows]
-        f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], idx_b, np.log(np.maximum(y0, 1e-300)))))
+        f0 = 2.0 * float(np.sum(_pm_f_np(T.lw['PM'], idx_b, np.log(np.maximum(y0, 1e-300))))) / gw('mfd')
         print(f'MFD misfit (pdf, MFD_GR {P.get("mfd_gr")}): the {len(mf_rows)} bin rows out of the Gaussian (scaled by {sc_m:g}), each '
               'scored by -2 ln of its own target PDF in log rate from its minimum (curves from cleaning, tabulated with the paleo '
               f'sites\'), kept by a Metropolis step; the start\'s {f0:.1f} (on chi2\'s scale)')
@@ -5530,7 +5587,7 @@ def main():
                         rows=np.array([], np.int64), tau=None)
         T.lw['W'] = np.array(T.lw['W'], np.float64)
         T.lw['LD'] = np.array(T.lw['LD'], np.float64)
-        T.lw['W'][mf_rows] = b_m / (2.0 * (mf_s * LN10) ** 2)   # 1/2 (ln(y / R) / (s ln 10))^2 = 1/2 (log10(y / R) / s)^2, x b
+        T.lw['W'][mf_rows] = gw('mfd') * b_m / (2.0 * (mf_s * LN10) ** 2)   # 1/2 (ln(y / R) / (s ln 10))^2 = 1/2 (log10(y / R) / s)^2, x b
         T.lw['LD'][mf_rows] = np.log(T.d[mf_rows])
         T.lw['W'], T.lw['LD'] = np.ascontiguousarray(T.lw['W']), np.ascontiguousarray(T.lw['LD'])
         if T.lw.get('WL') is not None:             # with --slip-misfit split+log10's sided weights: the bins' the same both sides
@@ -5606,7 +5663,7 @@ def main():
             raise SystemExit(f'--mfd-gr-tau {a.mfd_gr_tau:g}: give a tolerance above 0 (decades a step)')
         from cru_common import magnitude_bins
         rows_ms, R_ms, orig_ms, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
-        T.mstep = mjoint_build(T, P, rows_ms, orig_ms, a.mfd_gr_tau, a.bin_width, a.chains)
+        T.mstep = mjoint_build(T, P, rows_ms, orig_ms, a.mfd_gr_tau, a.bin_width, a.chains, w=gw('mfd'))
         T.lw['PM']['I'][mf_rows] = -1              # the bins' own PDFs out of the likelihood: the curve scores them
         MF_ = T.lw['MF']
         MF_['joint'], MF_['E'], MF_['V'] = True, np.ones(len(mf_rows)), np.full(len(mf_rows), 2.0)   # S ~ chi2 with NB dof
@@ -5634,6 +5691,8 @@ def main():
         from cru_common import magnitude_bins
         rows_ms, R_ms, orig_ms, _ = magnitude_bins(P, a.bins_block, a.lowest_bin, a.bin_width)
         T.mstep = mstep_build(T, rows_ms, orig_ms, a.mfd_step_sd, a.bin_width)
+        if GW is not None:                         # GROUP_WEIGHTS: the steps' term with the bins' weight (recorded without)
+            T.mstep['A'], T.mstep['c'] = np.ascontiguousarray(T.mstep['A'] * gw('mfd')), np.ascontiguousarray(T.mstep['c'] * gw('mfd'))
         Us = T.init(X0 if scale is None else X0 / scale)
         s0 = mstep_value(T.mstep, T.residual(Us))
         if not np.isfinite(s0).all():

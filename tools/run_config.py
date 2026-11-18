@@ -47,9 +47,13 @@ DOWN_THE_MIDDLE = False                        # the balance term (gibbs.py --do
                                                # between over- and underprediction"); True (A from the fit check) or 'zero-model'
                                                # (each type's own weight) for sensitivity tests (tools/run_nb.py DOWN_THE_MIDDLE=True;
                                                # the smoke test's reference values have it on)
+MFD_UNCERTAINTY = 'as-given'                   # the MFD bins' uncertainties (preliminaries.py --mfd-uncertainty): as the inputs give
+                                               # them; out of the notebook since 2026-11-18 (the user's choice: GROUP_WEIGHTS does
+                                               # what it was for). 'two-measurements' or the M7.0-7.1 bin's relative sd for
+                                               # sensitivity tests (tools/run_nb.py MFD_UNCERTAINTY='two-measurements')
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
 FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
-         'SLIP_BLOCK', 'BIN_BLOCK')
+         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
 PLAN_KEYS = ('chains', 'sweeps', 'burn', 'thin', 'replicates')
@@ -74,7 +78,7 @@ def derived_settings(g):
         out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'
     fixed = dict(BLOCKS=BLOCKS, SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
                  CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None, DOWN_THE_MIDDLE=DOWN_THE_MIDDLE,
-                 SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK)
+                 SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK, MFD_UNCERTAINTY=MFD_UNCERTAINTY)
     fixed.update({k: v for k, v in ov.items() if k in FIXED})
     if not (isinstance(fixed['DOWN_THE_MIDDLE'], bool) or fixed['DOWN_THE_MIDDLE'] == 'zero-model'):
         raise ValueError(f"DOWN_THE_MIDDLE = {fixed['DOWN_THE_MIDDLE']!r}: use True (the balance term), 'zero-model' (its "
@@ -101,9 +105,9 @@ def run_name(g, d):
     S = dict(g)
     S.update(d)
     return (('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')
-            + f"MFD_UNCERTAINTY{S['MFD_UNCERTAINTY']}"
-            + (f"_DOWN_THE_MIDDLE_{S['DOWN_THE_MIDDLE']}" if S['DOWN_THE_MIDDLE'] is not False else '')
-            + f"_{S['RUN_MINUTES']:g}min_floor{S['FLOOR']}"
+            + (f"MFD_UNCERTAINTY{S['MFD_UNCERTAINTY']}_" if S['MFD_UNCERTAINTY'] != 'as-given' else '')
+            + (f"DOWN_THE_MIDDLE_{S['DOWN_THE_MIDDLE']}_" if S['DOWN_THE_MIDDLE'] is not False else '')
+            + f"{S['RUN_MINUTES']:g}min_floor{S['FLOOR']}"
             + (f"_misfit{S['MISFIT']}" if S['MISFIT'] != 'mixed' else
                f"_misfit_slip{S['MISFIT_SLIP']}_mfd{'pdf' if S['MFD_GR'] else S['MISFIT_MFD']}_paleo{S['MISFIT_PALEO']}")
             + ('_mfdmonotonic' if S['MFD_MONOTONIC'] else '')
@@ -113,6 +117,7 @@ def run_name(g, d):
                + ('m' + '-'.join(f'{x_:g}' for x_ in (MAGUNCERT if S['RECONSIDER_MAGUNCERT'] is True else S['RECONSIDER_MAGUNCERT']))
                   if S.get('RECONSIDER_MAGUNCERT') else '') if S['MFD_GR'] else '')
             + (f"_mfdtau{S['MFD_GR_TAU']:g}" if S['MFD_GR'] and S.get('MFD_GR_TAU') is not None else '')
+            + (f"_gw{S['GROUP_WEIGHTS']}" if S.get('GROUP_WEIGHTS') else '')
             + (f"_platemax{S['SLIP_RATE_FACTOR']:g}{S['CROSS_SECTIONS']}" if S['PLATE_RATE'] else '')
             + ('_cfm' + ('tf' if S['CFM_TIMEFRAME'] else '')
                + (f"tmpl{S['CFM_TEMPLATE_RHO']:g}" + ('links' if S['CFM_RATE_LINKS'] else '')

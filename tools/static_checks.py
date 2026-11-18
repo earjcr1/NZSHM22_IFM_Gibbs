@@ -380,8 +380,9 @@ check(argdefault(trees['preliminaries.py'], '--mfd-uncertainty') == 'as-given',
 lb = {sc: (argdefault(trees[sc], '--lowest-bin'), argdefault(trees[sc], '--bin-width')) for sc in ('preliminaries.py', 'plot_rate_magnitude.py')}
 check(lb['preliminaries.py'] == lb['plot_rate_magnitude.py'] == (6.8, 0.1),
       f'--lowest-bin and --bin-width defaults agree between preliminaries.py and plot_rate_magnitude.py: {lb}')
-check(re.findall(r"^MFD_UNCERTAINTY = ('[a-z-]+')", cfg, re.M) == ["'as-given'"],
-      f"notebook MFD_UNCERTAINTY = {re.findall(r'^MFD_UNCERTAINTY = (.*?) ', cfg, re.M)}")
+check(re.findall(r"^MFD_UNCERTAINTY = ('[a-z-]+')", src['run_config.py'], re.M) == ["'as-given'"]
+      and not re.search(r'^MFD_UNCERTAINTY = ', cfg, re.M) and 'MFD_UNCERTAINTY' in re.search(r'^FIXED = \((.*?)\)', src['run_config.py'], re.M | re.S).group(1),
+      'MFD_UNCERTAINTY fixed at \'as-given\' in run_config.py (out of the notebook since 2026-11-18)')
 cc = [i for i, c in cells if 'sh(' in c and "'preliminaries.py'" in c and '--selftest' not in c]
 check(bool(cc) and "'--mfd-uncertainty', g['MFD_UNCERTAINTY']" in _ARGS['preliminaries.py'],
       f'notebook passes --mfd-uncertainty MFD_UNCERTAINTY to preliminaries.py (cells {cc})')
@@ -442,15 +443,15 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'
       "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
-MODEL_SETTINGS = ['MFD_UNCERTAINTY',
-                  'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'SLIP_ALONG_RUPTURE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
+MODEL_SETTINGS = [
+                  'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'GROUP_WEIGHTS', 'SLIP_ALONG_RUPTURE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
                   'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'RUN_MINUTES', 'FLOOR']
 _rc = src['run_config.py']
 check('setup(globals())' in cells[0][1] and 'g.update(derived_settings(g))' in STEPS
       and cells[0][1].index('setup(globals())') > cells[0][1].index('SEED = ')
       and all(re.search(rf'^{s_} = ', _rc, re.M) and not re.search(rf'^{s_} = ', cells[0][1], re.M)
               for s_ in ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES'))
-      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK')" in _rc
+      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY')" in _rc
       and "('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')" in _rc
       and 'from run_config import OVERRIDABLE' in open(f'{ROOT}/tools/run_nb.py').read(),
       'notebook: BLOCKS, SLIP_SECTIONS, RUPTURE_SET, CROSS_SECTIONS, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed '
@@ -477,7 +478,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (the configuration cell\'s comment, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)\s+#', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'GROUP_WEIGHTS', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'RUN_PLAN', 'TARGETS')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

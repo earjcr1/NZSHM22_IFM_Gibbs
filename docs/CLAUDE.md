@@ -485,6 +485,14 @@ LW or ST. C only. Recorded as tr['mfd_step'], printed 'MFD steps (--mfd-step-sd 
 --mfd-step-sd (mfd_step_term, exact gradient; terms_key mfd_step=). Notebook: notebook_steps._terms passes it (gibbs_args, starts_args); RUN_NAME _mfdstep{B};
 Out of the notebook since 2026-11-18 (MFD_GR_TAU, below). run_quick_checks pins MFD_GR_TAU=None. selftest_mfdstep at
 B = 2 (tight B mixes slowly in its toy). REPORT.md "The MFD's steps".
+GROUP_WEIGHTS (2026-11-18, the user's request; None or 'equal'; gibbs.py --group-weights): w_g = sum N / (3 N_g) from
+cru_common.block_measurements (keep the total, the user's choice), groups slip (SLIP_BLOCK), mfd (BIN_BLOCK), paleo (the
+rest). gibbs.group_weights; applied through T.split's L2/H2 (created with ones if absent; T.temper per row, chi2 recorded
+divided back), PM tables x w (paleo, MFD pdf; recorded misfits / w), log-half W/WL x w, mjoint Q x w (mjoint_value / w),
+mstep A/c x w, slip-sum rows and folded B x sqrt(w_slip) (recorded / w). tr group_weights, group_names. Notebook after
+MISFIT_PALEO; RUN_NAME _gw{v}; FIGURE_SETTINGS, run_plan MODEL_KEYS. MFD_UNCERTAINTY moved to run_config.py FIXED
+('as-given') the same day: out of FIGURE_SETTINGS (shown with the fixed settings when not as-given), RUN_NAME only when
+not as-given, summary row only then.
 MFD_GR_TAU (2026-11-18, the user's request, in place of MFD_STEP_SD in the notebook; 0.025 by default, with MFD_GR only; gibbs.py --mfd-gr-tau TAU,
 with --mfd-misfit pdf): the bins jointly about each draw's G-R curve. gibbs.mjoint_build (Q = D'D/tau^2 + 11'/(NB tau)^2, the residual's
 steps and mean level; mstep_build for bx/gx), mjoint_update (each chain's b and L = ln(s m / m_mid) drawn exactly on a 481 x 801 grid,
