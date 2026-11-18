@@ -992,13 +992,19 @@ def main():
              'corrected for each fault\u2019s timeframe), the paleo rates by each site\u2019s recurrence-interval PDF, and, '
              'with MFD_GR, the magnitude bins by the PDFs that NZSHM22\u2019s own uncertainty in N(M\u22655) and b gives them. '
              + fref('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png') + ' set the two side by side.')
+    _tk = re.search(r'sd ([\d.]+) SlipRateStdDev', open(os.path.join(RUN, 'fig_targets_slip.txt')).readline()) \
+        if os.path.exists(os.path.join(RUN, 'fig_targets_slip.txt')) else None
+    old_k = float(_tk.group(1)) if _tk else 2.0          # plot_targets.py --old-sd: the grey Gaussian's sd in SlipRateStdDev
     figure('fig_targets_slip.png', 'Slip-rate targets. For each fault section, at the inputs\u2019 target (the x axis), '
-           'the wide grey bar is the 16\u201384% range of the inputs\u2019 Gaussian (NZSHM22: mean 0.8 SlipRate, sd 2 '
-           'SlipRateStdDev, the 0.8 on the mean only), and the coloured bar the same range of the distribution this run '
+           'the wide grey bar is the 16\u201384% range of a Gaussian read from the rupture set\u2019s fault_sections.geojson, '
+           f'mean 0.8 SlipRate and sd {old_k:g} SlipRateStdDev (the 0.8 on the mean only'
+           + ('; NZSHM22\u2019s inversion inputs, as here' if old_k == 2 else '; NZSHM22\u2019s inversion inputs use 2')
+           + '), and the coloured bar the same range of the distribution this run '
            'scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same '
-           'colours. With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are much '
-           'narrower and lopsided: SR_min and SR_max are read as 2\u03c3 rather than 1, and the slip-rate factor scales the '
-           'whole distribution, sds included; many of the inputs\u2019 Gaussians reach below zero.', FW)
+           'colours. With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are '
+           'narrower and lopsided: the CFM\u2019s SR_min and SR_max are read as 2\u03c3, where SlipRateStdDev, about half '
+           f'their spread, is {old_k:g}\u03c3 here, and the slip-rate factor scales the whole distribution, sds included; '
+           'many of the Gaussians reach below zero.', FW)
     figure('fig_targets_paleo.png', 'Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs\u2019 '
            'Gaussian in rate (bestEstimate \u00b1 its one-sigma sd) and the coloured bar the 15.9\u201384.1% range of the '
            'site\u2019s recurrence-interval PDF, as rates, which the paleo misfit in years scores it by. Both are centred on '

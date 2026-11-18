@@ -135,8 +135,8 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     pair_figure(om, om - os_, om + os_, ts, n16, n84, col, 'mm/yr', 'Slip-rate targets: the inputs’ Gaussians and this run’s',
                 sub_txt, out, what)
     with open(out[:-4] + '.txt', 'w') as f_:
-        f_.write(f'slip-rate targets per section (mm/yr): the inputs\' Gaussian (mean, sd) and this run\'s ({what}: mode, sd below, '
-                 'sd above, 15.9% and 84.1% points)\n')
+        f_.write(f'slip-rate targets per section (mm/yr): the inputs\' Gaussian (mean, sd; from the rupture set\'s fault_sections.geojson, '
+                 f'mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev) and this run\'s ({what}: mode, sd below, sd above, 15.9% and 84.1% points)\n')
         f_.write(f'{"section":>7s} {"rows":>9s} {"in mean":>8s} {"in sd":>7s} {"mode":>8s} {"sd lo":>7s} {"sd hi":>7s} '
                  f'{"16%":>8s} {"84%":>8s}\n')
         for s in range(S):
