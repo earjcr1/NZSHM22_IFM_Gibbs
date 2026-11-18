@@ -52,7 +52,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from cru_common import load_problem, mfd_monotonic, prelim_path, report_to
+from cru_common import gr_curves, load_problem, mfd_monotonic, prelim_path, report_to
 from randomized_nnls import ensemble
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -97,6 +97,10 @@ def main():
                     '(default 0.5); the rest from randomized fits')
     ap.add_argument('--floor', type=float, default=1e-10, help='the slab floor (default 1e-10)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
+    ap.add_argument('--mfd-gr-tau', type=float, default=None, metavar='TAU',
+                    help='MFD_GR_TAU (the run scores the bins jointly about a G-R curve): each prior draw\'s bins scaled '
+                         'to a G-R curve drawn from MFD_GR\'s priors on b and the level, times a residual of steps of TAU '
+                         'decades (mean 0), in place of each bin\'s own over-dispersed factor')
     ap.add_argument('--out', default=None, help='the starts (default starts.npy next to --problem)')
     ap.add_argument('--fit-args', nargs='*', default=[], help='(last) best_fit_as_fitted.py\'s arguments for the polish')
     a = ap.parse_args(argv)
@@ -132,13 +136,29 @@ def main():
     if n_prior:                                          # prior draws, each bin scaled to its target (see above)
         MM = mfd_monotonic(P, a.bins_block)              # the bins' members and targets R_j (rates per year)
         lf = np.log(2 * a.floor)
+        joint = a.mfd_gr_tau is not None and P.get('mfd_gr_shape') is not None
+        if joint:                                        # MFD_GR_TAU: b and the level's priors on grids, to draw from
+            import mfd_gr as mg
+            kn_ = mg.parse_knobs(P['mfd_gr'])
+            bg0 = np.asarray(P['mfd_gr_bgrid'], float)
+            bgr = np.linspace(bg0[0], bg0[-1], 2001) if len(bg0) > 1 else bg0
+            pb = np.exp(mg.b_logpdf(kn_, bgr) - np.max(mg.b_logpdf(kn_, bgr)))
+            lpv, v_lo, v_hi, _ = mg.level_logpdf(kn_)
+            vgr = np.linspace(v_lo, v_hi, 4001)
+            pv = np.exp(lpv(vgr) - np.max(lpv(vgr)))
+            tau_ln = a.mfd_gr_tau * np.log(10.0)
         for q, ss in enumerate(np.random.SeedSequence([a.seed, 7]).spawn(n_prior)):
             g = np.random.default_rng(ss)
             x = np.zeros(n)
-            for mem, R, sg in zip(MM['members'], MM['R'], MM['sig']):
+            if joint:                                    # this start's G-R curve, and a residual of steps of tau about it
+                b_ = g.choice(bgr, p=pb / pb.sum())
+                v_ = g.choice(vgr, p=pv / pv.sum())
+                walk = np.cumsum(np.r_[0.0, tau_ln * g.standard_normal(len(MM['rows']) - 1)])
+                tgt = gr_curves(P, MM['rows'], [b_], [v_])[0] * np.exp(walk - walk.mean())
+            for jb, (mem, R, sg) in enumerate(zip(MM['members'], MM['R'], MM['sig'])):
                 if len(mem) == 0 or not R > 2 * a.floor:
                     continue
-                R = R * float(np.exp(2.0 * sg / R * g.standard_normal()))   # the bin's total, over-dispersed
+                R = float(tgt[jb]) if joint else R * float(np.exp(2.0 * sg / R * g.standard_normal()))   # the bin's total
                 on = g.random(len(mem)) < g.random()
                 if not on.any():
                     on[g.integers(len(mem))] = True

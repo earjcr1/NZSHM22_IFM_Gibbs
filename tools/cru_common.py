@@ -452,6 +452,56 @@ def check_bin_magnitudes(P, rupture_dir, block='MFD', lowest=6.8, width=0.1, tol
             f'rupture set\'s magnitudes (M{mag.min():.3f}-{mag.max():.3f})')
 
 
+def gr_curves(P, rows, b, level):
+    """MFD_GR_TAU: each draw's G-R curve over the bins, in rate per year: R_j exp(L + shape_j(b)), R_j each bin's target
+    (bin_targets), shape_j the bin's G-R shape over b (mfd_gr_shape, saved by cleaning) and L = level - ln m_mid (level
+    = ln(s m), as gibbs.py records it; m_mid RECONSIDER_MAGUNCERT's middle value, 1 without). rows: the bin rows in
+    magnitude order; b, level: arrays of draws. Returns (draws, bins)."""
+    import mfd_gr as mg
+    kn = mg.parse_knobs(P['mfd_gr'])
+    m_c = 1.0 if kn.get('m') is None else float(kn['m'][1])
+    G = P['G'].tocsr()
+    R = np.array([P['d'][j] / G.data[G.indptr[j]] for j in rows])
+    bg, sh = np.asarray(P['mfd_gr_bgrid'], float), np.asarray(P['mfd_gr_shape'], float)[rows]
+    b, level = np.atleast_1d(np.asarray(b, float)), np.atleast_1d(np.asarray(level, float))
+    shb = np.array([np.interp(b, bg, r_) for r_ in sh]).T if len(bg) > 1 else np.tile(sh[:, 0], (len(b), 1))
+    return R[None, :] * np.exp((level - np.log(m_c))[:, None] + shb)
+
+
+def gr_joint_misfit(P, rows, y, b, level, tau_dec):
+    """MFD_GR_TAU: S, the bins' misfit about each draw's G-R curve as gibbs.py scores it (mjoint_value, without
+    DATATYPES_EQUAL's weight): rho = ln y_j - ln curve_j(b, level) (y each bin row's prediction in its row's units, as the
+    problem gives them), S = sum_p (rho_a+1 - rho_a)^2 / tau^2 + (mean rho)^2 / tau^2, tau = tau_dec ln 10. y: (..., bins);
+    b, level: broadcast against y's leading shape. Contiguous bins assumed, as gibbs.py requires."""
+    G = P['G'].tocsr()
+    coef = np.array([G.data[G.indptr[j]] for j in rows])
+    y = np.asarray(y, float)
+    lead = y.shape[:-1]
+    cur = gr_curves(P, rows, np.broadcast_to(b, lead).ravel(), np.broadcast_to(level, lead).ravel()).reshape(lead + (len(rows),))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rho = np.log(y / coef) - np.log(cur)            # a bin row's prediction over its coefficient: the bin's total rate
+    tau = float(tau_dec) * np.log(10.0)
+    return (np.sum(np.diff(rho, axis=-1) ** 2, axis=-1) + rho.mean(-1) ** 2) / tau ** 2
+
+
+def gr_run_draws(folder):
+    """MFD_GR_TAU: the post-burn draws of the G-R curve's b and level (ln(s m)) over a result set's runs (the *_rep*.npz
+    beside the rate vectors that recorded them), as flat arrays, and the run's tau; (None, None, None) without."""
+    import glob as _glob
+    bs, ls, tau = [], [], None
+    for f in sorted(_glob.glob(os.path.join(folder, '*_rep*.npz'))):
+        if f.endswith('_stream.npz'):
+            continue
+        with np.load(f) as z:
+            if 'mfd_gr_b' not in z.files:
+                continue
+            nb = int(z['burn']) // int(z['thin'])
+            bs.append(z['mfd_gr_b'][:, nb:].ravel())
+            ls.append(z['mfd_gr_level'][:, nb:].ravel())
+            tau = float(z['mfd_gr_tau']) if 'mfd_gr_tau' in z.files else tau
+    return (np.concatenate(bs), np.concatenate(ls), tau) if bs else (None, None, None)
+
+
 def mfd_monotonic(P, block='MFD', lowest=6.8, width=0.1, rise_sd=0.89):
     """--mfd-monotonic's pairs of neighbouring bins (gibbs.py; best_fit_as_fitted.py, so both keep the same constraint):
     wherever a bin's target is not above its lower neighbour's, the upper bin's total may be at most the lower's (rho = 1);

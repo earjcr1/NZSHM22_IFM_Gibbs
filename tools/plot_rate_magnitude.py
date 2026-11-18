@@ -68,11 +68,13 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predictions, legend_above, legend_height,
-                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, figure_settings, settings_lines)
+                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, figure_settings, settings_lines,
+                        gr_curves, gr_joint_misfit, gr_run_draws)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
 BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
 REF = INK                                    # the reference model's marks: black, apart from every series colour
+CURVE = '#2f9e78'                            # MFD_GR_TAU: the drawn G-R curves (median line, 16-84% band)
 MINUS = '−'
 
 
@@ -205,7 +207,18 @@ def main():
         Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, Gr.shape[0], coef,
                                                       check=(Gr[rows], K, keep_c))   # the kept draws' bin totals
         del K
-        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen, q=q, used=used,
+        grq = None                                   # MFD_GR_TAU: the drawn G-R curves' 16/50/84% per bin, and their b and s m
+        if not model and P.get('mfd_gr_shape') is not None:
+            b_d, l_d, tau_d = gr_run_draws(os.path.dirname(path) or '.')
+            if b_d is not None:
+                grq = dict(q=np.percentile(gr_curves(P, rows, b_d, l_d), [16, 50, 84], axis=0), tau=tau_d,
+                           b_med=float(np.median(b_d)), l_med=float(np.median(l_d)),
+                           b=np.percentile(b_d, [5, 50, 95]), sm=np.percentile(np.exp(l_d), [5, 50, 95]))
+                head.append(f'{label or path}: the drawn G-R curves (MFD_GR_TAU {tau_d:g}): b {grq["b"][1]:.3f} '
+                            f'(5-95% {grq["b"][0]:.3f}-{grq["b"][2]:.3f}), s m {grq["sm"][1]:.3f} ({grq["sm"][0]:.3f}-'
+                            f'{grq["sm"][2]:.3f}); per bin, the curve\'s median over its target: '
+                            + ' '.join(f'{v:.2f}' for v in grq['q'][1] / R))
+        data.append(dict(path=path, label=label, m=m, tot=tot, below=m < 10.0 ** floor, pen=pen, q=q, used=used, gr=grq,
                          ndraws=0 if T is None else len(T), xs=Xk,
                          chi2=bins_fit(m),                # over the bin rows, as the likelihood scores them
                          model=model))
@@ -216,6 +229,13 @@ def main():
         ref = reference_rates(a.reference, P)
         ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
         ref['chi2'] = bins_fit(ref['m'])
+    for D in data:                                   # MFD_GR_TAU: the bins' misfit as the run scored them, about the curve
+        if D.get('gr') is not None:                  # of the draws' median b and level (the reference's about the same)
+            gq_ = D['gr']
+            sj = lambda m_: float(gr_joint_misfit(P, rows, Gr[rows] @ m_, gq_['b_med'], gq_['l_med'], gq_['tau']))
+            D['chi2'] = f'its misfit about the drawn G-R curves\' median (MFD_GR_TAU {gq_["tau"]:g}) {sj(D["m"]):.1f}'
+            if ref is not None:
+                ref['chi2'] = f'its misfit about the same curve {sj(ref["m"]):.1f}'
     settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
     # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
@@ -321,10 +341,10 @@ def main():
                             if fixed else '')
                          + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
                             'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
-    n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low)     # the legend's entries
+    n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low) + int(any(D.get('gr') is not None for D in data))
     lc = n_h if n_h <= 4 else 2 if k_panels == 1 else 3          # columns: two under a single panel
     more = 0.168 * max(1, foot.count('\n'))           # room for the footnote, two lines at least, in inches
-    leg_pt = legend_height(8, 2 if k_panels == 1 else 3) + 6   # room for the fullest legend, whichever entries this
+    leg_pt = legend_height(9, 2 if k_panels == 1 else 3) + 6   # room for the fullest legend (9 with MFD_GR_TAU's curves), whichever entries this
                                                          # one has, so that the panels keep their size
     sub_pt = 24.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
     top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top + (leg_pt + sub_pt) / 72, 1.3, 0.22, 3.9, 0.78 + more   # in inches
@@ -359,6 +379,13 @@ def main():
             ax.scatter(x[low], np.full(int(low.sum()), bottom), s=3.5, c=BLUE, alpha=0.25, linewidths=0, zorder=2,
                        clip_on=False)
         ax.hlines(np.log10(R), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
+        if D.get('gr') is not None:                  # MFD_GR_TAU: the drawn G-R curves, 16-84% and median, on both panels
+            xc, gq = lo + 0.5 * w, D['gr']['q']
+            ax.fill_between(xc, lg(gq[0]), lg(gq[2]), color=CURVE, alpha=0.18, lw=0, zorder=2.6)
+            ax.plot(xc, lg(gq[1]), color=CURVE, lw=1.4, zorder=2.7)
+            ar.fill_between(xc, np.clip(gq[0] / R, r_lo, r_hi), np.clip(gq[2] / R, r_lo, r_hi), color=CURVE, alpha=0.18,
+                            lw=0, zorder=2.6)
+            ar.plot(xc, np.clip(gq[1] / R, r_lo, r_hi), color=CURVE, lw=1.4, zorder=2.7)
         if D['xs'] is not None:                      # each kept draw's bin totals, spread across the bin
             jx = lo + w * np.random.default_rng(0).uniform(0.2, 0.8, D['xs'][:, :B].shape)
             draw_xs(ax, jx, lg(np.maximum(D['xs'][:, :B], 10.0 ** bottom)), ORANGE, zorder=3.5, alpha=0.1)
@@ -413,6 +440,8 @@ def main():
         n_k = max(len(D['xs']) for D in data if D['xs'] is not None)
         handles.append(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(ORANGE),
                               label=f'bin total of each of the {n_k:,} kept draws'))
+    if any(D.get('gr') is not None for D in data):
+        handles.append(Line2D([], [], color=CURVE, lw=1.4, label='drawn G-R curve: median, and 16–84% band (MFD_GR_TAU)'))
     if ref is not None:
         handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=REF, mec=SURFACE, mew=1.0,
                               label=f'bin total of {ref["label"]}'))

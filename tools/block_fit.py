@@ -33,7 +33,7 @@ import tempfile
 
 import numpy as np
 
-from cru_common import block_labels, block_measurements, ess, load_problem, slip_geo_rows, split_rhat, split_weights, report_to
+from cru_common import block_labels, block_measurements, ess, gr_joint_misfit, load_problem, slip_geo_rows, split_rhat, split_weights, report_to
 
 
 def run_file(r):
@@ -52,6 +52,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     GEO = None                                                        # --slip-misfit: (b, fit-check mean, variance)
     B_M, B_P, MEX = 1.0, 1.0, None                                    # the bins' and paleo rows' log weights; the bins' moments
     MPDF = False                                                      # MFD_GR: the bins by their PDFs (in PAL, with the sites)
+    JNT = None                                                        # MFD_GR_TAU: dict(tau, b, level draws), the bins jointly
     def mfd_rows_misfit(rows, yy):                                  # the bins as fitted: (1 - b) Gaussian + b log10
         sl = np.array([LOG[int(i)] for i in rows])
         with np.errstate(divide='ignore'):
@@ -78,7 +79,14 @@ def block_stats(P, runs, first=('S', 'MFD')):
             for j_, r_ in enumerate(z['paleo_rows'].tolist()):
                 PAL[int(r_)] = (z['paleo_th'][j_], float(z['paleo_best'][j_]), float(z['paleo_sd'][j_]), mode_,
                                 float(z['paleo_E'][j_]), float(z['paleo_V'][j_]), B_P)
-        if 'mfd_pdf_th' in z.files:                                   # MFD_GR: the bins scored by their own PDFs in log rate,
+        joint_ = 'mfd_gr_b' in z.files                                 # MFD_GR_TAU: the bins about each draw's G-R curve, as
+        if joint_:                                                    # recorded (S, mfd_misfit), not by their own PDFs
+            nb_ = int(z['burn']) // int(z['thin'])
+            JNT = JNT or dict(tau=float(z['mfd_gr_tau']), b=[], level=[], S={})
+            JNT['b'].append(z['mfd_gr_b'][:, nb_:].ravel())
+            JNT['level'].append(z['mfd_gr_level'][:, nb_:].ravel())
+            JNT['S'] = z['mfd_misfit'][:, nb_:nb_ + y.shape[1]]
+        if 'mfd_pdf_th' in z.files and not joint_:                    # MFD_GR: the bins scored by their own PDFs in log rate,
             MPDF = True                                               # as the paleo sites by their curves (same helper)
             for j_, r_ in enumerate(z['mfd_pdf_rows'].tolist()):
                 PAL[int(r_)] = (z['mfd_pdf_th'][j_], float(z['mfd_pdf_best'][j_]), float(z['mfd_pdf_sd'][j_]), 'log',
@@ -87,6 +95,9 @@ def block_stats(P, runs, first=('S', 'MFD')):
             GEO = (float(z['slip_geo_b']) if 'slip_geo_b' in z.files else 0.5, float(z['slip_geo_expect'][0]),
                    float(z['slip_geo_expect'][1]))
         for m in meas:
+            if joint_ and m['name'] == first[1]:                      # MFD_GR_TAU: the joint term, as the sampler recorded it
+                c[m['name']] = np.asarray(JNT['S'], np.float64)
+                continue
             if GEO and m['name'] == first[0]:                         # (1 - b) x the split normal + b x the log10 Gaussian
                 c[m['name']] = np.sum(slip_geo_rows(P, m['rows'], y[:, :, m['rows']].astype(np.float64), GEO[0]), axis=2)
                 continue
@@ -108,6 +119,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
         shapes.append(y.shape[:2])
     ybar = S1 / nd
     slip_rows = next((m['rows'] for m in meas if m['name'] == first[0]), np.zeros(0, np.int64))
+    bin_rows = next((m['rows'] for m in meas if m['name'] == first[1]), np.zeros(0, np.int64))
     var = np.maximum(S2 / nd - ybar ** 2, 0.0)
     same_len = len({s[1] for s in shapes}) == 1
 
@@ -120,7 +132,11 @@ def block_stats(P, runs, first=('S', 'MFD')):
         out = dict(mean=float(allx.mean()), sd=float(allx.std()), mcse=float(allx.std() / np.sqrt(sum(n_eff))),
                    rhat=rh, by_run=[float(x.mean()) for x in x_runs],
                    mcse_by_run=[float(x.std() / np.sqrt(e)) for x, e in zip(x_runs, n_eff)])
-        if rows is not None and GEO and len(rows) == len(slip_rows) and np.array_equal(rows, slip_rows):   # split+log10
+        if rows is not None and JNT is not None and len(rows) == len(bin_rows) and np.array_equal(rows, bin_rows):
+            mm = float(gr_joint_misfit(P, rows, ybar[rows], np.mean(np.concatenate(JNT['b'])),   # the mean model about the
+                                       np.mean(np.concatenate(JNT['level'])), JNT['tau']))      # posterior-mean curve
+            out.update(mean_model=mm, spread=float(allx.mean()) - mm, joint_tau=JNT['tau'])
+        elif rows is not None and GEO and len(rows) == len(slip_rows) and np.array_equal(rows, slip_rows):   # split+log10
             mm = float(np.sum(slip_geo_rows(P, rows, ybar[rows], GEO[0])))
             out.update(mean_model=mm, spread=float(allx.mean()) - mm)
         elif rows is not None and PAL and all(int(i) in PAL for i in rows):   # the paleo sites' curves: the mean model's own,
@@ -152,7 +168,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
         stats[m['name']] = s
     allrows = np.concatenate([m['rows'] for m in meas])
     tot = summary([sum(c.values()) for c in per_run], allrows)
-    if LOG or PAL or GEO:                                             # misfits as fitted: the blocks' mean models added up
+    if LOG or PAL or GEO or JNT:                                      # misfits as fitted: the blocks' mean models added up
         tot['mean_model'] = float(sum(st_['mean_model'] for st_ in stats.values()))
         tot['spread'] = tot['mean'] - tot['mean_model']
     tot.update(rows=len(allrows), measurements=sum(m['expect'] for m in meas),
@@ -161,6 +177,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
     tot['fitted'] = [w_ for w_, on_ in ((f'the slip rates {wt_(GEO[0])}, with the same sds' if GEO else '', GEO),
                                         (f'the MFD bins {wt_(B_M)}', LOG),
                                         ('the MFD bins by -2 ln of their own PDFs in log rate (MFD_GR)', MPDF),
+                                        (f'the MFD bins about each draw\'s G-R curve (MFD_GR_TAU {JNT["tau"]:g})' if JNT else '', JNT),
                                         ('the paleo sites by -2 ln of their recurrence-interval PDFs' + ('' if B_P >= 1 else
                                          f', weighted {B_P:g}, with the Gaussian\'s {1 - B_P:g}'),
                                          any(v_[3] != 'log' or not MPDF for v_ in PAL.values()) and len(PAL) > 0)) if on_]
@@ -217,6 +234,10 @@ def mfd_note(P, stats, bins_block='MFD'):
     if bins_block not in stats:
         return None
     s = stats[bins_block]
+    if 'joint_tau' in s:                                              # MFD_GR_TAU: the bins' own PDFs and widths don't enter
+        return (f"MFD bins: scored jointly about each draw's G-R curve, tolerance MFD_GR_TAU {s['joint_tau']:g} decades "
+                f"({len(np.flatnonzero(np.asarray(P['block']) == P['block_names'].index(bins_block)))} bins); "
+                f"the mean model's misfit is about the posterior-mean curve")
     rows = np.flatnonzero(np.asarray(P['block']) == P['block_names'].index(bins_block))
     rel = 1.0 / P['d'][rows]
     c = P['mfd_scale']

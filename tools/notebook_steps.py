@@ -342,6 +342,8 @@ def starts_args():
     a = ['--problem', 'cru_clean.npz', '--chains', chains, '--noise', 2, '--seed', replicate_seed(1000),
          '--workers', g['THREADS'], '--out', 'starts.npy', '--floor', 10.0 ** g['FLOOR'], '--bins-block', g['BIN_BLOCK'],
          '--prior-share', 0.5]
+    if g['MFD_GR'] and g['MFD_GR_TAU'] is not None:      # the prior draws on a G-R curve, as the sampler scores the bins
+        a += ['--mfd-gr-tau', g['MFD_GR_TAU']]
     fit = _terms()
     if fit or g['CFM_SLIPRATES']:                       # the polish: the run's model space, not NNLS's
         a += ['--fit-args', '--bins-block', g['BIN_BLOCK'], '--floor', 10.0 ** g['FLOOR'], '--snap-floor', *fit]

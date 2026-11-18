@@ -500,7 +500,7 @@ prior x exp(-S/2); c = Q (ln dy + L + shape(b)) per chain), mjoint_value. Kernel
 _st_ptr(T, k0) points each thread at its chains' c. The bins' PM curves are switched off (T.lw['PM']['I'][mf_rows] = -1; MF joint, E = 1,
 V = 2); mfd_misfit = S (in chi2 as fitted); tr mfd_gr_b, mfd_gr_level (ln(s m)), mfd_gr_n5, mfd_gr_tau; report rows 'MFD curve ...'.
 mfd_gr.level_logpdf (shared with bin_pdfs), joint_grid, b_logpdf; preliminaries.py --mfd-gr saves mfd_gr_bgrid and mfd_gr_shape
-(cru_common.load_problem). Notebook: _terms passes it to gibbs.py only (the starts' polish keeps each bin's PDF); RUN_NAME _mfdtau{TAU};
+(cru_common.load_problem). Notebook: _terms passes it to gibbs.py only (the starts' polish keeps each bin's PDF; starts_args passes dispersed_starts.py --mfd-gr-tau, whose prior draws put the bins on a G-R curve from b_logpdf/level_logpdf x exp(tau random walk)); cru_common gr_curves, gr_joint_misfit, gr_run_draws (post-burn b, level from *_rep*.npz); block_fit takes the MFD block's chi2 from mfd_misfit (JNT, stats joint_tau, mfd_note); plot_rate_magnitude draws the curves' band and median; RUN_NAME _mfdtau{TAU};
 FIGURE_SETTINGS and run_plan's MODEL_KEYS mfd_gr_tau (older runs None); summary PDF row, model text, results (b, s m). gibbs.py
 --mfd-step-sd is kept for direct use (selftest_mfdstep). selftest_mfdjoint (full set) against a grid integral on the sampler's own
 grids; b, level, N(M>=5) recorded wherever the term is on (tr mfd_gr_*). check_convergence: ess_mfd_curve, rhat_mfd_curve in the
