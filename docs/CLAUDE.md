@@ -541,6 +541,10 @@ paleo sites' sinh-arcsinh curve in LOG RATE (paleo_misfit.fit_site mode 'log'; t
 target, where the rate density's mode is 0.71-0.94 of it at 630k), minimum at the exact mode, through the exact 2.275/15.865/84.135/97.725%
 points (630k: quantile errors <= 0.003 decades, misfit within 0.30 of exact to 0.1/99.9%); gr_bins also returns each bin's 84.135% point
 q84, saved as mfd_pdf_q84, from which gibbs.py sets the bin's prior soft top (sd log10(q84/R_j) in place of log10(1 + sigma_j/R_j)). Cleaning sets each bin row to the target at the
+NZSHM22 comparison (2026-11-19): cleaning with --mfd-gr also saves mfd_in_rel and mfd_in_R (the inputs' sigma/target and targets
+per bin row, before replacement); plot_rate_magnitude's MFD_GR line adds 'NZSHM22 bins ½/½ χ²' (MISFIT_MFD 'half' on those bins);
+--nzshm-bins PROBLEM (a non-MFD_GR problem of the same inputs) for problems cleaned before. Checked: the NZSHM22 solution's
+line reproduces the non-MFD_GR figure's 62.3/65.8/58.8 at 630k.
 knobs' modes over the propagated sd (row_scale untouched) and saves mfd_pdf_th, mfd_pdf_best (per cleaned row, NaN elsewhere); the
 notebook then sets MFD_MISFIT 'pdf' (MISFIT 'mixed'). gibbs.py --mfd-misfit pdf: the bins' rows out of the Gaussian (PALEO_EPS), their
 curves tabulated by paleo_misfit.curve_tables and appended to the paleo tables (T.lw['PM']: I, V0 = U0 - ln(sd/eps), F, D, K, weight 1;

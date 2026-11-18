@@ -94,7 +94,9 @@ def load_problem(path):
                 mfd_pdf_best=z['mfd_pdf_best'].astype(np.float64) if 'mfd_pdf_best' in z.files else None,
                 mfd_pdf_q84=z['mfd_pdf_q84'].astype(np.float64) if 'mfd_pdf_q84' in z.files else None,
                 mfd_gr_bgrid=z['mfd_gr_bgrid'].astype(np.float64) if 'mfd_gr_bgrid' in z.files else None,
-                mfd_gr_shape=z['mfd_gr_shape'].astype(np.float64) if 'mfd_gr_shape' in z.files else None)
+                mfd_gr_shape=z['mfd_gr_shape'].astype(np.float64) if 'mfd_gr_shape' in z.files else None,
+                mfd_in_rel=z['mfd_in_rel'].astype(np.float64) if 'mfd_in_rel' in z.files else None,
+                mfd_in_R=z['mfd_in_R'].astype(np.float64) if 'mfd_in_R' in z.files else None)
 
 
 def split_weights(P, rows, res):

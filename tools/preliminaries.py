@@ -639,7 +639,11 @@ def main():
             raise SystemExit('--mfd-gr: some bin has no G-R shape over b\'s range (mfd_gr.joint_grid)')
         shape_rows = np.full((len(d), len(bgrid)), np.nan)
         shape_rows[brows] = lnsh[ib]
-        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best, pdf_q84, bgrid, shape_rows)
+        in_rel = np.full(len(d), np.nan)                 # the inputs' (NZSHM22's) sigma / target per bin, for the figures'
+        in_rel[brows] = rel_in                           # comparison with the NZSHM22 bins (plot_rate_magnitude.py), and
+        in_R = np.full(len(d), np.nan)                   # their targets per year
+        in_R[brows] = R_in
+        mfd_gr_info = (args.mfd_gr, pdf_th, pdf_best, pdf_q84, bgrid, shape_rows, in_rel, in_R)
     sd = detect_slip_rows(d_raw, info, keep_r)          # slip-rate rows: leading rows up to the first zero-forcing row
     if sd is not None and det is not None and np.intersect1d(sd[0], det).size:
         sd = None                                        # overlaps the bin rows: not a usable detection
@@ -833,6 +837,8 @@ def main():
                  mfd_pdf_q84=None if mfd_gr_info is None else mfd_gr_info[3],
                  mfd_gr_bgrid=None if mfd_gr_info is None else mfd_gr_info[4],
                  mfd_gr_shape=None if mfd_gr_info is None else mfd_gr_info[5],
+                 mfd_in_rel=None if mfd_gr_info is None else mfd_gr_info[6],
+                 mfd_in_R=None if mfd_gr_info is None else mfd_gr_info[7],
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',

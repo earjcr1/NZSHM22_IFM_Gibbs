@@ -125,6 +125,10 @@ def main():
     ap.add_argument('--y-bottom', type=float, default=-12.0, help='log10 of the rate axis\'s bottom (default -12; at least '
                     'half a decade below --diag-floor); means below it, 0 included, sit on its bottom edge')
     ap.add_argument('--bins-block', default='MFD')
+    ap.add_argument('--nzshm-bins', default=None, metavar='PROBLEM',
+                    help='MFD_GR runs cleaned before November 19th, 2026: a cleaned problem of the same inputs without MFD_GR, '
+                         'whose bin rows give the NZSHM22 bins\' uncertainties for the comparison line (later problems carry '
+                         'them, mfd_in_rel)')
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates, whose bin totals "
                     "to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors")
@@ -175,6 +179,19 @@ def main():
     if mpdf:
         from paleo_misfit import site_misfit
         sd_pdf = R / P['d'][rows]                      # each bin row's sigma (R_j / d_j): rate = y sigma_j
+        nz_rel = nz_R = None                           # the NZSHM22 bins' sigma / target and targets, to compare with the runs
+        if P.get('mfd_in_rel') is not None and P.get('mfd_in_R') is not None:   # scored without MFD_GR (MISFIT_MFD 'half')
+            nz_rel, nz_R = np.asarray(P['mfd_in_rel'], float)[rows], np.asarray(P['mfd_in_R'], float)[rows]
+        elif a.nzshm_bins:
+            P0 = load_problem(a.nzshm_bins)
+            r0, R0, o0, _ = magnitude_bins(P0, a.bins_block, a.lowest_bin, w)
+            if not np.array_equal(np.asarray(o0), np.asarray(orig)):
+                raise SystemExit(f'--nzshm-bins {a.nzshm_bins}: its bins are not this problem\'s (other inputs?)')
+            if P0.get('mfd_pdf_th') is not None:
+                raise SystemExit(f'--nzshm-bins {a.nzshm_bins}: a problem cleaned with MFD_GR; give one without it')
+            nz_rel, nz_R = 1.0 / np.asarray(P0['d'], float)[r0], np.asarray(R0, float)
+        if nz_rel is not None and not np.all(np.isfinite(nz_rel) & (nz_rel > 0) & np.isfinite(nz_R) & (nz_R > 0)):
+            nz_rel = None
 
     def bins_fit(m_):
         """The misfit over the bin rows as the likelihood scores them, (1 - b) x the Gaussian + b x
@@ -185,7 +202,15 @@ def main():
             with np.errstate(divide='ignore'):
                 mis_ = sum(float(site_misfit(P['mfd_pdf_th'][r_], P['mfd_pdf_best'][r_], np.log(max(y_[k] * sd_pdf[k], 1e-300)), 'log'))
                            for k, r_ in enumerate(rows))
-            return f'its misfit by the bins\' own PDFs (MFD_GR) {mis_:.1f}'
+            if nz_rel is None:
+                return f'its misfit by the bins\' own PDFs (MFD_GR) {mis_:.1f}'
+            tp_ = y_ * sd_pdf                         # the bin totals, per year
+            with np.errstate(divide='ignore'):
+                mp_ = misfit_parts(((tp_ - nz_R) / (nz_rel * nz_R)) ** 2,
+                                   (np.log10(np.maximum(tp_, 0.0) / nz_R) / np.log10(1.0 + nz_rel)) ** 2, 0.5)
+            nm_ = lambda v: 'inf' if not np.isfinite(v) else f'{v:.0f}' if abs(v) >= 100 else f'{v:.1f}'
+            return (f'MFD_GR PDFs {mis_:.1f}; NZSHM22 bins ½/½ χ² {nm_(mp_["total"])} (linear {nm_(mp_["lin"])}, '
+                    f'log10 {nm_(mp_["log"])})')
         with np.errstate(divide='ignore'):
             lg_ = (np.log10(np.maximum(y_, 0.0) / P['d'][rows]) / s_log) ** 2
         return misfit_parts((y_ - P['d'][rows]) ** 2, lg_, b_m)
