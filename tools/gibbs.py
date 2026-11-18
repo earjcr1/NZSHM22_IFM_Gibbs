@@ -70,6 +70,7 @@ C_SRC = r"""
 #include <math.h>
 #include <float.h>
 #include <stdlib.h>
+#include <string.h>
 
 static inline uint64_t rotl64(uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
 static inline uint64_t xnext(uint64_t *s) {                       /* xoshiro256** */
@@ -1340,12 +1341,32 @@ static double sp_swap(const int64_t *indptr, const int32_t *indices, const doubl
     }
     return acc;
 }
+/* --swap-cos-cross: spike-and-slab's log prior of rupture i at rate m relative to off, log(pi / (1 - pi)) of its bin
+   (LOD) plus the slab's normalized log density at z = log m (its density in z, so a swap, which exchanges two values of
+   z, has Jacobian 1); 0 for m = 0 (off), -inf outside the slab (below its floor or outside [lo, hi]) */
+static double ss_on_lp(int64_t i, double m, const double *LODk, const int64_t *SBIN, const double *ZLO, const double *KU,
+                       const double *LLO, const double *LHI, const double *SC, double zlo, double zhi, double gam)
+{
+    if (!(m > 0.0)) return 0.0;
+    const double z = log(m);
+    if (z < LLO[i] || z > LHI[i]) return -INFINITY;
+    lbctx c;
+    memset(&c, 0, sizeof c);
+    c.pk = 3; c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0; c.gam = gam;
+    const double p = lb_prior(&c, z);
+    return p == -INFINITY ? -INFINITY : LODk[SBIN[i]] + p - log(SC[4 * i] + SC[4 * i + 1]);
+}
+
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
               const double *csq, int64_t npair, const int64_t *pi, const int64_t *pj, const double *gij,
               const double *beta, double sigma, double *X, double *R, uint64_t *rng, int64_t *nacc,
               const double *RLO, const double *RHI, const double *LW, const double *LWL, const double *LD, const double *DY,
-              const pmctx *PM, const double *SL2, const double *SH2, const stctx *ST)
+              const pmctx *PM, const double *SL2, const double *SH2, const stctx *ST,
+              const int64_t *SBIN, int64_t SB, const double *LOD, const double *ZLO, const double *KU, const double *LLO,
+              const double *LHI, const double *SC, double zlo, double zhi, double gam)
 {
+    /* SBIN (or NULL): spike-and-slab's bin of each rupture; a pair in different bins (--swap-cos-cross) adds the prior's
+       ratio, which is 1 within a bin (the same fraction on and slab), so same-bin swaps are as before */
     const double s2 = sigma * sigma;
     double *lam = ST ? (double *)malloc(sizeof(double) * (size_t)ST->NB) : NULL;
     double *hh = ST ? (double *)malloc(sizeof(double) * (size_t)ST->NB) : NULL;
@@ -1365,6 +1386,14 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
             double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
+            if (SBIN && SBIN[i] != SBIN[j]) {     /* --swap-cos-cross: x_i = mj and x_j = mi against x_i = mi and x_j = mj */
+                const double *LODk = LOD + k * SB;
+                const double af = ss_on_lp(i, mj, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam)
+                                  + ss_on_lp(j, mi, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                const double bf = ss_on_lp(i, mi, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam)
+                                  + ss_on_lp(j, mj, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                dlp = (af == -INFINITY || !(bf > -INFINITY)) ? -INFINITY : dlp + (af - bf);
+            }
             const int64_t bi = ST ? ST->bx[i] : -1, bj = ST ? ST->bx[j] : -1;
             if (ST && (bi >= 0 || bj >= 0)) {     /* --mfd-step-sd: its change, the one or two bins moved */
                 const int64_t NB = ST->NB;
@@ -1537,7 +1566,7 @@ def build_kernel():
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, D, P, P, P, P]
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P]
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -1918,9 +1947,12 @@ def column_passes(T, B=None, tol=1e-12):
             'likelihood\'s passes: ' + '; '.join(parts) + ('' if fold is not None or note is None else f'; {note}'))
 
 
-def swaps_c(lib, T, X, R, rng, nacc, threads=1):
+def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None):
     pi, pj, gij = T.pairs
     K = X.shape[0]
+    xb = T.pkind == 3 and T.ss is not None and LOD is not None and KC is not None   # spike-and-slab: the prior's ratio
+    sbin = np.ascontiguousarray(T.ss['bins'], np.int64) if xb else None              # for pairs in different bins
+    SB = LOD.shape[1] if xb else 0
     groups = np.array_split(np.arange(K), max(1, min(threads, K)))
 
     def work(ks):
@@ -1932,7 +1964,11 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1):
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
                      None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T),
-                     _st_ptr(T, k0))
+                     _st_ptr(T, k0), None if sbin is None else _ptr(sbin), SB,
+                     None if not xb else ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
+                     None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
+                     None if not xb else _ptr(KC[0]), None if not xb else _ptr(KC[1]), None if not xb else _ptr(KC[2]),
+                     T.zlo, T.zhi, T.gam)
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2235,9 +2271,35 @@ def _swap_in_band(T, r, ri, vi, rj, vj, dl):
     return bool(np.all((rn >= T.rlo[rows]) & (rn <= T.rhi[rows])))
 
 
-def swaps_numpy(T, X, R, g, nacc):
+def _ss_on_lp_py(T, i, m, lod):
+    """NumPy twin of ss_on_lp: spike-and-slab's log prior of rupture i at rate m relative to off (lod: the chain's log
+    odds per bin), the slab's normalized log density in z = log m; 0 for m = 0, -inf outside the slab."""
+    if not m > 0:
+        return 0.0
+    z = float(np.log(m))
+    lo_, hi_ = float(np.broadcast_to(T.lo, (T.n,))[i]), float(np.broadcast_to(T.hi, (T.n,))[i])
+    zmax = np.log(hi_)
+    if (lo_ > 0 and z < np.log(lo_)) or z > zmax:
+        return -np.inf
+    zl = T.zlo if T.zlo_vec is None else float(T.zlo_vec[i])
+    ku = 0.0 if T.ku_vec is None else float(T.ku_vec[i])
+    gam = T.gam
+    if z < zl:
+        return -np.inf
+    if z > T.zhi:
+        if not ku > 0:
+            return -np.inf
+        p = -(z - T.zhi) ** 2 * ku + gam * z
+    else:
+        p = gam * z
+    wp, wt = _slab_masses_py(dict(zlo=zl, zhi=T.zhi, ku=ku, zmax=zmax), gam)[:2]
+    return lod[T.ss['bins'][i]] + p - np.log(wp + wt)
+
+
+def swaps_numpy(T, X, R, g, nacc, LOD=None):
     pi, pj, gij = T.pairs
     s2 = T.sigma ** 2
+    xb = T.pkind == 3 and T.ss is not None and LOD is not None     # --swap-cos-cross: the prior's ratio across bins
     for k in range(X.shape[0]):
         for q in range(len(pi)):
             i, j = pi[q], pj[q]
@@ -2257,6 +2319,10 @@ def swaps_numpy(T, X, R, g, nacc):
             else:
                 dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
             dlp = -dl * (T.beta[i] - T.beta[j])
+            if xb and T.ss['bins'][i] != T.ss['bins'][j]:   # --swap-cos-cross: x_i = mj, x_j = mi against mi, mj
+                af = _ss_on_lp_py(T, i, mj, LOD[k]) + _ss_on_lp_py(T, j, mi, LOD[k])
+                bf = _ss_on_lp_py(T, i, mi, LOD[k]) + _ss_on_lp_py(T, j, mj, LOD[k])
+                dlp = -np.inf if (af == -np.inf or not bf > -np.inf) else dlp + (af - bf)
             if T.lw is not None:                         # --log-band: the soft band's change
                 rows = np.union1d(ri, rj)
                 dv = np.zeros(len(rows))
@@ -2623,11 +2689,11 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                 R = T.residual(X)
         if backend == 'c':
             if swaps:
-                swaps_c(lib, T, X, R, rng, nacc, threads)
+                swaps_c(lib, T, X, R, rng, nacc, threads, LOD if SS is not None else None, KC)
             if transfers:
                 transfers_c(lib, T, X, R, rng, tstats, threads)
         elif swaps:
-            swaps_numpy(T, X, R, g, nacc)
+            swaps_numpy(T, X, R, g, nacc, LOD if SS is not None else None)
         if SS is not None:
             on = X > 0
             SM[on] = X[on]                               # an "on" rupture's slab value is its rate (swaps move rates)
@@ -3684,6 +3750,62 @@ def selftest_split(backends=('c', 'numpy')):
             ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
     print('SELFTEST (split misfit)', 'PASSED' if ok else 'FAILED')
     return ok
+
+
+def selftest_crossswap(backends=('c', 'numpy')):
+    """--swap-cos-cross: swaps between two spike-and-slab rates in different bins (their own fractions on, Beta(1, 1), and
+    their own slabs: floors 1e-4 and 10^-2.5, soft tops 0.05 and 0.3 decades wide), near-duplicate columns (cosine 0.998)
+    so that swaps are often accepted, against a grid integral: P(on) and E[log10 m | on] of each rate. Without the prior's
+    ratio in the acceptance the swaps would favour neither slab, and the answers would be off."""
+    print('cross-bin swaps (--swap-cos-cross): spike-and-slab in two bins with swaps vs a grid integral')
+    ok = True
+    G2 = np.array([[1.0, 0.95], [0.3, 0.35]])
+    d2, sig = np.array([0.05, 0.016]), 0.01
+    lo10, su = np.array([-4.0, -2.5]), np.array([0.05, 0.3])
+    u = [np.linspace(l, min(8 * sv, 1.0), 4001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def Lb(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        out = np.zeros(m1.shape)
+        for j in range(2):
+            out += (G2[j, 0] * m1 + G2[j, 1] * m2 - d2[j]) ** 2 / (2 * sig ** 2)
+        return np.exp(-out)
+    L1, L2_, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w00, w10, w01, w11 = 0.25 * Lb(0.0, 0.0), 0.25 * (gw[0] @ L1), 0.25 * (gw[1] @ L2_), 0.25 * L12.sum()   # each bin's
+    W_ = w00 + w10 + w01 + w11                                                                             # P(on) 1/2
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(0.25 * (gw[0] * u[0]) @ L1 + 0.25 * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (0.25 * (gw[1] * u[1]) @ L2_ + 0.25 * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    for be in backends:
+        T = Target(sp.csc_matrix(G2), d2, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([G2[:, 0] @ G2[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.array([0, 1], np.int64), B=2, nb=np.array([1.0, 1.0]), a=1.0, b=1.0)
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 41, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / max(ess(on), 1.0)) if on.std() > 0 else np.inf
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        ok &= bool(tr['swap_rate'].mean() > 0.05)          # the swaps must take part for the test to mean anything
+    print('SELFTEST (cross-bin swaps)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
 
 
 def selftest_slipgeo(backends=('c', 'numpy'), b=0.5):
@@ -4899,6 +5021,10 @@ def main():
                          'ruptures/), for the faults\' traces, rakes and dips and the ruptures\' sections and average slips')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
+    ap.add_argument('--swap-cos-cross', type=float, default=0.0, metavar='C',
+                    help='spike-and-slab: also swap ruptures in different magnitude bins whose columns have cosine above C '
+                         '(the notebook: 0.95), with the prior\'s ratio (the bins\' fractions on and slabs) in the acceptance; '
+                         'needs cleaning with preliminaries.py --dup-cross-cos for pairs below 0.99')
     ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
     ap.add_argument('--threads', type=int, default=os.cpu_count() or 1)
     ap.add_argument('--seed', type=int, default=1)
@@ -4914,9 +5040,9 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-three verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-four verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
-                         "term, swap moves, the band, and the column passes with the summed slip rates folded), seven verdicts")
+                         "term, swap moves, the band, the column passes with the summed slip rates folded, and swaps across bins), eight verdicts")
     a = ap.parse_args()
     if a.selftest == 'current':
         ok = selftest_zlo()
@@ -4926,6 +5052,7 @@ def main():
         ok &= selftest_swaps()
         ok &= selftest_band()
         ok &= selftest_fold(backends=('c',))
+        ok &= selftest_crossswap(backends=('c',))
         sys.exit(0 if ok else 1)
     if a.selftest:
         ok = selftest()
@@ -4943,6 +5070,7 @@ def main():
         ok &= selftest_paleo(b=0.5)
         ok &= selftest_split()
         ok &= selftest_groupweights()
+        ok &= selftest_crossswap()
         ok &= selftest_mfdlog()
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_mfdpdf()
@@ -5263,8 +5391,19 @@ def main():
         sel = pr['dup_cos'] > a.swap_cos
         if lognormal is not None:                  # swaps must leave the prior unchanged: same bin only
             sel &= lognormal['bins'][pr['dup_i']] == lognormal['bins'][pr['dup_j']]
+        n_cross = 0
         if zlo_vec is not None or ku_vec is not None or hi_vec is not None:   # per-bin depths or tops: boxes differ
-            sel &= bins[pr['dup_i']] == bins[pr['dup_j']]                      # between bins
+            same_ = bins[pr['dup_i']] == bins[pr['dup_j']]                     # between bins
+            if a.swap_cos_cross > 0 and spike_mode and lognormal is None:   # --swap-cos-cross: across bins too, with the
+                xs_ = ~same_ & (pr['dup_cos'] > a.swap_cos_cross)            # prior's ratio in the acceptance (swap_run)
+                n_cross = int(xs_.sum())
+                sel = (sel & same_) | xs_
+                if not n_cross:
+                    print('swap moves: --swap-cos-cross found no pairs across bins (clean with preliminaries.py --dup-cross-cos)')
+            else:
+                sel &= same_
+        elif a.swap_cos_cross > 0:
+            raise SystemExit('--swap-cos-cross needs spike-and-slab with per-bin boxes (its prior ratio is the bins\')')
         pi, pj = pr['dup_i'][sel], pr['dup_j'][sel]
         pairs = (pi, pj, pr['dup_cos'][sel] * pr['cn'][pi] * pr['cn'][pj])
         if B_bal is not None:                      # the balance rows' share of each pair's inner product
@@ -5296,7 +5435,9 @@ def main():
             pairs = (pi, pj, ip)
         if scale is not None:                      # inner products of the scaled columns
             pairs = (pi, pj, pairs[2] * scale[pi] * scale[pj])
-        print(f'swap moves: {sel.sum()} near-duplicate pairs with cosine > {a.swap_cos}, one pass per recorded draw')
+        print(f'swap moves: {sel.sum()} near-duplicate pairs with cosine > {a.swap_cos}'
+              + (f' ({n_cross} of them across magnitude bins with cosine > {a.swap_cos_cross}, the prior\'s ratio in their '
+                 f'acceptance)' if n_cross else '') + ', one pass per recorded draw')
     dirs = dict(np.load(a.transfers)) if a.transfers else None
     if dirs is not None:
         print(f'transfer moves: {len(dirs["uu"])} directions from {a.transfers}, one pass per recorded draw')

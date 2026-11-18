@@ -493,6 +493,14 @@ mstep A/c x w, slip-sum rows and folded B x sqrt(w_slip) (recorded / w). tr grou
 MISFIT_PALEO; RUN_NAME _dtequal; FIGURE_SETTINGS, run_plan MODEL_KEYS. MFD_UNCERTAINTY moved to run_config.py FIXED
 ('as-given') the same day: out of FIGURE_SETTINGS (shown with the fixed settings when not as-given), RUN_NAME only when
 not as-given, summary row only then.
+--swap-cos-cross C (2026-11-19; notebook 0.95, cleaning --dup-cross-cos 0.95: near_duplicates(low, keep_low) keeps
+pairs in (C, 0.99] only across bins, columns' bins from the bin rows; prelim dup_cross_cos): pair selection keeps same-bin
+pairs > swap_cos and cross-bin pairs > C (spike-and-slab with per-bin boxes only). swap_run gets SBIN, SB, LOD (per chain),
+ZLO, KU, LLO/LHI/SC (kernel_consts) and zlo, zhi, gam; ss_on_lp (twin _ss_on_lp_py) = LOD + lb_prior - log(wp + wt), 0 off,
+-inf outside the slab; the ratio is added only when SBIN differ, so same-bin swaps and runs without the flag are
+bit-identical (checked at 19k). Swaps exchange scaled values (u = m / R_bin). selftest_crossswap (full set): two bins,
+different floors/tops, vs a grid; without the ratio z 13-120 (and with unequal floors a no-ratio run can strand a rate below
+its floor, where its slice update never returns).
 selftest_groupweights (full set, ~40 s): ws 0.4 on a Gaussian row via temper x L2/H2, wp 3 on a paleo row via PM F/D/K x w,
 vs a grid integral (sig 0.02, d0 0.07: the weights move the exact answers 0.07-0.24 from w = 1); recorded chi2 and
 paleo_misfit unweighted; group_weights on a toy 3-block P (3/2/4 measurements -> each counts 3).
