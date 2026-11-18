@@ -493,6 +493,9 @@ mstep A/c x w, slip-sum rows and folded B x sqrt(w_slip) (recorded / w). tr grou
 MISFIT_PALEO; RUN_NAME _dtequal; FIGURE_SETTINGS, run_plan MODEL_KEYS. MFD_UNCERTAINTY moved to run_config.py FIXED
 ('as-given') the same day: out of FIGURE_SETTINGS (shown with the fixed settings when not as-given), RUN_NAME only when
 not as-given, summary row only then.
+selftest_groupweights (full set, ~40 s): ws 0.4 on a Gaussian row via temper x L2/H2, wp 3 on a paleo row via PM F/D/K x w,
+vs a grid integral (sig 0.02, d0 0.07: the weights move the exact answers 0.07-0.24 from w = 1); recorded chi2 and
+paleo_misfit unweighted; group_weights on a toy 3-block P (3/2/4 measurements -> each counts 3).
 MFD_GR_TAU (2026-11-18, the user's request, in place of MFD_STEP_SD in the notebook; 0.025 by default, with MFD_GR only; gibbs.py --mfd-gr-tau TAU,
 with --mfd-misfit pdf): the bins jointly about each draw's G-R curve. gibbs.mjoint_build (Q = D'D/tau^2 + 11'/(NB tau)^2, the residual's
 steps and mean level; mstep_build for bx/gx), mjoint_update (each chain's b and L = ln(s m / m_mid) drawn exactly on a 481 x 801 grid,

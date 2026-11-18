@@ -3974,6 +3974,100 @@ def selftest_paleo(backends=('c', 'numpy'), b=1.0):
     return bool(ok)
 
 
+def selftest_groupweights(backends=('c', 'numpy'), ws=0.4, wp=3.0):
+    """--group-weights equal (DATATYPES_EQUAL), as main() applies it: a Gaussian (slip) row's weight through the split
+    weights (T.temper x L2, H2) and a paleo row's through its tabulated misfit (F, D, K x w), on two spike-and-slab rates
+    with swap moves, against a grid integral of exp(-w_s chi2_s / 2 - w_p f) x prior: P(on) and E[log10 m | on] of each
+    rate (the rows set against each other, so the weights move the exact answers by 0.07-0.24 against w = 1); the recorded chi2 and paleo misfit unweighted. Then group_weights on a three-block problem: each group's weight
+    x its effective measurements equal, the total kept, each row given its group's weight."""
+    from scipy.special import betaln
+    from paleo_misfit import PALEO_EPS, tables
+    print(f'group weights (--group-weights equal): slip x {ws:g}, paleo x {wp:g}, spike-and-slab with swaps vs a grid integral')
+    ok = True
+    site = dict(name='test', section=0, best=0.03, sd=0.009, q=np.array([0.012, 0.019, 0.034, 0.05]))
+    tab = tables([site], 'years')
+    c0, cp, sig, lo10, su, a_, b_ = np.array([1.0, 0.7]), np.array([0.5, 1.0]), 0.02, np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    d0, eps, sd = 0.07, PALEO_EPS, site['sd']
+    pm = dict(I=np.array([-1, 0], np.int32), V0=np.ascontiguousarray(tab['U0'] - np.log(sd / eps)), F=wp * tab['F'],
+              D=wp * tab['DF'], K=wp * tab['KAPPA'], H=tab['H'], NG=tab['NG'], rows=np.array([1]), eps=eps,
+              d_data=np.array([d0, site['best'] / sd]), mode='years', b=1.0, w=wp)
+    pmr = dict(pm, V0=np.ascontiguousarray(tab['U0']), F=tab['F'], D=tab['DF'])   # unweighted, in u = ln(rate), for the grid
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def Lb(m1, m2):
+        m1, m2 = np.broadcast_arrays(m1, m2)
+        yg, yp = c0[0] * m1 + c0[1] * m2, cp[0] * m1 + cp[1] * m2
+        with np.errstate(divide='ignore'):
+            f = np.where(yp > 0, _pm_f_np(pmr, np.zeros(yp.shape, np.int64), np.log(np.maximum(yp, 1e-300))), np.inf)
+        return np.exp(-0.5 * ws * (yg - d0) ** 2 / sig ** 2 - wp * f)
+    L1, L2, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2), pg[2] * L12.sum()   # both off: impossible
+    W_ = w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2 + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    Gs = np.vstack([c0, cp * eps / sd])
+    dv = np.array([d0, eps * site['best'] / sd])
+    for be in backends:
+        T = Target(sp.csc_matrix(Gs), dv, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([Gs[:, 0] @ Gs[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.temper = np.array([ws, wp])                     # as main(): each row's Gaussian x its group's weight
+        T.split = dict(L2=np.ascontiguousarray(T.temper.copy()), H2=np.ascontiguousarray(T.temper.copy()))
+        T.lw = dict(W=np.zeros(2), LD=np.zeros(2), DY=np.ascontiguousarray(dv), rows=np.array([], np.int64), tau=None,
+                    PM=dict(pm))
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.04, 0.0], (K, 1)), sw, sw // 10, 1, be, 1, 37, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        mm_ = Mo.reshape(-1, 2)                         # recorded unweighted: chi2 and the paleo misfit as without weights
+        yp_ = mm_ @ cp
+        cur_ = 2.0 * _pm_f_np(pmr, np.zeros(len(yp_), np.int64), np.log(yp_))
+        gp_ = ((yp_ - site['best']) / sd) ** 2 / sig ** 2
+        ch_ = (mm_ @ c0 - d0) ** 2 / sig ** 2 + gp_
+        ok_m = bool(np.allclose(cur_, tr['paleo_misfit'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-8)
+                    and np.allclose(ch_, tr['chi2'][:, sw // 10:].ravel(), rtol=1e-6, atol=1e-8))
+        ok &= ok_m
+        print(f'   {be:5s} misfits recorded unweighted: ' + ('yes' if ok_m else 'NO'))
+    # group_weights: slip rates in sections (2 of 3 rows, 2 of 2 rows, 1 row: 3 measurements), 2 bins, 4 paleo rows
+    blk = np.array([0] * 5 + [1] * 2 + [2] * 4)
+    P_ = dict(G=sp.csr_matrix(np.ones((11, 3))), block=blk, block_names=['S', 'MFD', 'B2:var'], slip_sections='auto',
+              section=np.array([0, 0, 1, 1, 2] + [-1] * 6), template_scale=None)
+    GW_ = group_weights(P_, 'equal')
+    n_ = GW_['n']
+    ok_w = (np.allclose([n_['slip'], n_['mfd'], n_['paleo']], [3.0, 2.0, 4.0])
+            and np.allclose([GW_['w'][g] * n_[g] for g in n_], 3.0)
+            and np.allclose(GW_['row'], np.array([GW_['w'][g] for g in ['slip'] * 5 + ['mfd'] * 2 + ['paleo'] * 4])))
+    print(f'   group_weights: measurements slip {n_["slip"]:g}, MFD {n_["mfd"]:g}, paleo {n_["paleo"]:g}; weights '
+          + ', '.join(f'{g} {GW_["w"][g]:.3f}' for g in n_) + f'; each group then counts 3 of 9: {"yes" if ok_w else "NO"}')
+    ok &= bool(ok_w)
+    print('SELFTEST (group weights)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
+
+
 def selftest_logband(backends=('c', 'numpy')):
     """The soft band (--log-band) on two spike-and-slab rates with weak targets (each about 0.4 of its uncertainty, so
     the likelihood alone would let the predictions fall far below them), with swap moves between them, against a grid
@@ -4820,7 +4914,7 @@ def main():
     ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
                     '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-one verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-three verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
                          "term, swap moves, the band, and the column passes with the summed slip rates folded), seven verdicts")
     a = ap.parse_args()
@@ -4848,6 +4942,7 @@ def main():
         ok &= selftest_paleo()
         ok &= selftest_paleo(b=0.5)
         ok &= selftest_split()
+        ok &= selftest_groupweights()
         ok &= selftest_mfdlog()
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_mfdpdf()
