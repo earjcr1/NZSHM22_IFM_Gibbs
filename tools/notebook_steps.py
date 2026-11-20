@@ -337,14 +337,15 @@ def _terms(gibbs=False):
 
 
 def starts_args():
-    """dispersed_starts.py's arguments: one start per chain, half randomized fits (twice the stated noise), half prior
-    draws, each polished for feasibility with the run's misfit, terms and constraints."""
+    """dispersed_starts.py's arguments: one start per chain, every one a prior draw (since 2026-11-20, the user's choice;
+    before, half randomized fits at twice the stated noise), each polished for feasibility with the run's misfit, terms
+    and constraints."""
     g = _G['g']
     import run_plan
     chains = g['RUN_PLAN']['chains'] if g['RUN_PLAN'] is not None else run_plan.CHAINS_PER_THREAD * g['THREADS']
     a = ['--problem', 'cru_clean.npz', '--chains', chains, '--noise', 2, '--seed', replicate_seed(1000),
          '--workers', g['THREADS'], '--out', 'starts.npy', '--floor', 10.0 ** g['FLOOR'], '--bins-block', g['BIN_BLOCK'],
-         '--prior-share', 0.5]
+         '--prior-share', 1]
     if g['MFD_GR'] and g['MFD_GR_TAU'] is not None:      # the prior draws on a G-R curve, as the sampler scores the bins
         a += ['--mfd-gr-tau', g['MFD_GR_TAU']]
     fit = _terms()

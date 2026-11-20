@@ -385,6 +385,12 @@ def main():
     post_tot = grab(sol, r'total ([\d.]+)/yr', 'posterior total rate')
     sol_ok = grab(sol, r'([\d,]+) of ([\d,]+) kept ruptures have exactly the sections', 'solution check', int, (1, 2))
 
+    st_ = re.search(r'dispersed starts: (\d+) chains; (\d+) from randomized best fits.*? and (\d+) from prior draws',
+                    read(os.path.join(RUN, 'starts_report.txt')) if os.path.exists(os.path.join(RUN, 'starts_report.txt')) else '')
+    n_sfit, n_sprior = (int(st_.group(2)), int(st_.group(3))) if st_ else (None, None)   # the starts' mix (dispersed_starts.py)
+    start_mix = ('every one from the prior' if n_sfit == 0 else 'all from randomized best fits' if n_sprior == 0
+                 else f'{n_sfit} from randomized best fits and {n_sprior} from the prior' if st_ else
+                 'half from randomized best fits, half from the prior')
     rm = read(os.path.join(PR, 'fig_rate_magnitude.txt'))
     ref_tot = grab(rm, r'reference: .*?total rate ([\d.]+) against', 'reference total rate') if ref else None
     post_part = rm[rm.find('\n' + a.prior + ' ('):] if ('\n' + a.prior + ' (') in rm else ''
@@ -1118,9 +1124,10 @@ def main():
          'sweep. '
          + (f'The chains start from the best fit moved inside the band by a penalized least-squares fit (χ² '
             f'{start_chi2 or "n/a"}, no rows outside). ' if band else
-            ('Every chain starts from its own draw (dispersed_starts.py): half from randomized best fits (the best fit to '
-             'the data plus twice their stated noise), half from the prior (each bin\u2019s fraction on uniform, rates '
-             'log-uniform up to its target, the bin scaled around its target), each polished for feasibility in the '
+            (f'Every chain starts from its own draw (dispersed_starts.py), {start_mix}'
+             + ('' if n_sfit == 0 else ' (a randomized best fit: the best fit to the data plus twice their stated noise)')
+             + ('' if n_sprior == 0 else ' (a prior draw: each bin\u2019s fraction on uniform, rates log-uniform up to its '
+                'target, the bin scaled around its target)') + ', each polished for feasibility in the '
              'sampler\u2019s own model space so that it meets the hard constraints while staying over-dispersed; the starts are over-dispersed, so R̂ across the chains '
              'tests whether the run has forgotten where it started' if cfg.get('dispersed_starts') else
              'The chains start from the best fit')
@@ -1393,8 +1400,7 @@ def main():
                    + (': ' + '; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check)
                       + ' (the report suggests longer runs).' if why_check else '; see the reasons in convergence_report.txt.'))
     if cfg.get('dispersed_starts'):                   # each chain from its own over-dispersed start
-        pts.append(f'<b>Starts.</b> The {nrep * (ch or 0)} chains started from over-dispersed points, half randomized best '
-                   'fits and half prior draws, so R\u0302 across them tests whether the run forgot its starts; the slow '
+        pts.append(f'<b>Starts.</b> The {nrep * (ch or 0)} chains started from over-dispersed points, {start_mix}, so R\u0302 across them tests whether the run forgot its starts; the slow '
                    'minority above is what it has not yet settled.')
     else:
         pts.append(f'<b>Starts.</b> All {nrep * (ch or 0)} chains started from the same point (the best fit'

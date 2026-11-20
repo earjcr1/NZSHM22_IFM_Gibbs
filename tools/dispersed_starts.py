@@ -5,7 +5,9 @@
                                [--polish-sd 0.1] [--out starts.npy] [--fit-args BEST_FIT_AS_FITTED_ARGS ...]
 
 Each chain gets its own start, made in two steps:
-  1. half of them (1 - --prior-share) from best fits to the data, the other half from the prior, so that the chains
+  1. (since November 20th, 2026, the notebook passes --prior-share 1, the user's choice: every chain from a prior draw;
+     the randomized fits remain for --prior-share below 1)
+     half of them (1 - --prior-share) from best fits to the data, the other half from the prior, so that the chains
      approach the posterior from both sides (the user's choice, 2026-11-17): best fits are sparse, a few ruptures
      carrying each bin, while the posterior spreads its rate over many more; chains from both ends that still agree are
      the stronger test.
@@ -93,8 +95,8 @@ def main():
     ap.add_argument('--polish-window', type=int, default=100, help='iterations for --polish-sd (default 100)')
     ap.add_argument('--polish-iter', type=int, default=30, help='the polish\'s iterations per augmented-Lagrangian round '
                     '(default 30: feasibility, not fit; at most 1000)')
-    ap.add_argument('--prior-share', type=float, default=0.5, help='the share of the chains started from prior draws '
-                    '(default 0.5); the rest from randomized fits')
+    ap.add_argument('--prior-share', type=float, default=0.5, help='the share of the chains started from prior draws, 0 to 1 '
+                    '(default 0.5; the notebook: 1); the rest from randomized fits')
     ap.add_argument('--floor', type=float, default=1e-10, help='the slab floor (default 1e-10)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
     ap.add_argument('--mfd-gr-tau', type=float, default=None, metavar='TAU',
@@ -104,8 +106,8 @@ def main():
     ap.add_argument('--out', default=None, help='the starts (default starts.npy next to --problem)')
     ap.add_argument('--fit-args', nargs='*', default=[], help='(last) best_fit_as_fitted.py\'s arguments for the polish')
     a = ap.parse_args(argv)
-    if a.chains < 1 or not a.noise > 0 or not 1 <= a.polish_iter <= 1000 or not 0 <= a.prior_share < 1:
-        raise SystemExit('--chains, --polish-iter: 1 or more; --noise: above 0')
+    if a.chains < 1 or not a.noise > 0 or not 1 <= a.polish_iter <= 1000 or not 0 <= a.prior_share <= 1:
+        raise SystemExit('--chains, --polish-iter: 1 or more; --noise: above 0; --prior-share: 0 to 1')
     here = os.path.dirname(os.path.abspath(a.problem))
     out = a.out or os.path.join(here, 'starts.npy')
     report_to(os.path.splitext(out)[0] + '_report.txt')
@@ -117,7 +119,7 @@ def main():
     with np.load(prelim_path(a.problem)) as z:
         base = np.asarray(z['m_nnls'], np.float64)
     t0 = time.time()
-    n_prior = int(round(a.prior_share * a.chains)) if a.chains > 1 else 0
+    n_prior = int(round(a.prior_share * a.chains)) if a.chains > 1 else int(a.prior_share >= 1)
     n_fit = a.chains - n_prior
     print(f'dispersed starts: {a.chains} chains; {n_fit} from randomized best fits (NNLS '
           f'to the data plus {a.noise:g} x their stated noise, seed {a.seed}) and {n_prior} from prior draws (each bin\'s '
