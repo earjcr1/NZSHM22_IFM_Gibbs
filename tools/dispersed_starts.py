@@ -117,12 +117,13 @@ def main():
     keep_c = np.asarray(P['keep_cols'])
     n_raw = int(P['raw_shape'][1]) if P.get('raw_shape') else n
     with np.load(prelim_path(a.problem)) as z:
-        base = np.asarray(z['m_nnls'], np.float64)
+        base = np.asarray(z['m_nnls'], np.float64) if 'm_nnls' in z.files else None   # none since 2026-11-21 (--no-nnls)
     t0 = time.time()
     n_prior = int(round(a.prior_share * a.chains)) if a.chains > 1 else int(a.prior_share >= 1)
     n_fit = a.chains - n_prior
-    print(f'dispersed starts: {a.chains} chains; {n_fit} from randomized best fits (NNLS '
-          f'to the data plus {a.noise:g} x their stated noise, seed {a.seed}) and {n_prior} from prior draws (each bin\'s '
+    print(f'dispersed starts: {a.chains} chains; {n_fit} from randomized best fits'
+          + (f' (NNLS to the data plus {a.noise:g} x their stated noise, seed {a.seed})' if n_fit else '')
+          + f' and {n_prior} from prior draws (each bin\'s '
           'fraction on uniform, rates log-uniform up to its target, the bin then scaled to its target), '
           + (f'each then polished for feasibility by best_fit_as_fitted.py with the run\'s misfit, terms and constraints '
              f'({a.polish_iter} iterations per round' + (f'; or until its misfit settles, {a.polish_sd:g} x the fit check\'s '
@@ -194,15 +195,17 @@ def main():
                       f'({sec:.0f} s)', flush=True)
         shutil.rmtree(tmp, ignore_errors=True)
     floor = a.floor
-    on0 = base > floor                                   # cleaning's NNLS fit: a reference only, no chain starts from it
-    print(f'{"start":>5s} {"from":>6s} {"chi2 (Gauss)":>12s} {"as fitted":>10s} {"rates on":>9s} {"total rate":>11s} {"on NNLS fit’s":>14s} {"polish iterations":>18s}')
+    on0 = None if base is None else base > floor         # cleaning's NNLS fit, if it made one: a reference only
+    print(f'{"start":>5s} {"from":>6s} {"chi2 (Gauss)":>12s} {"as fitted":>10s} {"rates on":>9s} {"total rate":>11s}'
+          + ('' if on0 is None else f' {"on NNLS fit’s":>14s}') + f' {"polish iterations":>18s}')
     for k in range(a.chains):
         nz = X[k] > floor
-        share = float(np.mean(on0[nz])) if nz.any() else 0.0
-        print(f'{k + 1:5d} {kind[k]:>6s} {chi_fit[k]:12.1f} {mis[k]:10.1f} {int(nz.sum()):9d} {X[k].sum():11.5f} {100 * share:13.0f}% {its[k]:>18s}')
+        share = float(np.mean(on0[nz])) if on0 is not None and nz.any() else 0.0
+        print(f'{k + 1:5d} {kind[k]:>6s} {chi_fit[k]:12.1f} {mis[k]:10.1f} {int(nz.sum()):9d} {X[k].sum():11.5f}'
+              + ('' if on0 is None else f' {100 * share:13.0f}%') + f' {its[k]:>18s}')
     print('   chi2 (Gauss): the start before the polish, a plain Gaussian on the cleaned rows; as fitted: after the polish, '
-          'the misfit as the sampler scores it; on NNLS fit\u2019s: the share of its rates on ruptures cleaning\'s NNLS fit '
-          'uses (a reference: no chain starts from it)')
+          'the misfit as the sampler scores it' + ('' if on0 is None else '; on NNLS fit\u2019s: the share of its rates on '
+          'ruptures cleaning\'s NNLS fit uses (a reference: no chain starts from it)'))
     MMd = mfd_monotonic(P, a.bins_block) if not n_prior else MM   # the dispersion: bin totals across the starts
     TT = np.array([[x[m].sum() for m in MMd['members']] for x in X]) / MMd['R']
     own = np.median(MMd['sig'] / MMd['R'])

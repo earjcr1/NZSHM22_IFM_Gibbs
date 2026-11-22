@@ -252,7 +252,8 @@ def main():
     cfm_k = cfm_fa / cfm_ns                            # each side's sd over its width
     raw_rows, raw_cols, raw_nnz = grab(pre, r'== raw: G (\d+) x (\d+), nnz (\d+)', 'raw size', int, (1, 2, 3))
     pen_rows, pen_par = grab(pre, r'(\d+) penalty rows contain .*?they apply to (\d+) parameters', 'penalty rows', int, (1, 2))
-    soft = grab(pre, r'(\d+) rows after the slip-rate rows have a target of 0', 'soft zero-forcing rows', int)
+    from_rs = re.search(r'== inputs from the rupture set (\S+)', pre)   # G and d built from the rupture set (2026-11-21)
+    soft = 0 if from_rs else grab(pre, r'(\d+) rows after the slip-rate rows have a target of 0', 'soft zero-forcing rows', int)
     zero_rows = grab(pre, r'(\d+) all-zero rows and', 'all-zero rows', int)
     zero_chi2 = grab(pre, r'constant chi\^2 = ([\d.]+)', 'constant chi2')
     n_rows, n_cols = grab(pre, r'cleaned G: (\d+) x (\d+)', 'cleaned size', int, (1, 2))
@@ -269,13 +270,14 @@ def main():
     rank = grab(pre, r'numerical rank (\d+)', 'rank', int)
     res_med = grab(pre, r'resolution diagonal R_ii: .*?median ([\d.e+-]+)', 'resolution')
     dup = grab(pre, r'cos>0\.99\s*:\s*(\d+) pairs', 'near-duplicate pairs', int)
-    nn_s = grab(pre, r'best fit \(Lawson-Hanson NNLS, \d+ outer iterations, ([\d.]+)s\)', 'best-fit time')
-    nn_chi2, nn_nz, nn_sum = grab(pre, r'chi\^2_min = ([\d.]+) .*?nonzeros (\d+);.*?sum m = ([\d.]+)', 'best fit',
-                                  float, (1, 2, 3))
+    has_nnls = bool(re.search(r'== best fit \(Lawson-Hanson', pre))   # cleaning's best fit (none since 2026-11-21: --no-nnls)
+    nn_s = grab(pre, r'best fit \(Lawson-Hanson NNLS, \d+ outer iterations, ([\d.]+)s\)', 'best-fit time') if has_nnls else None
+    nn_chi2, nn_nz, nn_sum = (grab(pre, r'chi\^2_min = ([\d.]+) .*?nonzeros (\d+);.*?sum m = ([\d.]+)', 'best fit',
+                                   float, (1, 2, 3)) if has_nnls else (None, None, None))
     nn_blk = {m.group(1): float(m.group(2)) for m in re.finditer(r'block (\S+)\s*: chi\^2 =\s*([\d.]+) over', pre)}
     nb_lo, nb_hi, nb_med, _, _, nb_pct = grab(pre, r'totals ([+-][\d.]+)% to ([+-][\d.]+)% of their targets \(median '
                                           r'([+-][\d.]+)%\).*?total ([\d.]+) against ([\d.]+) \(([+-][\d.]+)%\)',
-                                          'best-fit bins', float, (1, 2, 3, 4, 5, 6))
+                                          'best-fit bins', float, (1, 2, 3, 4, 5, 6)) if has_nnls else (None,) * 6
 
     runs = sorted(glob.glob(os.path.join(PR, 'main_rep*.npz')), key=lambda p: int(re.findall(r'\d+', os.path.basename(p))[0]))
     runs = [r for r in runs if re.fullmatch(r'main_rep\d+\.npz', os.path.basename(r))]
@@ -367,8 +369,9 @@ def main():
         MISSING.append('row-block table')
 
     tab = read(os.path.join(PR, 'tables_report.txt'))
-    bt_med, bt_lo, bt_hi, bt_nn = grab(tab, r'posterior median ([\d.]+) \(range ([\d.]+) to ([\d.]+)\); best fit ([\d.]+)',
-                                       'bin totals', float, (1, 2, 3, 4))
+    bt_med, bt_lo, bt_hi = grab(tab, r'posterior median ([\d.]+) \(range ([\d.]+) to ([\d.]+)\)', 'bin totals', float, (1, 2, 3))
+    bt_nn = grab(tab, r'posterior median [\d.]+ \(range [\d.]+ to [\d.]+\); best fit ([\d.]+)', 'best-fit bin totals') \
+        if has_nnls else None
     undet = grab(tab, r'subsections median (\d+)%', 'undetectable share', int)
 
     sel = read(os.path.join(PR, 'select_report.txt'))
@@ -512,6 +515,12 @@ def main():
         if f not in present and os.path.basename(f) not in a.skip_figs:
             MISSING.append(f)
     num = {f: i + 1 for i, f in enumerate(present)}
+    has_faults = any(f'{a.prior}/{f}' in num for f in ('fig_slip_sections.png', 'fig_slip_sections_ruptures_1.png',
+                     'fig_slip_sections_ruptures_2.png', 'fig_slip_sections_ruptures_by_magnitude_1.png',
+                     'fig_slip_sections_ruptures_by_magnitude_2.png'))
+    SN = {k: i + 1 for i, k in enumerate(['inputs', 'cleaning'] + (['bestfit'] if has_nnls else []) + [   # the steps,
+        'model', 'sampling', 'convergence', 'fit', 'tables', 'posterior'] + (['faults'] if has_faults else [])   # numbered
+        + ['opensha', 'points'])}                                                                              # as present
     def fref(*fs):                                       # 'Figure 3', 'Figures 3\u20135' (a run), 'Figures 3, 5'
         k = sorted(num[f] for f in fs if f in num)
         if not k:
@@ -606,19 +615,19 @@ def main():
          + (f' (here <i>G</i> has rank {fmt(rank)} for {fmt(n_cols)} unknowns)' if rank and n_cols else '') + '. Each '
          'annealing run lands on a different model depending on its seed (Gerstenberger et al., 2022), but a branch keeps '
          'one. Here the whole set is sampled as a Bayesian posterior: every rate and derived quantity gets a mean and a '
-         'spread, and weighted representative models (step 8) carry it into hazard.'
+         'spread, and weighted representative models (' f'step {SN["tables"]}' ') carry it into hazard.'
          '<br/>• <b>Freedom from the annealing’s settings, weighting and nuances.</b> Combining slip rates, the MFD and paleo '
          'rates into one objective needs a weight on each, set subjectively for the subduction interfaces and, for the '
          'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
          'its own chosen misfit measure): '
          'either way a choice, to be treated as epistemic uncertainty (Gerstenberger et al., 2024). Here each datum counts '
          'by its own uncertainty in the likelihood'
-         + (', and this run then weights the data types to count equally (DATATYPES_EQUAL, step 4), a weighting fixed in '
+         + (', and this run then weights the data types to count equally (DATATYPES_EQUAL, ' f'step {SN["model"]}' '), a weighting fixed in '
             'advance by how many measurements each type has, not tuned to the fit' if gwts else ', with no weights between data types')
          + (', and the MFD bins’ uncertainties too come from N and b (MFD_GR)' if mfdgr else
             '; with MFD_GR even the MFD bins’ uncertainties come from N and b rather than a set level') + '. The '
          'annealing’s perturbations, cooling schedule, start and iteration count also shape its solution; a posterior '
-         'does not depend on how it is sampled (step 6).'
+         'does not depend on how it is sampled (' f'step {SN["convergence"]}' ').'
          '<br/>• <b>Ability to fit the constraints within their own inherent PDFs rather than as Gaussian misfits in '
          'rate.</b> The inversion scores every constraint as a Gaussian in rate: each slip rate with one symmetric sd; each '
          'paleo site with a symmetric sd about its best estimate, though its recurrence-interval PDF is lopsided (its '
@@ -662,7 +671,7 @@ def main():
          + (f' ({fmt(dup)} pairs with cosine similarity above 0.99)' if dup else '') + ' can trade rate between them almost '
          'freely, which single-rate updates do only in small steps; swap moves, which exchange two such ruptures’ '
          'rates in one step, address this. The slowest quantities are the fractions of ruptures on in the highest '
-         'magnitude bins, which change only as individual ruptures switch (step 6).')
+         'magnitude bins, which change only as individual ruptures switch (' f'step {SN["convergence"]}' ').')
 
     if not a.no_alternatives:                        # the section on other samplers (left out of the README)
         head('Other ways to explore the model space', new_page=True)
@@ -708,7 +717,7 @@ def main():
     para(f'The sections below follow the notebook {tt("cru_workflow.ipynb")} step by step for one run; each figure is '
          'one this run wrote.')
 
-    head('1. Inputs and configuration')
+    head(f'{SN["inputs"]}. Inputs and configuration')
     para(f'The inputs are the inversion matrices in {tt(data_name)}: {tt(cfg.get("a_file", "cru_A.txt"))} (<i>G</i>, '
          f'{fmt(raw_rows)} rows by {fmt(raw_cols)} ruptures, {fmt(raw_nnz and raw_nnz / 1e6, "{:.1f}")} million nonzeros) '
          f'and {tt(cfg.get("d_file", "cru_D.txt"))} (<i>d</i>).'
@@ -838,12 +847,19 @@ def main():
            ['REPRESENTATIVES', str(reps), 'weighted representative models selected for hazard']],
           [3.7 * cm, 3.3 * cm, FW - 7.0 * cm])
 
-    head('2. Cleaning and diagnostics', new_page=True)
-    para(f'Cleaning ({tt("preliminaries.py")}) turns the raw system into the problem the sampler sees. The '
-         f'{fmt(pen_rows)} penalty rows with very large entries fix {fmt(pen_par)} ruptures at zero, and {fmt(soft)} soft '
-         f'zero-forcing rows fix {fmt(soft)} more, so {fmt(removed)} ruptures are removed (at rate 0 in every output). '
-         f'{fmt(zero_rows)} rows that then hold no remaining rupture add a constant χ² of {fmt(zero_chi2, "{:.1f}")} that '
-         f'no model can change, and are dropped. What remains is {fmt(n_rows)} rows by {fmt(n_cols)} ruptures: '
+    head(f'{SN["cleaning"]}. Cleaning and diagnostics', new_page=True)
+    para(f'Cleaning ({tt("preliminaries.py")}) turns the raw system into the problem the sampler sees. '
+         + (f'With MFD_GR it builds that system from the rupture set alone ({tt("rupture_set_inputs.py")}; '
+            f'{tt("cru_A.txt")} and {tt("cru_D.txt")} are not read), in the inputs\u2019 form: the slip-rate rows from each '
+            'rupture\u2019s average slip, the magnitude bins from its magnitude and the paleo rows from UCERF3\u2019s '
+            f'probability that each site sees it; {fmt(removed)} ruptures below their sections\u2019 minimum magnitude '
+            '(the larger of 6.8 and the smallest rupture confined to the section\u2019s fault, compared by 0.1 bin, as '
+            'NZSHM22 has it) are removed (at rate 0 in every output). ' if from_rs else
+            f'The {fmt(pen_rows)} penalty rows with very large entries fix {fmt(pen_par)} ruptures at zero, and {fmt(soft)} soft '
+            f'zero-forcing rows fix {fmt(soft)} more, so {fmt(removed)} ruptures are removed (at rate 0 in every output). '
+            f'{fmt(zero_rows)} rows that then hold no remaining rupture add a constant χ² of {fmt(zero_chi2, "{:.1f}")} that '
+            f'no model can change, and are dropped. ')
+         + f'What remains is {fmt(n_rows)} rows by {fmt(n_cols)} ruptures: '
          f'{fmt(n_slip)} slip-rate rows, {fmt(n_bins)} MFD bins and {fmt(n_paleo)} paleo rows. '
          + (f'The slip-rate rows form {fmt(n_sec)} fault sections; each section\u2019s rows are divided by √k for its k '
             'subsections, so a section\u2019s slip rate counts once rather than k times. '
@@ -866,41 +882,43 @@ def main():
            'singular values of <i>G</i>. Bottom left: the resolution diagonal. Bottom right: the best fit\u2019s residuals, '
            'row by row, coloured by data type.', FW * 0.86)
 
-    head('3. The best fit (no prior)')
-    nn_shown = any(f in num for f in ('nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
-                                      'nnls/fig_paleo_rates_nnls.png'))
-    para(f'Cleaning also computes the best nonnegative least-squares fit (Lawson\u2013Hanson NNLS, {fmt(nn_s)} s). It '
-         f'reaches χ² = {fmt(nn_chi2, "{:.1f}")} over the {fmt(n_rows)} rows with only {fmt(nn_nz)} ruptures above zero: '
-         f'{fmt(nn_blk.get(sb), "{:.1f}")} from the slip rates, {fmt(nn_blk.get(bb), "{:.1f}")} from the MFD bins and '
-         f'{fmt(nn_blk.get(paleo_b), "{:.1f}")} from the paleo rows. Its total rate is {fmt(nn_sum, "{:.4f}")} per year, '
-         f'{fmt(nb_pct, "{:+.1f}")}% against the bin targets, with every bin between {fmt(nb_lo, "{:+.1f}")}% and '
-         f'{fmt(nb_hi, "{:+.1f}")}%. A fit chooses among all the rates to match far fewer numbers, so its χ² lies well '
-         'below the fit check; it is a reference with no prior and the starting point of the chains, not a sample of the '
-         'posterior. '
-         + (f'{fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} show its fit to each data type'
-            + (f', with {refname} for comparison' if ref else '') + '; the same three figures for the posterior follow in '
-            'step 9.' if nn_shown else
-            f'Its fit to each data type is drawn in the run\u2019s {tt("nnls/")} folder (not shown here); the posterior\u2019s '
-            'follows in step 9.')
-         + (f' The best fit leaves {fmt(start_out)} rows outside the band, so the chains cannot start from it as it '
-            'stands (step 5).' if band and start_out else ''))
-    figure('nnls/fig_rate_magnitude_nnls.png', 'Best fit: each rupture\u2019s rate against its magnitude bin (ruptures at '
-           'zero on the axis at the bottom; dashed: the slab floor), each bin\u2019s target (black line) and total (orange)'
-           + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '. Lower panel: each bin\u2019s total '
-           'over its target, with the band within one uncertainty.', FW * 0.6)
-    ns_phys = drawn_in('nnls/fig_slip_rates_nnls.txt', 'slip rates in mm/yr')
-    np_phys = drawn_in('nnls/fig_paleo_rates_nnls.txt', 'rates per year')
-    figure('nnls/fig_slip_rates_nnls.png', 'Best fit: each fault section\u2019s slip-rate target against the predicted '
-           'section mean, ' + ('in mm/yr' if ns_phys else 'in units of the section\u2019s measurement uncertainty')
-           + ', on linear and log scales' + ('; open squares are the reference\u2019s predictions' if ref else '') + '. '
-           + ('Each target\u2019s bar spans one sd either side.' if ns_phys else 'The grey band is within one uncertainty of '
-              'the target.'), FW * 0.8)
-    figure('nnls/fig_paleo_rates_nnls.png', 'Best fit: each paleo row\u2019s target against its prediction, '
-           + ('in events per year, on linear and log scales; each target\u2019s bars span its site\u2019s own 15.9\u201384.1% '
-              'and 2.3\u201397.7% ranges.' if np_phys else 'in units of its uncertainty, log-log; the shaded bands are '
-              'within one and two uncertainties.'), FW * 0.8 if np_phys else FW * 0.6, max_h=15 * cm)
+    nn_shown = False
+    if has_nnls:                                       # cleaning's best fit, when it made one (tests; --no-nnls since 2026-11-21)
+        head(f'{SN["bestfit"]}. The best fit (no prior)')
+        nn_shown = any(f in num for f in ('nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
+                                          'nnls/fig_paleo_rates_nnls.png'))
+        para(f'Cleaning also computes the best nonnegative least-squares fit (Lawson\u2013Hanson NNLS, {fmt(nn_s)} s). It '
+             f'reaches χ² = {fmt(nn_chi2, "{:.1f}")} over the {fmt(n_rows)} rows with only {fmt(nn_nz)} ruptures above zero: '
+             f'{fmt(nn_blk.get(sb), "{:.1f}")} from the slip rates, {fmt(nn_blk.get(bb), "{:.1f}")} from the MFD bins and '
+             f'{fmt(nn_blk.get(paleo_b), "{:.1f}")} from the paleo rows. Its total rate is {fmt(nn_sum, "{:.4f}")} per year, '
+             f'{fmt(nb_pct, "{:+.1f}")}% against the bin targets, with every bin between {fmt(nb_lo, "{:+.1f}")}% and '
+             f'{fmt(nb_hi, "{:+.1f}")}%. A fit chooses among all the rates to match far fewer numbers, so its χ² lies well '
+             'below the fit check; it is a reference with no prior and the starting point of the chains, not a sample of the '
+             'posterior. '
+             + (f'{fref("nnls/fig_rate_magnitude_nnls.png", "nnls/fig_paleo_rates_nnls.png")} show its fit to each data type'
+                + (f', with {refname} for comparison' if ref else '') + '; the same three figures for the posterior follow in '
+                '' f'step {SN["posterior"]}' '.' if nn_shown else
+                f'Its fit to each data type is drawn in the run\u2019s {tt("nnls/")} folder (not shown here); the posterior\u2019s '
+                'follows in ' f'step {SN["posterior"]}' '.')
+             + (f' The best fit leaves {fmt(start_out)} rows outside the band, so the chains cannot start from it as it '
+                'stands (' f'step {SN["sampling"]}' ').' if band and start_out else ''))
+        figure('nnls/fig_rate_magnitude_nnls.png', 'Best fit: each rupture\u2019s rate against its magnitude bin (ruptures at '
+               'zero on the axis at the bottom; dashed: the slab floor), each bin\u2019s target (black line) and total (orange)'
+               + (f', and {refname}\u2019s bin totals (black squares)' if ref else '') + '. Lower panel: each bin\u2019s total '
+               'over its target, with the band within one uncertainty.', FW * 0.6)
+        ns_phys = drawn_in('nnls/fig_slip_rates_nnls.txt', 'slip rates in mm/yr')
+        np_phys = drawn_in('nnls/fig_paleo_rates_nnls.txt', 'rates per year')
+        figure('nnls/fig_slip_rates_nnls.png', 'Best fit: each fault section\u2019s slip-rate target against the predicted '
+               'section mean, ' + ('in mm/yr' if ns_phys else 'in units of the section\u2019s measurement uncertainty')
+               + ', on linear and log scales' + ('; open squares are the reference\u2019s predictions' if ref else '') + '. '
+               + ('Each target\u2019s bar spans one sd either side.' if ns_phys else 'The grey band is within one uncertainty of '
+                  'the target.'), FW * 0.8)
+        figure('nnls/fig_paleo_rates_nnls.png', 'Best fit: each paleo row\u2019s target against its prediction, '
+               + ('in events per year, on linear and log scales; each target\u2019s bars span its site\u2019s own 15.9\u201384.1% '
+                  'and 2.3\u201397.7% ranges.' if np_phys else 'in units of its uncertainty, log-log; the shaded bands are '
+                  'within one and two uncertainties.'), FW * 0.8 if np_phys else FW * 0.6, max_h=15 * cm)
 
-    head('4. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''), new_page=True)
+    head(f'{SN["model"]}. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''), new_page=True)
     para(f'<b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
          f'rate from 10<super>{floor:g}</super> per year up to its magnitude bin\u2019s target rate (spike-and-slab). The '
          'top is soft, a Gaussian shoulder as wide as the bin\u2019s own uncertainty, since no single rupture can carry more '
@@ -1050,7 +1068,7 @@ def main():
                 'that in mind. ') if not mtau or gwts else '')
              + 'The prior\u2019s soft top on each bin is its PDF\u2019s 84% point (a 97.7% top changed nothing beyond noise), '
              'and the MFD figure also scores each model against NZSHM22\u2019s own bins, as the runs without MFD_GR do, '
-             'so the two kinds of run can be compared (step 9).')
+             'so the two kinds of run can be compared (' f'step {SN["posterior"]}' ').')
     if gwv:                                            # DATATYPES_EQUAL: the weights, and what they mean
         nm_ = {'slip': 'the slip rates', 'mfd': 'the MFD bins', 'paleo': 'the paleo sites'}
         para('<b>Equal weight for the data types</b> (DATATYPES_EQUAL). Each type\u2019s log likelihood is multiplied by '
@@ -1061,7 +1079,7 @@ def main():
              'unweighted. It is a design choice, not a correction for misfit: a type fitted worse than its uncertainties '
              'allow is held more tightly, not less (a variance-component estimate would weight the other way), so the '
              'posterior is surer of the MFD and the paleo rates than their stated uncertainties alone would make it, and '
-             'the slip rates bear the cost (step 7\u2019s table).')
+             'the slip rates bear the cost (' f'step {SN["fit"]}' '\u2019s table).')
 
     # the targets: the inputs' Gaussians against the distributions this run scores the data by (plot_targets.py)
     if any(f in num for f in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')):
@@ -1101,7 +1119,7 @@ def main():
            + ('This run scores the bins by these PDFs (MFD_GR).' if mfdgr else
               'This run used cru_D\u2019s Gaussians; MFD_GR\u2019s default PDFs are shown for comparison.'), FW)
 
-    head('5. Sampling')
+    head(f'{SN["sampling"]}. Sampling')
     para(f'The sampler ({tt("gibbs.py")}, a C kernel run from Python) is an exact Gibbs sampler: it updates one rupture at '
          'a time, drawing its rate from its exact conditional distribution by a slice sampler in log rate, with an exact '
          'step that switches the rupture on or off. '
@@ -1145,7 +1163,7 @@ def main():
          + ' The runs keep running summaries rather than every draw, plus whole draws for the representative models and '
          'the figures.')
 
-    head('6. Convergence')
+    head(f'{SN["convergence"]}. Convergence')
     passes = [verdict.get(n) for n in names]
     ess_c = [float(crow[n][3]) for n in names]
     ess_t = [float(crow[n][4]) for n in names]
@@ -1183,7 +1201,7 @@ def main():
               verdict.get(n, 'n/a')] for n in names],
           [2.2 * cm, 1.8 * cm, 3.8 * cm, 2.9 * cm, 3.6 * cm, FW - 14.3 * cm])
 
-    head('7. Fit to the data')
+    head(f'{SN["fit"]}. Fit to the data')
     if chi2 is not None and z_all is not None:
         how = ('consistent with it' if abs(z_all) <= 2 else f'below it ({fmt(z_all, "{:+.1f}")} standard deviations)'
                if z_all < 0 else f'above it ({fmt(z_all, "{:+.1f}")} standard deviations)')
@@ -1245,7 +1263,7 @@ def main():
                    f'{plate_top.group(7)} in the fault model), reaches {float(plate_top.group(5)):.3f} at the kept '
                    'draws\u2019 97.5%' if plate_top else '') + '.' if plate_in else ''))
 
-    head('8. Posterior tables, rate vectors and representative models')
+    head(f'{SN["tables"]}. Posterior tables, rate vectors and representative models')
     rel = None if post_tot is None or t_tot is None else 100 * (post_tot / t_tot - 1)
     para(f'{tt("make_tables.py")} pools the replicates into per-rupture, per-subsection and per-bin tables and into rate '
          f'vectors ({tt("rate_vectors.csv")}): for each of the {fmt(raw_cols)} ruptures its posterior mean, median, mode '
@@ -1254,8 +1272,9 @@ def main():
          f'The posterior-mean total rate is {fmt(post_tot, "{:.4f}")} per year, {fmt(rel, "{:+.1f}")}% against the bin '
          'targets' + (f' ({refname}: {ref_tot:.4f})' if ref_tot else '') + '; the bin totals sit a median '
          f'{fmt(bt_med and 100 * (bt_med - 1), "{:+.1f}")}% from their targets ({fmt(bt_lo and 100 * (bt_lo - 1), "{:+.1f}")}% '
-         f'to {fmt(bt_hi and 100 * (bt_hi - 1), "{:+.1f}")}%), against the best fit\u2019s '
-         f'{fmt(bt_nn and 100 * (bt_nn - 1), "{:+.1f}")}%. About {fmt(undet)}% of each subsection\u2019s posterior rate (the '
+         f'to {fmt(bt_hi and 100 * (bt_hi - 1), "{:+.1f}")}%)'
+         + (f', against the best fit\u2019s {fmt(bt_nn and 100 * (bt_nn - 1), "{:+.1f}")}%' if has_nnls else '') + '. '
+         f'About {fmt(undet)}% of each subsection\u2019s posterior rate (the '
          'median) is carried by ruptures whose rates are individually below what the data can detect. '
          + (f'{tt("select_draws.py")} then picks {reps} weighted representative models from the {fmt(n_kept)} kept draws, '
             'clustering them by their rates per subsection and magnitude bin, for use in hazard calculations. With '
@@ -1264,7 +1283,7 @@ def main():
             + ('; the selection misses some tolerances, so the posterior-mean rate vector remains the exact input for '
                'mean hazard.' if s_verdict[1] and 'miss' in s_verdict[1] else '.') if reps and sel else ''))
 
-    head('9. The posterior\u2019s fit, data type by data type')
+    head(f'{SN["posterior"]}. The posterior\u2019s fit, data type by data type')
     hi_bins = [r for m_, r in ratios if m_ >= 7.1]
     span = lambda v: rng([100 * (r - 1) for r in v], '{:+.1f}').replace('\u2013', '% to ')   # +1.5% to +4.6
     lo_bins = [r for m_, r in ratios if m_ < 7.1]
@@ -1277,7 +1296,8 @@ def main():
          + (', and each faint x one of the kept draws, so where the draws gather shows darkest' if n_kept else '')
          + ('; open black squares are ' + refname if ref else '') + '. '
          + (f'<b>Rates by magnitude</b> ({fref(a.prior + "/fig_rate_magnitude.png")}): the posterior spreads each bin\u2019s '
-            'rate over many ruptures at low mean rates, where the best fit puts a few ruptures high and the rest at zero. '
+            'rate over many ruptures at low mean rates' + (', where the best fit puts a few ruptures high and the rest at '
+            'zero' if has_nnls else '') + '. '
             + (f'The bin totals are {span(lo_bins)}% from their targets below M7.1 and '
                f'{span(hi_bins)}% from M7.1 upward. '
                if lo_bins and hi_bins else '')
@@ -1318,7 +1338,7 @@ def main():
                                           'fig_slip_sections_ruptures_2.png', 'fig_slip_sections_ruptures_by_magnitude_1.png',
                                           'fig_slip_sections_ruptures_by_magnitude_2.png')]
     if any(f in num for f in fig_ss):
-        head('10. Faults one by one')
+        head(f'{SN["faults"]}. Faults one by one')
         unit = 'named faults' if named else 'slip-rate sections'
         txt = (f'{tt("plot_slip_sections.py")} looks at {len(faults) or "the"} {unit}, ordered from the most isolated '
                + (f'({faults[0]["name"]}, which shares '
@@ -1364,17 +1384,17 @@ def main():
         figure(fig_ss[4], 'Rupture rates by magnitude, second part.', LW * 0.86, max_h=lmax - 1.4 * cm)
         story += [NextPageTemplate('portrait'), PageBreak()]
 
-    head('11. Output for OpenSHA')
+    head(f'{SN["opensha"]}. Output for OpenSHA')
     para(f'{tt("make_solution.py")} writes the posterior-mean rates as an OpenSHA fault-system solution\u2019s rates file '
-         f'({tt(a.prior + "/rates.csv")}, one row per rupture of the rupture set, removed ruptures at zero), and the best '
-         f'fit\u2019s as {tt("nnls/rates.csv")}. Before writing, it checks that the rates and the rupture set describe the '
+         f'({tt(a.prior + "/rates.csv")}, one row per rupture of the rupture set, removed ruptures at zero)'
+         + (f', and the best fit\u2019s as {tt("nnls/rates.csv")}' if has_nnls else '') + '. Before writing, it checks that the rates and the rupture set describe the '
          'same ruptures: '
          + (f'{sol_ok[0]:,} of {sol_ok[1]:,} kept ruptures cross exactly the fault sections the rupture set lists, and '
             'each one\u2019s magnitude lies in its bin. ' if sol_ok[0] is not None else 'see its report. ')
          + f'With {tt("--zip")} it also writes a complete archive that OpenSHA loads. Any representative model can be '
          'written the same way.')
 
-    head('12. Points to keep in mind')
+    head(f'{SN["points"]}. Points to keep in mind')
     pts = []
     if band and z_all is not None and z_all < -2:
         pts.append(f'<b>The fit check under the band.</b> χ² is {-z_all:.1f} standard deviations below the fit check, '

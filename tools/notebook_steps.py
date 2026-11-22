@@ -90,7 +90,8 @@ def setup(g):
     nb_dir = g['_NOTEBOOK_DIR']
     resolve = lambda p: os.path.normpath(os.path.join(nb_dir, os.path.expanduser(str(p))))
     g['DATA_DIR'], g['RUN_DIR'] = resolve(g['DATA_DIR']), resolve(g['RUN_DIR'])
-    for f_ in (g['A_FILE'], g['D_FILE']) + (() if g['SLIP_SECTIONS'] in ('auto', 'none') else (g['SLIP_SECTIONS'],)):
+    no_ad = g['MFD_GR'] and g['CFM_SLIPRATES']         # G and d from the rupture set: cru_A and cru_D not needed
+    for f_ in (() if no_ad else (g['A_FILE'], g['D_FILE'])) + (() if g['SLIP_SECTIONS'] in ('auto', 'none') else (g['SLIP_SECTIONS'],)):
         if not os.path.exists(os.path.join(g['DATA_DIR'], f_)):
             raise FileNotFoundError(f"{f_} is not in DATA_DIR ({g['DATA_DIR']})")
     os.makedirs(g['RUN_DIR'], exist_ok=True)
@@ -232,10 +233,19 @@ def cleaning_args():
     g = _G['g']
     _G['before'] = _cleaned_settings() if os.path.exists('cru_clean.npz') else None
     D = g['DATA_DIR']
-    a = ['--A', os.path.join(D, g['A_FILE']), '--d', os.path.join(D, g['D_FILE']), '--out', 'cru_clean.npz',
+    if g['MFD_GR'] and g['CFM_SLIPRATES']:             # every row from the rupture set (2026-11-21, the user's request:
+        if not g['RUPTURE_DIR']:                       # the bins from MFD_GR, the slip rates from the CFM, so cru_A and
+            raise FileNotFoundError('MFD_GR with the CFM\'s slip rates builds the inputs from the rupture set, and none was '
+                                    f"found (RUPTURE_SET {g['RUPTURE_SET']!r}, DATA_DIR {D})")   # cru_D are not read)
+        src = ['--from-rupture-set', g['RUPTURE_DIR']]
+    else:
+        src = ['--A', os.path.join(D, g['A_FILE']), '--d', os.path.join(D, g['D_FILE'])]
+    a = src + ['--out', 'cru_clean.npz',
          '--bins-block', g['BIN_BLOCK'], '--slip-block', g['SLIP_BLOCK'], f"--diag-floor={g['FLOOR']}",
          '--slip-sections', g['SLIP_SECTIONS'] if g['SLIP_SECTIONS'] in ('auto', 'none') else os.path.join(D, g['SLIP_SECTIONS']),
          '--mfd-uncertainty', g['MFD_UNCERTAINTY']]
+    if g['DISPERSED_STARTS']:                          # no best fit: every chain starts from a prior draw (since 2026-11-21)
+        a += ['--no-nnls']
     if g['BLOCKS']:
         a += ['--blocks', g['BLOCKS']]
     if g['CFM_SLIPRATES']:                             # the slip-rate rows rebuilt from the CFM, as split normals

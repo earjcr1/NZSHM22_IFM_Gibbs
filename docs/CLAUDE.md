@@ -16,6 +16,11 @@ full comments are in REPORT.md, "The notebook, step by step". DOWN_THE_MIDDLE (F
 in run_config.py (FIXED; DOWN_THE_MIDDLE shown beside RUN_MINUTES and in the run name only when not False). No self-test
 cell or RUN_SELFTESTS; run_nb.py NOTEBOOK RUN_DIR DATA_DIR [NAME=VALUE ...]. The cleaning figure (preliminaries.py
 --figure) and the target figures (plot_targets.py) are on request.
+Since 2026-11-21 (the user's request): the notebook passes preliminaries.py --no-nnls (no best fit; DISPERSED_STARTS fixed True
+in run_config.py, False only for tests, which get the fit back) and, with MFD_GR and the CFM, --from-rupture-set RUPTURE_DIR
+(rupture_set_inputs.build_inputs: the inputs' rows from the solution folder's ruptures/; cru_A/cru_D not read; checked
+equivalent at 19k, 211k, 630k; REPORT "Inputs from the rupture set, and no best fit"). make_summary_pdf numbers its steps
+by the sections present (SN). The best-fit cells left the notebook.
 Code, all in tools/: preliminaries.py (clean, with soft zero-forcing rows forcing their ruptures to 0 like the penalty rows; diagnostics;
 NNLS, always computed (about 25 s at 211k; the chains start from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
 nnls_vectors.npz, which the notebook draws with the three fit-figure scripts below, and nnls_vectors.csv, a table with

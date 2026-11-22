@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py']
+SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -146,15 +146,16 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
       'for later plans; the other priors are gibbs.py options')
-check(re.findall(r'^DISPERSED_STARTS = (\S+)', cells[0][1], re.M) == ['True'] and "dispersed_starts=g['DISPERSED_STARTS']" in STEPS
-      and "sh('dispersed_starts.py', *starts_args())" in NBALL and "'--noise', 2," in STEPS and "'--prior-share', 0.5]" in STEPS
+check(re.findall(r'^DISPERSED_STARTS = (\S+)', src['run_config.py'], re.M) == ['True']
+      and not re.search(r'^DISPERSED_STARTS = ', cells[0][1], re.M) and "dispersed_starts=g['DISPERSED_STARTS']" in STEPS
+      and "sh('dispersed_starts.py', *starts_args())" in NBALL and "'--prior-share', 1]" in STEPS
       and "a += ['--fit-args', '--bins-block'," in STEPS
-      and 'REPLICATE_MIN, REPLICATES_MAX = 50000, 1' in src['run_plan.py'] and 'noise=a.noise' in src['dispersed_starts.py'] and "SeedSequence([a.seed, 7]).spawn(n_prior)" in src['dispersed_starts.py']
-      and 'def ensemble(problem, n_fits, seed, workers, verbose=True, noise=1.0):' in src['randomized_nnls.py']
+      and 'REPLICATE_MIN, REPLICATES_MAX = 50000, 1' in src['run_plan.py'] and "SeedSequence([a.seed, 7]).spawn(n_prior)" in src['dispersed_starts.py']
       and 'DISPERSED_STARTS=False' in open(f'{ROOT}/tools/run_quick_checks.sh').read(),
-      'notebook DISPERSED_STARTS = True (2026-11-17): half the chains from randomized best fits at twice the stated noise, '
-      'half from prior draws scaled to the bins\' targets (--prior-share 0.5), each polished briefly by best_fit_as_fitted.py in the run\'s model space (dispersed_starts.py, randomized_nnls.ensemble noise), passed to gibbs.py --init starts.npy; one '
-      'replicate (run_plan REPLICATES_MAX 1); the smoke test pins it off')
+      'DISPERSED_STARTS = True, fixed in run_config.py since 2026-11-21: every chain from its own prior draw scaled to the '
+      'bins\' targets (--prior-share 1, since 2026-11-20), polished briefly by best_fit_as_fitted.py in the run\'s model '
+      'space, passed to gibbs.py --init starts.npy; one replicate (run_plan REPLICATES_MAX 1); the smoke test pins it off '
+      '(every chain from the best fit, which cleaning then computes)')
 check(not any("plot_targets.py'" in c for _, c in cells) and "'--figure'" in src['preliminaries.py']
       and not any("show('prelim.png')" in c for _, c in cells)
       and all(f_ in open(f'{ROOT}/tools/make_summary_pdf.py').read() for f_ in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')),
@@ -323,11 +324,11 @@ check('\ndef paleo_json(' in src['paleo_misfit.py'] and 'paleo_json(rupture_dir'
       and os.path.exists(f'{ROOT}/data/paleo_constraint_data.json'),
       'paleo sites: the rupture set\'s paleo_constraint_data.json, or, for a rupture set made without an inversion (630k), '
       'data/paleo_constraint_data.json once its sites\' sections match the rupture set\'s (paleo_misfit.paleo_json)')
-check(sum(c.count('*ref_args()') for c in [NBALL]) == 5 and '\ndef reference_rates(' in src['cru_common.py']
+check(sum(c.count('*ref_args()') for c in [NBALL]) == 4 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
       'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
-      'solution to all of them (the best fit\'s and the posterior\'s)')
+      'solution to all of them (the posterior\'s; no best fit since 2026-11-21)')
 check(all('axis_span(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'randomized_nnls.py'))
       and 'best_fit_rates(' in src['plot_rate_magnitude.py'] and '\ndef axis_span(' in src['cru_common.py'],
       'the fit figures take fixed axes from the targets and the best fit (cru_common.axis_span, best_fit_rates)')
@@ -415,8 +416,11 @@ check(not any(re.search(r'\bTARGET\b', c) or "'--target'" in c for _, c in cells
       '--target, and records no target')
 pre_opts = {a.value for n in ast.walk(trees['preliminaries.py']) if isinstance(n, ast.Call) and getattr(n.func, 'attr', '') == 'add_argument'
             for a in n.args if isinstance(a, ast.Constant)}
-check('--keep-soft-penalties' in pre_opts and '--no-nnls' not in pre_opts,
-      'preliminaries.py has --keep-soft-penalties and always computes the best fit (no --no-nnls)')
+check('--keep-soft-penalties' in pre_opts and '--no-nnls' in pre_opts and '--from-rupture-set' in pre_opts
+      and "a += ['--no-nnls']" in STEPS and "src = ['--from-rupture-set', g['RUPTURE_DIR']]" in STEPS
+      and '\ndef build_inputs(' in src['rupture_set_inputs.py'],
+      'preliminaries.py has --keep-soft-penalties, --no-nnls (the notebook passes it with DISPERSED_STARTS, since 2026-11-21) '
+      'and --from-rupture-set (rupture_set_inputs.build_inputs; the notebook with MFD_GR and the CFM, cru_A/cru_D not read)')
 dense_g = re.findall(r'\bG[a-z]?\.toarray\(\)', src['preliminaries.py'])        # a whole G made dense: 4 GB at 2e5, 11 at 5e5
 check(not dense_g and 'qr_insert' in src['preliminaries.py'], 'preliminaries.py makes no dense copy of G (the best fit updates a QR '
       'factorization)' + (f'; found {", ".join(dense_g)}' if dense_g else ''))
@@ -424,23 +428,19 @@ check(not any("'--selftest'" in c or 'RUN_SELFTESTS' in c for _, c in cells)
       and re.search(r"'--selftest', nargs='\?', const='all', choices=\['all', 'current'\]", src['gibbs.py']) is not None,
       "the self-tests run from the command line since 2026-11-17 (gibbs.py --selftest takes 'all' or 'current'); the "
       'notebook runs none')
-cc = [i for i, c in cells if "'nnls/nnls_vectors.npz:best fit (NNLS)'" in c]
-clean_c = [i for i, c in cells if "sh('preliminaries.py', *cleaning_args())" in c]
-runs_c = [i for i, c in cells if 'PLAN, P = plan_runs()' in c]
-check(len(cc) == 1 and all(f"'{s}'" in c for i, c in cells if i in cc for s in ('plot_slip_rates.py', 'plot_rate_magnitude.py',
-      'plot_paleo_rates.py')) and bool(clean_c) and bool(runs_c) and clean_c[0] < cc[0] < runs_c[0]
-      and "'nnls_vectors.npz'" in src['preliminaries.py'],
-      f'the best fit (nnls_vectors.npz, which preliminaries.py writes) is drawn right after cleaning, before the runs (cells {cc}), '
-      'to show whether a data type is far off in the fit')
+cc = [i for i, c in cells if 'nnls' in c]
+check(not cc and "'nnls_vectors.npz'" in src['preliminaries.py'],
+      f'no best fit in the notebook since 2026-11-21 (cells naming nnls: {cc}); preliminaries.py still writes nnls_vectors.npz '
+      'without --no-nnls (tests)')
 check("'nnls_vectors.csv'" in src['preliminaries.py'], 'preliminaries.py also writes the best fit as a table, nnls_vectors.csv')
 cc = [i for i, c in cells if "'make_solution.py'" in c and 'sh(' in c]   # the solutions cell, the last
 check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'auto'"] and "find_rupture_set(g['DATA_DIR'])" in STEPS
       and '\ndef rupture_dir():' in STEPS and len(cc) == 1 and cc[0] == cells[-1][0]
-      and all("'nnls/nnls_vectors.npz'" in c and "'--column', 'mean'" in c and "'--ruptures', _rd" in c and 'rupture_dir()' in c
+      and all("'nnls/nnls_vectors.npz'" not in c and "'--column', 'mean'" in c and "'--ruptures', _rd" in c and 'rupture_dir()' in c
               for i, c in cells if i in cc)
       and "os.path.join(os.path.dirname(stem), 'nnls')" in src['preliminaries.py'] and {'rupture_set', 'rupture_dir'} <= set(keys or []),
-      f"the best fit's outputs go into RUN_DIR/nnls/ (preliminaries.py); the last cell ({cc}) writes it and the posterior mean "
-      "as OpenSHA solutions (make_solution.py) for the rupture set found then (RUPTURE_SET = 'auto'); both recorded")
+      f"the last cell ({cc}) writes the posterior mean as an OpenSHA solution (make_solution.py) for the rupture set found "
+      "then (RUPTURE_SET = 'auto'), recorded; a best fit, when cleaning makes one (tests), goes into RUN_DIR/nnls/")
 
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = [
@@ -450,8 +450,8 @@ _rc = src['run_config.py']
 check('setup(globals())' in cells[0][1] and 'g.update(derived_settings(g))' in STEPS
       and cells[0][1].index('setup(globals())') > cells[0][1].index('SEED = ')
       and all(re.search(rf'^{s_} = ', _rc, re.M) and not re.search(rf'^{s_} = ', cells[0][1], re.M)
-              for s_ in ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES'))
-      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY')" in _rc
+              for s_ in ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'DISPERSED_STARTS'))
+      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')" in _rc
       and "('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')" in _rc
       and 'from run_config import OVERRIDABLE' in open(f'{ROOT}/tools/run_nb.py').read(),
       'notebook: BLOCKS, SLIP_SECTIONS, RUPTURE_SET, CROSS_SECTIONS, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed '

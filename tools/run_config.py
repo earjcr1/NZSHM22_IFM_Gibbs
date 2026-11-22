@@ -51,9 +51,13 @@ MFD_UNCERTAINTY = 'as-given'                   # the MFD bins' uncertainties (pr
                                                # them; out of the notebook since 2026-11-18 (the user's choice: DATATYPES_EQUAL does
                                                # what it was for). 'two-measurements' or the M7.0-7.1 bin's relative sd for
                                                # sensitivity tests (tools/run_nb.py MFD_UNCERTAINTY='two-measurements')
+DISPERSED_STARTS = True                        # every chain from its own prior draw (dispersed_starts.py); out of the notebook since
+                                               # 2026-11-21 (the user's choice, with the best fit taken out of the workflow): False,
+                                               # every chain from the NNLS best fit, which cleaning then computes, for tests only
+                                               # (tools/run_quick_checks.sh)
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
 FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
-         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY')
+         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
 PLAN_KEYS = ('chains', 'sweeps', 'burn', 'thin', 'replicates')
@@ -79,6 +83,7 @@ def derived_settings(g):
     fixed = dict(BLOCKS=BLOCKS, SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
                  CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None, DOWN_THE_MIDDLE=DOWN_THE_MIDDLE,
                  SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK, MFD_UNCERTAINTY=MFD_UNCERTAINTY)
+    fixed['DISPERSED_STARTS'] = DISPERSED_STARTS
     fixed.update({k: v for k, v in ov.items() if k in FIXED})
     if not (isinstance(fixed['DOWN_THE_MIDDLE'], bool) or fixed['DOWN_THE_MIDDLE'] == 'zero-model'):
         raise ValueError(f"DOWN_THE_MIDDLE = {fixed['DOWN_THE_MIDDLE']!r}: use True (the balance term), 'zero-model' (its "
