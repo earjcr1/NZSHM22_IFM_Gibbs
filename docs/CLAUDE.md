@@ -548,7 +548,8 @@ preliminaries.py --mfd-gr B10,B,B90,N10,N,N90,S_LO,S_HI --rupture-set DIR (MFD_G
 MFD_GR_N5 = (2.65, 3.40, 4.57), MFD_GR_NSCALE = (0.66, 1.41); the user's revision 2026-11-17 from Rollins et al. 2024 BSSA Table 1,
 upper-plate IFM, replacing independent N5/b triples): b a split normal through its 10th percentile, mean, 90th (sd = distance / 1.2816);
 N(b) the conditional mean, a quadratic in log10 N through the three pairs (mfd_gr.n_of_b; N and b correlated); the N scaling s a split
-normal in ln s, mode 1, each side's sd half the log of its 2-sigma value; target = s N(b) f_j(b) (parse_knobs). RECONSIDER_MAGUNCERT
+normal in ln s through its 2-sigma values (2.275/97.725%) with E[s] = 1 (mfd_gr.nscale_split; the user's reading 2026-11-23: 1 is the
+mean, not the mode; before, mode 1 and E[s] 0.989; for (0.66, 1.41) mode 1.017, sds 0.212/0.168, every bin's PDF up ~1.1% at 630k); target = s N(b) f_j(b) (parse_knobs). RECONSIDER_MAGUNCERT
 (2026-11-17, True by default; True, False or a triple): a further factor m on N for the catalogue's magnitude uncertainties (3.40 assumes
 them downward-skewed, Rhoades 1996; half the skew gives 3.92; Gaussian ~+25-30%): mfd_gr.MAGUNCERT = (1, 3.92/3.40, 1 + 2(3.92/3.40 - 1))
 three branches of EQUAL WEIGHT (the user's values and weights, 2026-11-17; to be revised after the catalogue's reanalysis; first read

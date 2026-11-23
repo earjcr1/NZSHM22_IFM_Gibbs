@@ -39,8 +39,9 @@ Each component is proportional to N5, so a bin's target is N5 x f_j(b). The knob
 BSSA 114, 150-181, Table 1, upper-plate IFM; the user's choice, 2026-11-17, replacing independent N5 and b triples):
 b's 10th percentile, mean and 90th percentile (0.823, 0.959, 1.089), read as a split normal; the mean N(M>=5)
 conditioned on each (2.65, 3.40, 4.57 per year), so N and b are correlated, N(b) a quadratic in log10 N through the three
-pairs; and the N scaling s, a factor on the whole MFD independent of b, its 2-sigma values (0.66, 1.41) about 1, read as
-a split normal in ln s (parse_knobs); with RECONSIDER_MAGUNCERT, a further factor m on N for the catalogue's magnitude
+pairs; and the N scaling s, a factor on the whole MFD independent of b, its 2-sigma values (0.66, 1.41) about its mean,
+1, read as a split normal in ln s with those 2.275% and 97.725% points and a mean of s of 1 (nscale_split; the user's
+reading, 2026-11-23; its mode was at 1 before, its mean 0.989); with RECONSIDER_MAGUNCERT, a further factor m on N for the catalogue's magnitude
 uncertainties (MAGUNCERT: 1, 3.92/3.40, 1 + 2 (3.92/3.40 - 1), three branches of equal weight), ln(s m)'s density the
 mean of ln s's density shifted by each ln m. A bin's target is s m N(b) f_j(b). Each bin's PDF is propagated exactly (bin_pdfs:
 ln s's density summed over a fine grid of b, in u = ln of the target) and described for the sampler by the paleo sites'
@@ -225,8 +226,9 @@ def parse_knobs(spec):
          distance to the 10th or 90th percentile over 1.2816);
       n: the mean rate of M>=5 earthquakes conditioned on each of those b-values: N(b), a quadratic in log10 N through the
          three pairs (b and N correlated);
-      s: the N scaling, a factor on the whole MFD independent of b, its 2.275% and 97.725% (2 sigma) values about 1 (a split
-         normal in ln s, its mode at 1, each side's sd half the log distance to its value);
+      s: the N scaling, a factor on the whole MFD independent of b, its 2.275% and 97.725% (2 sigma) values about its mean,
+         1 (a split normal in ln s through those two points with a mean of s of 1, nscale_split; its mode at 1 until
+         2026-11-23);
       m: RECONSIDER_MAGUNCERT's factor on every N (MAGUNCERT, 1.0, 3.92/3.40, 1 + 2(3.92/3.40 - 1): N with magnitude uncertainties
          downward-skewed, half that skew, or Gaussian), three branches of equal weight (the user's choice, 2026-11-17;
          earlier that day the -2 sigma, mean and +2 sigma of a normal), independent of b and s; the target's middle value
@@ -248,8 +250,8 @@ def parse_knobs(spec):
         raise ValueError(f'MFD_GR {spec}: b\'s values must rise (B10 < B < B90), or all three be equal (b fixed)')
     if not all(x > 0 for x in n) or (b[0] == b[2] and len(set(n)) > 1):
         raise ValueError(f'MFD_GR {spec}: the N values must be above 0 (and equal when b is fixed)')
-    if not (0 < sc[0] <= 1 <= sc[1]):
-        raise ValueError(f'MFD_GR {spec}: the N scaling\'s values must bracket 1 (0 < S_LO <= 1 <= S_HI)')
+    if not (0 < sc[0] < 1 < sc[1] or sc[0] == sc[1] == 1):
+        raise ValueError(f'MFD_GR {spec}: the N scaling\'s values must bracket its mean, 1 (0 < S_LO < 1 < S_HI), or both be 1')
     if b[0] == b[2] and sc[0] == sc[1]:
         raise ValueError(f'MFD_GR {spec}: neither b nor the N scaling has spread, so the bins have no distribution')
     return dict(b=b, n=n, s=sc, m=m)
@@ -274,6 +276,42 @@ def _split_logpdf(x, lo, mode, hi):
     return -0.5 * ((x - mode) / s) ** 2 - np.log(0.5 * (s_lo + s_hi) * math.sqrt(2 * math.pi))
 
 
+P2SIG = 0.022750131948179195                         # a standard normal's probability below -2 sigma
+
+
+def nscale_split(lo, hi):
+    """The N scaling's distribution (the user's reading, 2026-11-23): a split normal in ln s whose mean of s itself is 1
+    and whose 2.275% and 97.725% points are lo and hi exactly. Returns (c, s_lo, s_hi): its mode in ln s and the sd on each
+    side. (Until then its mode was at ln s = 0 with each side's sd half the log distance to lo or hi, which put the mean of
+    s at 0.989 for (0.66, 1.41).) For a split normal of mode c and sds a, b: P(v < c + a z) = 2a/(a+b) Phi(z) below the
+    mode, the same with b above, and E[e^v] = e^c 2/(a+b) (a e^(a^2/2) Phi(-a) + b e^(b^2/2) Phi(b))."""
+    from scipy.optimize import brentq
+    from scipy.stats import norm
+    xl, xh = math.log(lo), math.log(hi)
+
+    def sds(c):                                           # the sds putting P2SIG below xl and above xh, for a mode c: r = a/(a+b)
+        def r_gap(r):                                     # solves (c - xl)/a = -z(P2SIG/(2r)), (xh - c)/b = -z(P2SIG/(2(1-r)))
+            a = (c - xl) / -norm.ppf(P2SIG / (2 * r))
+            b = (xh - c) / -norm.ppf(P2SIG / (2 * (1 - r)))
+            return a / (a + b) - r, a, b
+        r = brentq(lambda r_: r_gap(r_)[0], P2SIG * (1 + 1e-9), 1 - P2SIG * (1 + 1e-9), xtol=1e-15)   # r > P2SIG each side
+        return r_gap(r)[1:]
+
+    def ln_mean(c):
+        a, b = sds(c)
+        return c + math.log(2 / (a + b) * (a * math.exp(a * a / 2) * norm.cdf(-a) + b * math.exp(b * b / 2) * norm.cdf(b)))
+
+    w = xh - xl
+    cs = xl + w * np.linspace(0.001, 0.999, 999)
+    f = np.array([ln_mean(c_) for c_ in cs])              # rises with the mode
+    k = np.flatnonzero((f[:-1] < 0) & (f[1:] >= 0))
+    if not k.size:
+        raise ValueError(f'MFD_GR: no split normal in ln s has a mean of 1 with its 2-sigma points at {lo:g} and {hi:g}')
+    c = brentq(ln_mean, cs[k[0]], cs[k[0] + 1], xtol=1e-14)
+    a, b = sds(c)
+    return c, a, b
+
+
 def level_logpdf(knobs):
     """The level's prior: ln of the density of v = ln(s m) (s the N scaling, m RECONSIDER_MAGUNCERT's factor, independent:
     the N scaling has no allowance for the magnitudes' uncertainties, the user's confirmation, 2026-11-18), as a function;
@@ -283,11 +321,10 @@ def level_logpdf(knobs):
     if sl_ == sh_:                                        # s fixed at 1: a narrow kernel in ln s
         lps = lambda v: -0.5 * (v / FIXED_KERNEL) ** 2 - math.log(FIXED_KERNEL * math.sqrt(2 * math.pi))
         v_lo, v_hi = -8 * FIXED_KERNEL, 8 * FIXED_KERNEL
-    else:                                                 # ln s a split normal, mode 0, each side's sd half its 2-sigma distance
-        s_lo, s_hi = -0.5 * math.log(sl_), 0.5 * math.log(sh_)
-        s_lo, s_hi = (s_lo or s_hi), (s_hi or s_lo)
-        lps = lambda v: _split_logpdf(v, -s_lo, 0.0, s_hi)
-        v_lo, v_hi = -8 * s_lo, 8 * s_hi
+    else:                                                 # ln s a split normal, the mean of s 1 and its 2-sigma points exact
+        c_, s_lo, s_hi = nscale_split(sl_, sh_)
+        lps = lambda v: _split_logpdf(v, c_ - s_lo, c_, c_ + s_hi)
+        v_lo, v_hi = c_ - 8 * s_lo, c_ + 8 * s_hi
     m_c = 1.0                                             # the magnitude-uncertainty factor's middle branch (1: none)
     if knobs.get('m') is None:
         lpv = lps
@@ -433,7 +470,7 @@ def knob_text(knobs):
     b, n, sc = knobs['b'], knobs['n'], knobs['s']
     return (f'b {b[1]:g} (10th-90th percentile {b[0]:g}-{b[2]:g}, a split normal) with the mean N(M>=5) at each '
             f'{n[1]:g} ({n[0]:g}, {n[2]:g}; N(b) a quadratic in log10 N), and the N scaling, 2-sigma {sc[0]:g}-{sc[1]:g} '
-            '(a split normal in ln s about 1)'
+            '(a split normal in ln s, its mean 1)'
             + (f', times the magnitude-uncertainty factor m, {"/".join(f"{x_:g}" for x_ in knobs["m"])} with equal weights '
                '(RECONSIDER_MAGUNCERT)' if knobs.get('m') else ''))
 
