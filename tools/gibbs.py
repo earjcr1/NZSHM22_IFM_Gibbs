@@ -5670,15 +5670,22 @@ def main():
         T.add_limits(mono['rows'], 0.0, np.inf, mono['eps'] * 1e-15, 'the MFD\'s monotonicity')
         X0 = np.array(X0, np.float64)
         fixed = 0
-        for x in X0:                               # a start that breaks it: each offending bin scaled down to its neighbour
-            for _ in range(len(mono['pairs']) + 1):
-                tot = np.array([x[m].sum() for m in mono['members']])
-                bad = [(k, k1, rho) for (k, k1), rho in zip(mono['pairs'], mono['rhos']) if tot[k1] > rho * tot[k]]
-                if not bad:
-                    break
-                k, k1, rho = bad[0]
-                x[mono['members'][k1]] *= rho * tot[k] / tot[k1] * (1 - 1e-9)
-                fixed += 1
+        for _round in range(5):                    # the prior's support first (rates below the slab floor are off, so
+            off_ = (T.init(X0 if scale is None else X0 / scale) == 0) & (X0 > 0)   # a bin's total may drop; 2026-11-23:
+            X0[off_] = 0.0                         # a start with 7 such rates broke the M8.4 pair after the snap), then
+            fixed_r = 0                            # the repair, until neither changes the start
+            for x in X0:                           # a start that breaks it: each offending bin scaled down to its neighbour
+                for _ in range(len(mono['pairs']) + 1):
+                    tot = np.array([x[m].sum() for m in mono['members']])
+                    bad = [(k, k1, rho) for (k, k1), rho in zip(mono['pairs'], mono['rhos']) if tot[k1] > rho * tot[k]]
+                    if not bad:
+                        break
+                    k, k1, rho = bad[0]
+                    x[mono['members'][k1]] *= rho * tot[k] / tot[k1] * (1 - 1e-9)
+                    fixed_r += 1
+            fixed += fixed_r
+            if not fixed_r and not off_.any():
+                break
         Us = T.init(X0 if scale is None else X0 / scale)
         left = T.band_outside(T.residual(Us))
         if fixed:
