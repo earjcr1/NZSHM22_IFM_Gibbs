@@ -1162,7 +1162,7 @@ def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=Non
     return out
 
 
-# Each kept draw as an x, in its mark's colour darkened a little (several of CATEGORICAL are pale), faint, so that
+# Each kept draw as an x, in its mark's colour darkened a little (the palest blues are light), faint, so that
 # where the draws gather shows as the densest part; rasterized, since there are thousands per mark.
 X_MARK = dict(marker='x', ls='none', ms=2.6, mew=0.4, alpha=0.15, rasterized=True)
 
@@ -1187,28 +1187,21 @@ def draw_xs(ax, x, y, colours, zorder=2.2, **kw):
         ax.plot(x[s], y[s], color=darker(c), zorder=zorder, **style)
 
 
-# The colours that tell neighbouring marks apart: Tableau's Color Blind 10 (tableau:tab10_colorblind in the cmap
-# catalog; nearly matplotlib's tableau-colorblind10 style), in the cyclic order that best separates neighbours on the
-# light surface, every colour against the next and the last against the first: worst colour-vision-deficient Delta E
-# 20.2 (OKLab x100; the target is 8), worst normal-vision 22.4 (the floor is 15); in the palette's own order 10.8 and
-# 11.5. Six of the ten are below 3:1 contrast on the surface (the palest grey 1.5:1), so the figures outline their
-# marks and keep their table views.
-CATEGORICAL = ('#006ba4', '#ff8000', '#5f9ed1', '#ffbc79', '#898989', '#cfcfcf', '#c85200', '#a2c8ec', '#595959',
-               '#ababab')
 
 
-# ColorBrewer's Blues, the darkest 6 of its 9 classes (light to dark), for the slip-rate, paleo and target figures (the
-# user's choice, 2026-11-23; ColorBrewer's RdYlBu, 6 classes, before)
+# The colours that tell neighbouring marks apart, in every figure: ColorBrewer's Blues, the darkest 6 of its 9 classes
+# (light to dark; the user's choice, 2026-11-23: before, RdYlBu's 6 classes in the slip-rate, paleo and target figures and
+# Tableau's Color Blind 10 in the slip-sections figure)
 BLUES6 = ('#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b')
 # ... in an order alternating light and dark, so that neighbours along the targets differ by at least two shades
 BLUES6_CYCLE = tuple(BLUES6[i] for i in (0, 3, 1, 4, 2, 5))
 
 
 def neighbour_colours(x, palette=None):
-    """One colour per mark, cycling through a palette (CATEGORICAL, in its validated order, by default) along x (equal x
+    """One colour per mark, cycling through a palette (BLUES6_CYCLE by default) along x (equal x
     in their given order), so that marks next to each other never share a colour. The colours only tell neighbours
     apart; they follow the inputs (x), so a mark keeps its colour in every model's figure."""
-    pal = CATEGORICAL if palette is None else palette
+    pal = BLUES6_CYCLE if palette is None else palette
     rank = np.empty(len(x), int)
     rank[np.argsort(np.asarray(x, np.float64), kind='stable')] = np.arange(len(x))
     return np.array(pal)[rank % len(pal)]
