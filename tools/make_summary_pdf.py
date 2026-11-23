@@ -397,6 +397,10 @@ def main():
     st_ = re.search(r'dispersed starts: (\d+) chains; (\d+) from randomized best fits.*? and (\d+) from prior draws',
                     read(os.path.join(RUN, 'starts_report.txt')) if os.path.exists(os.path.join(RUN, 'starts_report.txt')) else '')
     n_sfit, n_sprior = (int(st_.group(2)), int(st_.group(3))) if st_ else (None, None)   # the starts' mix (dispersed_starts.py)
+    st_all = re.search(r'dispersed starts: (\d+) chains, each from a prior draw', read(os.path.join(RUN, 'starts_report.txt'))
+                       if os.path.exists(os.path.join(RUN, 'starts_report.txt')) else '')
+    if st_all:                                           # since 2026-11-21 every chain from a prior draw (no fits)
+        st_, n_sfit, n_sprior = st_all, 0, int(st_all.group(1))
     start_mix = ('every one from the prior' if n_sfit == 0 else 'all from randomized best fits' if n_sprior == 0
                  else f'{n_sfit} from randomized best fits and {n_sprior} from the prior' if st_ else
                  'half from randomized best fits, half from the prior')
@@ -445,9 +449,9 @@ def main():
     faults = []
     hdr = re.search(r'^column .*$', ss, re.M)
     if hdr:                                              # sections and rows may hold spaces: anchor on the numbers after
-        has_ref = 'reference' in hdr.group(0)
+        n_ref = len(re.findall(r'\bref \d\b', hdr.group(0))) or (1 if 'reference' in hdr.group(0) else 0)
         row_re = re.compile(r'^\s*\d+\s+.*?\s+\d+\s+(\d+)\s+\d+\s+[\d.]+%\s+(\S+)\s+(\S+)\s+(?:\S+\s+){5}([\d.]+)%\s+'
-                            + (r'\S+\s+' if has_ref else '') + r'(.+?)\s*$')
+                            + r'\S+\s+' * n_ref + r'(.+?)\s*$')
         for line in ss[hdr.end():].split('\n')[1:]:
             m = row_re.match(line)
             if not m:
@@ -1315,7 +1319,8 @@ def main():
           [2.9 * cm, 1.3 * cm, 2.6 * cm, 2.9 * cm, 2.6 * cm, 1.2 * cm, 2.0 * cm, FW - 15.5 * cm])
     if lb or ssr or pmr or mmr or stp:
         para('Each run also records the terms it adds beside χ², each on χ²’s scale and not counted in it. '
-             + (f'<b>The MFD misfit in log10</b>: {rng([x[0] for x in mmr], "{:.1f}")} on average per replicate (5–95% of draws '
+             + (('<b>The MFD bins\u2019 misfit, by their own PDFs (MFD_GR)</b>: ' if mmis == 'pdf' else
+                 '<b>The MFD misfit in log10</b>: ') + f'{rng([x[0] for x in mmr], "{:.1f}")} on average per replicate (5–95% of draws '
                 f'{fmt(min(x[1] for x in mmr), "{:.1f}")}–{fmt(max(x[2] for x in mmr), "{:.1f}")}), '
                 + ('in the likelihood weighted one half, beside half the bins\u2019 Gaussian; χ² counts the whole Gaussian. '
                    if '+' in mmis else 'in the likelihood in place of the bins\u2019 Gaussian, which χ² still counts. ')
