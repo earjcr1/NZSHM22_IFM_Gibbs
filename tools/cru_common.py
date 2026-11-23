@@ -97,7 +97,7 @@ def load_problem(path):
                 mfd_gr_shape=z['mfd_gr_shape'].astype(np.float64) if 'mfd_gr_shape' in z.files else None,
                 mfd_in_rel=z['mfd_in_rel'].astype(np.float64) if 'mfd_in_rel' in z.files else None,
                 mfd_in_R=z['mfd_in_R'].astype(np.float64) if 'mfd_in_R' in z.files else None,
-                **{k_: (z[k_] if k_ == 'slip_pdf_names' else z[k_].astype(np.int32 if k_ in ('slip_pdf_key',) else np.float64))
+                **{k_: (z[k_] if k_ == 'slip_pdf_names' else z[k_].astype(np.int32 if k_ == 'slip_pdf_key' else np.int64 if k_ == 'slip_pdf_off' else np.float64))
                    if k_ in z.files else None
                    for k_ in ('slip_pdf_key', 'slip_pdf_mode', 'slip_pdf_slo', 'slip_pdf_shi', 'slip_pdf_names', 'slip_pdf_y0',
                               'slip_pdf_h', 'slip_pdf_off', 'slip_pdf_g', 'slip_pdf_gp', 'slip_pdf_E', 'slip_pdf_V', 'slip_pdf_f')})

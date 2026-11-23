@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
+SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -339,7 +339,7 @@ check('\ndef paleo_data(' in src['paleo_misfit.py'] and '\ndef map_sites(' in sr
       'paleo sites: the rupture set\'s paleo_constraint_data.json, or, for a rupture set made without an inversion, '
       'data/paleo_constraint_data.json\'s sites mapped onto its subsections as NZSHM22 maps them (nearest trace within '
       '5.25 km; paleo_misfit.paleo_data; reproduces the 19k, 211k and 630k solutions\' files exactly)')
-check(sum(c.count('*ref_args()') for c in [NBALL]) == 4 and '\ndef reference_rates(' in src['cru_common.py']
+check(sum(c.count('*ref_args()') for c in [NBALL]) == 5 and '\ndef reference_rates(' in src['cru_common.py']
       and '\ndef reference_solutions(' in STEPS and 'MAX_REFERENCES = 2' in STEPS and '\ndef reference_list(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py')),
       'the fit figures take --reference (cru_common.reference_rates, up to twice: reference_list), and the notebook passes '
