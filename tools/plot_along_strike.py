@@ -7,7 +7,7 @@ panels, and with the magnitudes of the ruptures in their place).
                                 [--outdir DIR] [--faults NAME,NAME,...] [--reference RATES[:LABEL]] (up to twice)
 
 VECTORS: the run's rate vectors (<prior folder>/rate_vectors.npz): the posterior mean's rate of every rupture of the
-rupture set; the kept draws (<prior folder>/main_rep*_kept.npy, select_draws.py's) give each value's 5-95% range.
+rupture set; the kept draws (<prior folder>/main_rep*_kept.npy, select_draws.py's) give each value's 2.275-97.725% range.
 --ruptures: the OpenSHA rupture set (fault_sections.geojson, indices.csv, properties.csv, average_slips.csv,
 named_faults.json); --named: another named-faults file (fault name -> its parent fault sections' IDs).
 
@@ -24,7 +24,7 @@ value, along_strike.csv. x: longitude, or latitude for a fault whose subsections
      slip rate (each rupture's slip on the subsection, plate_rate.rupture_matrix, times its rate);
   4. the magnitudes of the ruptures through each subsection: its posterior mean participation rate in each magnitude bin
      of 0.1 (colour, log scale), and its rate-weighted median magnitude (a line).
-Panels 1-3: the posterior mean (a line) and the kept draws' 5-95% (a band); each --reference (NZSHM22 solutions,
+Panels 1-3: the posterior mean (a line) and the kept draws' 2.275-97.725% (a band); each --reference (NZSHM22 solutions,
 dashed, in the fit figures' inks) as a line.
 """
 import argparse
@@ -172,7 +172,7 @@ def main():
     mean = np.asarray(z['mean'], float)
     V = values(mean)
     MBm = np.array([B @ mean for B in MB])                  # bins x subsections
-    # the kept draws' 5-95%
+    # the kept draws' 2.275-97.725%
     lohi = {}
     kept_files = sorted(glob.glob(os.path.join(prior, 'main_rep*_kept.npy')))
     kc = np.asarray(P['keep_cols'])
@@ -192,7 +192,7 @@ def main():
         if kept_files:
             for k_, v_ in acc.items():
                 v_ = np.concatenate(v_, axis=1)
-                lohi[k_] = (np.percentile(v_, 5, axis=1), np.percentile(v_, 95, axis=1))
+                lohi[k_] = (np.percentile(v_, 100 * PLO, axis=1), np.percentile(v_, 100 * PHI, axis=1))
     refs = []
     for k, spec in enumerate(a.reference or []):
         path, label = spec, None
@@ -264,7 +264,7 @@ def main():
         h = [Line2D([], [], color=SOL, lw=2), Line2D([], [], color=SOL, lw=1.4, ls=(0, (4, 2))),
              Line2D([], [], color=SOL, lw=1.4, ls=(0, (1, 1.5)))] + ([Patch(color=BAND)] if 'part' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs]
-        l_ = ['posterior mean: all (supra-seis)', 'M ≥ 7', 'M ≥ 8'] + (['all: kept draws 5–95%'] if 'part' in lohi else []) \
+        l_ = ['posterior mean: all (supra-seis)', 'M ≥ 7', 'M ≥ 8'] + (['all: kept draws 2.275–97.725%'] if 'part' in lohi else []) \
             + [f'{rf["label"]}: all' for rf in refs]
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 2. paleo-visible
@@ -292,7 +292,7 @@ def main():
         h = [Line2D([], [], color=SOL, lw=2)] + ([Patch(color=BAND)] if 'vis' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs] \
             + ([Line2D([], [], marker='o', mfc='white', mec=INK, ls='-', color=INK, lw=2)] if n_site else [])
-        l_ = ['posterior mean (UCERF3 visibility)'] + (['kept draws 5–95%'] if 'vis' in lohi else []) \
+        l_ = ['posterior mean (UCERF3 visibility)'] + (['kept draws 2.275–97.725%'] if 'vis' in lohi else []) \
             + [rf['label'] for rf in refs] + (['paleo sites: best estimate, 1σ (thick), 2σ (thin)'] if n_site else [])
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 3. slip rate
@@ -314,7 +314,7 @@ def main():
              Line2D([], [], color=SOL, lw=2)] + ([Patch(color=BAND)] if 'slip' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs]
         l_ = ['CFM SR_pref', 'target (× slip-rate factor)', f'target 2.275–97.725% ({what})', 'posterior mean'] \
-            + (['kept draws 5–95%'] if 'slip' in lohi else []) + [rf['label'] for rf in refs]
+            + (['kept draws 2.275–97.725%'] if 'slip' in lohi else []) + [rf['label'] for rf in refs]
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 4. magnitudes
         ax = axs[3]

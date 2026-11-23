@@ -658,5 +658,5 @@ chi2, so the fit check stays over the data alone.
 plot_along_strike.py (2026-11-24, the user's request): per named fault, NZSHM22's "Along-Strike Values" panels without
 nucleation/moment/b-value: participation (all, M>=7, M>=8), paleo-visible (UCERF3 visibility at the subsection middle,
 rupture_set_inputs.paleo_visibility) with sites, slip rate (CFM SR_pref, target + 2.275-97.725%, posterior), and a magnitude
-panel (participation rate per 0.1-M bin, median M). Posterior mean + kept draws' 5-95% (main_rep*_kept.npy, chunked), refs
+panel (participation rate per 0.1-M bin, median M). Posterior mean + kept draws' 2.275-97.725% (main_rep*_kept.npy, chunked), refs
 dash-dot. Called in the notebook's fault-figures cell; outputs <prior>/along_strike/.
