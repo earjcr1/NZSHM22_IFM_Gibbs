@@ -769,7 +769,9 @@ def main():
                      'with the same sds; an order of magnitude off is unlikely, two far more so'}.get(amis, str(amis))
                      + '; every prediction kept above zero']] if amis else [])
                 + [[f'MISFIT_{g_.upper()}', repr(gmis[g_]), dict(zip(gnames[g_], (lin_, log_, 'half linear, half log: '
-                    + half_ + ', with the same sds'))).get(gmis[g_], EXACT_SET if gmis[g_] == 'exact' else str(gmis[g_]))]
+                    + half_ + ', with the same sds'))).get(gmis[g_], EXACT_SET if gmis[g_] == 'exact' else str(gmis[g_]))
+                    if not (g_ == 'mfd' and mfdgr) else ('set aside by MFD_GR: the bins scored by their own PDFs in log rate '
+                                                        '(\u22122 ln of each bin\u2019s density, from N, b and the N scaling)')]
                    for g_, lin_, log_, half_ in (
                        ('slip', 'the slip rates scored linearly, by their split normals',
                         'the slip rates scored in log, by Gaussians in log10(prediction / target) with sd log10(1 + sd / '
@@ -991,6 +993,7 @@ def main():
          + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
             f'{gmis["paleo"]!r}). '
             + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], EXACT_TXT if gmis[g_] == 'exact' else str(gmis[g_]))
+                        if not (g_ == 'mfd' and mfdgr) else 'the MFD bins by their own PDFs in log rate (MFD_GR, in place of MISFIT_MFD)'
                         for g_, lin_, log_, half_ in (
                             ('slip', 'The slip rates are scored by their split normals',
                              'The slip rates are scored by Gaussians in log10(prediction / target) with sd log10(1 + sd / target) '
