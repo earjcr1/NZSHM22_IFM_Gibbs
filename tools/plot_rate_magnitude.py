@@ -72,8 +72,9 @@ from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predic
                         gr_curves, gr_joint_misfit, gr_run_draws)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-BLUE, ORANGE = '#2a78d6', '#e69f00'          # the ruptures' blue; the bin totals amber (Okabe-Ito's orange, colour-blind safe;
-                                             # since 2026-11-23, apart from the second reference's red diamonds; '#eb6834' before)
+BLUE, ORANGE = '#2a78d6', '#08519c'          # the ruptures' blue; the bin totals dark blue (ColorBrewer Blues' second darkest,
+                                             # the user's choice, 2026-11-23: darker than the rupture cloud, apart from the
+                                             # references' black and red; '#eb6834', orange, before)
 REF = INK                                    # the reference model's marks: black, apart from every series colour
 CURVE = '#2f9e78'                            # MFD_GR_TAU: the drawn G-R curves (median line, 16-84% band)
 MINUS = '−'
