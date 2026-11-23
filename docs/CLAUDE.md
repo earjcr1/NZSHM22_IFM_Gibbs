@@ -17,7 +17,8 @@ in run_config.py (FIXED; DOWN_THE_MIDDLE shown beside RUN_MINUTES and in the run
 cell or RUN_SELFTESTS; run_nb.py NOTEBOOK RUN_DIR DATA_DIR [NAME=VALUE ...]. The cleaning figure (preliminaries.py
 --figure) and the target figures (plot_targets.py) are on request.
 Since 2026-11-21 (the user's request): the notebook passes preliminaries.py --no-nnls (no best fit; DISPERSED_STARTS fixed True
-in run_config.py, False only for tests, which get the fit back) and, with MFD_GR and the CFM, --from-rupture-set RUPTURE_DIR
+in run_config.py, False only for tests, which get the fit back) and, always since 2026-11-23 (with MFD_GR and the CFM from
+2026-11-21; cru_A/cru_D never read, A_FILE/D_FILE gone from the notebook), --from-rupture-set RUPTURE_DIR
 (rupture_set_inputs.build_inputs: the inputs' rows from the solution folder's ruptures/; cru_A/cru_D not read; checked
 equivalent at 19k, 211k, 630k; REPORT "Inputs from the rupture set, and no best fit"). Since 2026-11-23 a bare rupture set
 (no inversion) also works: the missing modules are built (slip rates 0.8 x SlipRate from fault_sections.geojson, paleo sites

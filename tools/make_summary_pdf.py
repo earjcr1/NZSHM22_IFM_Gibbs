@@ -718,9 +718,11 @@ def main():
          'one this run wrote.')
 
     head(f'{SN["inputs"]}. Inputs and configuration')
-    para(f'The inputs are the inversion matrices in {tt(data_name)}: {tt(cfg.get("a_file", "cru_A.txt"))} (<i>G</i>, '
-         f'{fmt(raw_rows)} rows by {fmt(raw_cols)} ruptures, {fmt(raw_nnz and raw_nnz / 1e6, "{:.1f}")} million nonzeros) '
-         f'and {tt(cfg.get("d_file", "cru_D.txt"))} (<i>d</i>).'
+    para((f'The inputs (<i>G</i>, {fmt(raw_rows)} rows by {fmt(raw_cols)} ruptures, {fmt(raw_nnz and raw_nnz / 1e6, "{:.1f}")} '
+          f'million nonzeros, and <i>d</i>) are built from the OpenSHA rupture set in {tt(data_name)}.' if from_rs else
+          f'The inputs are the inversion matrices in {tt(data_name)}: {tt(cfg.get("a_file", "cru_A.txt"))} (<i>G</i>, '
+          f'{fmt(raw_rows)} rows by {fmt(raw_cols)} ruptures, {fmt(raw_nnz and raw_nnz / 1e6, "{:.1f}")} million nonzeros) '
+          f'and {tt(cfg.get("d_file", "cru_D.txt"))} (<i>d</i>).')
          + (f' The OpenSHA solution for the rupture set ({tt(refname)}) supplies the fault geometry, the named faults and '
             'a reference model, drawn in black on every figure.' if ref else '')
          + ' One configuration cell sets everything; this run used:')

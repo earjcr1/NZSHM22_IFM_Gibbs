@@ -90,8 +90,8 @@ def setup(g):
     nb_dir = g['_NOTEBOOK_DIR']
     resolve = lambda p: os.path.normpath(os.path.join(nb_dir, os.path.expanduser(str(p))))
     g['DATA_DIR'], g['RUN_DIR'] = resolve(g['DATA_DIR']), resolve(g['RUN_DIR'])
-    no_ad = g['MFD_GR'] and g['CFM_SLIPRATES']         # G and d from the rupture set: cru_A and cru_D not needed (the CFM always)
-    for f_ in (() if no_ad else (g['A_FILE'], g['D_FILE'])) + (() if g['SLIP_SECTIONS'] in ('auto', 'none') else (g['SLIP_SECTIONS'],)):
+    for f_ in () if g['SLIP_SECTIONS'] in ('auto', 'none') else (g['SLIP_SECTIONS'],):   # G and d from the rupture set:
+                                                       # cru_A and cru_D never read (since 2026-11-23)
         if not os.path.exists(os.path.join(g['DATA_DIR'], f_)):
             raise FileNotFoundError(f"{f_} is not in DATA_DIR ({g['DATA_DIR']})")
     os.makedirs(g['RUN_DIR'], exist_ok=True)
@@ -132,7 +132,7 @@ def record_config(**more):
         g['CONFIG'] = dict(
             run_minutes=g['RUN_MINUTES'], targets=g['TARGETS'], dispersed_starts=g['DISPERSED_STARTS'], seed=g['SEED_USED'],
             code_dir=HERE, data_dir=g['DATA_DIR'], run_dir=g['RUN_DIR'], settings=g['P'], floor=g['FLOOR'],
-            representatives=g['REPRESENTATIVES'], a_file=g['A_FILE'], d_file=g['D_FILE'], blocks=g['BLOCKS'],
+            representatives=g['REPRESENTATIVES'], blocks=g['BLOCKS'],
             slip_sections=g['SLIP_SECTIONS'], mfd_uncertainty=g['MFD_UNCERTAINTY'], down_the_middle=g['DOWN_THE_MIDDLE'],
             misfit=g['MISFIT'], misfit_slip=g['MISFIT_SLIP'], misfit_mfd=g['MISFIT_MFD'],
             mfd_gr=g['MFD_GR'] and g['MFD_GR_SPEC'], misfit_paleo=g['MISFIT_PALEO'], mfd_monotonic=g['MFD_MONOTONIC'],
@@ -296,13 +296,11 @@ def cleaning_args():
     g = _G['g']
     _G['before'] = _cleaned_settings() if os.path.exists('cru_clean.npz') else None
     D = g['DATA_DIR']
-    if g['MFD_GR'] and g['CFM_SLIPRATES']:             # every row from the rupture set (2026-11-21, the user's request:
-        if not g['RUPTURE_DIR']:                       # the bins from MFD_GR, the slip rates from the CFM, so cru_A and
-            raise FileNotFoundError('MFD_GR with the CFM\'s slip rates builds the inputs from the rupture set, and none was '
-                                    f"found (RUPTURE_SET {g['RUPTURE_SET']!r}, DATA_DIR {D})")   # cru_D are not read)
-        src = ['--from-rupture-set', g['RUPTURE_DIR']]
-    else:
-        src = ['--A', os.path.join(D, g['A_FILE']), '--d', os.path.join(D, g['D_FILE'])]
+    if not g['RUPTURE_DIR']:                           # every row from the rupture set, always (2026-11-23, the user's
+        raise FileNotFoundError('the inputs are built from the OpenSHA rupture set, and none was found '   # request; with
+                                f"(RUPTURE_SET {g['RUPTURE_SET']!r}, DATA_DIR {D})")   # MFD_GR since 2026-11-21): cru_A and
+    src = ['--from-rupture-set', g['RUPTURE_DIR']]     # cru_D are not read; without MFD_GR the bins are the solution's own
+                                                       # targets, or NZSHM22's partition rebuilt (rupture_set_inputs.supra_target)
     a = src + ['--out', 'cru_clean.npz',
          '--bins-block', g['BIN_BLOCK'], '--slip-block', g['SLIP_BLOCK'], f"--diag-floor={g['FLOOR']}",
          '--slip-sections', g['SLIP_SECTIONS'] if g['SLIP_SECTIONS'] in ('auto', 'none') else os.path.join(D, g['SLIP_SECTIONS']),
