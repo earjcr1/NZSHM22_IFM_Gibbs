@@ -198,6 +198,12 @@ def main():
     gmis = {g_: cfg.get(k_) for g_, k_ in (('slip', 'misfit_slip'), ('mfd', 'misfit_mfd'), ('paleo', 'misfit_paleo'))}
     mixed = amis == 'mixed'                             # since 2026-11-09 one setting per group, MISFIT_SLIP, _MFD, _PALEO:
     gnames = {'slip': ('linear', 'log10', 'half'), 'mfd': ('linear', 'log10', 'half'), 'paleo': ('rate', 'years', 'half')}
+    exact_slip = gmis.get('slip') == 'exact'         # MISFIT_SLIP 'exact' (2026-11-23): each fault's exact corrected density
+    EXACT_SET = ('the slip rates scored by each fault\u2019s exact timeframe-corrected density (\u22122 ln p, tabulated: '
+                 'Coffey et al.\u2019s construction rebuilt, its timeframe factor simulated), weighted as its split normal '
+                 'would be; with SLIP_SUM, each cross-section\u2019s sum by its parent faults\u2019 densities convolved')
+    EXACT_TXT = ('The slip rates are scored by each fault\u2019s exact timeframe-corrected density (with SLIP_SUM, each '
+                 'cross-section\u2019s summed slip rate by its parent faults\u2019 densities convolved)')
     if mixed:                                           # MISFIT then their common setting, or 'mixed'
         amis = None
     whole_ = lambda m_: m_ not in ('gaussian', 'split') and '+' not in m_   # a group scored by its log misfit alone
@@ -508,7 +514,8 @@ def main():
             'nnls/fig_paleo_rates_nnls.png', 'fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png'] + [f'{a.prior}/{f}' for f in (
                 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
                 'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
-                'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png')]
+                'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png',
+                'along_strike/Alpine_Jacksons_to_Kaniere.png')]
     present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))
                and os.path.basename(f) not in a.skip_figs]
     for f in FIGS:
@@ -560,7 +567,8 @@ def main():
         if path not in num:
             return
         if MD:
-            link = (a.fig_dir.rstrip('/') + '/' + os.path.basename(path)) if a.fig_dir else path
+            rel = path[len(a.prior) + 1:] if path.startswith(a.prior + '/') else os.path.basename(path)
+            link = (a.fig_dir.rstrip('/') + '/' + rel) if a.fig_dir else path
             md.append(f'![Figure {num[path]}]({link})\n\n*Figure {num[path]}.* {to_md(caption)} `{os.path.basename(path)}`')
             return
         w, h = Image.open(os.path.join(RUN, path)).size
@@ -757,7 +765,7 @@ def main():
                      'with the same sds; an order of magnitude off is unlikely, two far more so'}.get(amis, str(amis))
                      + '; every prediction kept above zero']] if amis else [])
                 + [[f'MISFIT_{g_.upper()}', repr(gmis[g_]), dict(zip(gnames[g_], (lin_, log_, 'half linear, half log: '
-                    + half_ + ', with the same sds'))).get(gmis[g_], str(gmis[g_]))]
+                    + half_ + ', with the same sds'))).get(gmis[g_], EXACT_SET if gmis[g_] == 'exact' else str(gmis[g_]))]
                    for g_, lin_, log_, half_ in (
                        ('slip', 'the slip rates scored linearly, by their split normals',
                         'the slip rates scored in log, by Gaussians in log10(prediction / target) with sd log10(1 + sd / '
@@ -778,7 +786,8 @@ def main():
                     's<sub>j</sub>)\u00b2 with s<sub>j</sub> = log10(1 + \u03c3<sub>j</sub>/R<sub>j</sub>), each bin kept above zero, in '
                     'place of the Gaussian' if mmis == 'log10' else 'the bins\u2019 Gaussian in rate, as the inputs give it']] if not amis and not mixed else [])
                 + [
-                   ['CFM_SLIPRATES', str(cfm), 'each slip rate a split normal in mm/yr from the NZ Community Fault Model '
+                   ['CFM_SLIPRATES', str(cfm), ('each slip rate in mm/yr from the NZ Community Fault Model ' if exact_slip else
+                                                'each slip rate a split normal in mm/yr from the NZ Community Fault Model ')
                     + (f'corrected for its timeframe (CFM_TIMEFRAME) and scaled as a whole by {srf:g}, the slip sums too' if ctf else
                        f'scaled as a whole by {srf:g} (SR_min and SR_max at {cfm_ns:g} sd from SR_pref, times {cfm_fa:g}), the slip sums too')
                     if cfm else 'the slip rates\u2019 Gaussians, as the inputs give them'],
@@ -788,7 +797,9 @@ def main():
                        'numbers, each known to half the finest step among them as written' if cround else 'the CFM\u2019s numbers as written']]
                      if old_cfm else []),
                    ['CFM_TIMEFRAME', str(ctf), 'each fault\u2019s slip rate corrected for its timeframe (Coffey et al.): '
-                    + ('a split normal through the corrected distribution\u2019s 16%, 50% and 84% points'
+                    + ('the corrected distribution itself scores each slip rate (MISFIT_SLIP \'exact\'); a split normal '
+                       'through its 16%, 50% and 84% points sets each row\u2019s centre and scale' if exact_slip else
+                       'a split normal through the corrected distribution\u2019s 16%, 50% and 84% points'
                        if cfg.get('cfm_timeframe_shape') == 'fit' else
                        'the corrected distribution\u2019s mode and 2.5% and 97.5% points in place of SR_pref, SR_min and SR_max, '
                        'no further multiplier') if ctf else 'the CFM\u2019s SR_pref, SR_min and SR_max'],
@@ -975,7 +986,7 @@ def main():
             if amis == 'half' else '')
          + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
             f'{gmis["paleo"]!r}). '
-            + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], str(gmis[g_]))
+            + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], EXACT_TXT if gmis[g_] == 'exact' else str(gmis[g_]))
                         for g_, lin_, log_, half_ in (
                             ('slip', 'The slip rates are scored by their split normals',
                              'The slip rates are scored by Gaussians in log10(prediction / target) with sd log10(1 + sd / target) '
@@ -1087,8 +1098,10 @@ def main():
     if any(f in num for f in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')):
         para('<b>The targets, old and new.</b> NZSHM22\u2019s inversion scores every datum by a Gaussian in rate, as its '
              'inputs give it. This workflow scores each type by the distribution its uncertainty was worked out in: the '
-             'slip rates by the NZ Community Fault Model\u2019s split normals (lopsided where the CFM\u2019s ranges are, and '
-             'corrected for each fault\u2019s timeframe), the paleo rates by each site\u2019s recurrence-interval PDF, and, '
+             + ('slip rates by each fault\u2019s exact density from the NZ Community Fault Model, corrected for its '
+                'timeframe (lopsided where the CFM\u2019s ranges are, and long above)' if exact_slip else
+                'slip rates by the NZ Community Fault Model\u2019s split normals (lopsided where the CFM\u2019s ranges are, and '
+                'corrected for each fault\u2019s timeframe)') + ', the paleo rates by each site\u2019s recurrence-interval PDF, and, '
              'with MFD_GR, the magnitude bins by the PDFs that NZSHM22\u2019s own uncertainty in N(M\u22655) and b gives them. '
              + fref('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png') + ' set the two side by side.')
     _tk = re.search(r'sd ([\d.]+) SlipRateStdDev', open(os.path.join(RUN, 'fig_targets_slip.txt')).readline()) \
@@ -1100,10 +1113,73 @@ def main():
            + ('; NZSHM22\u2019s inversion inputs, as here' if old_k == 2 else '; NZSHM22\u2019s inversion inputs use 2')
            + '), and the coloured bar the same range of the distribution this run '
            'scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same '
-           'colours. With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are '
+           'colours. ' + ('Here that is each fault\u2019s exact timeframe-corrected density (MISFIT_SLIP \'exact\'): the modes '
+           'stay close to the inputs\u2019 targets, and the ranges are lopsided, long above, and never reach zero, where many '
+           'of the Gaussians do; the slip-rate factor scales the whole distribution.' if exact_slip else
+           'With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are '
            'narrower and lopsided: the CFM\u2019s SR_min and SR_max are read as 2\u03c3, where SlipRateStdDev, about half '
            f'their spread, is {old_k:g}\u03c3 here, and the slip-rate factor scales the whole distribution, sds included; '
-           'many of the Gaussians reach below zero.', FW)
+           'many of the Gaussians reach below zero.'), FW)
+    if exact_slip:                                       # MISFIT_SLIP 'exact': how each slip rate is scored, in full
+        CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # the repository: data/'s reports
+        m_r = re.search(r'slip misfit \(exact\): the (\d+) slip-rate rows .*?\((\d[\d,]*) tables, ([\d,]+) points', log0 or '', re.S)
+        m_s = re.search(r'summed slip rates \(exact\): each of the (\d+) cross-sections .*?its expected term ([\d.]+) '
+                        r'\(the Gaussian\'s ([\d.]+)\)', log0 or '', re.S)
+        m_e = re.search(r"the slip sections' ([\d.]+) \+- ([\d.]+) in place of ([\d.]+) \+- ([\d.]+)", log0 or '', re.S)
+        tf_rep = read(os.path.join(CODE, 'data', 'cfm_timeframe_sliprates_report.txt')) if os.path.exists(
+            os.path.join(CODE, 'data', 'cfm_timeframe_sliprates_report.txt')) else ''
+        m_4 = re.search(r"medians ([\d.]+) of S4's \(5-95% ([\d.]+)-([\d.]+)\)", tf_rep or '')
+        m_t = re.search(r'periodic: rms log error ([\d.]+).*?aperiodic: rms log error ([\d.]+)', read(os.path.join(
+            CODE, 'data', 'styron_factor_report.txt')) if os.path.exists(os.path.join(CODE, 'data', 'styron_factor_report.txt'))
+            else '', re.S)
+        para('<b>How each slip rate is scored (MISFIT_SLIP \u2018exact\u2019).</b> Each fault\u2019s slip rate enters the '
+             'likelihood through its whole timeframe-corrected distribution, not a fitted shape, built in four steps. '
+             '<b>(1) The CFM\u2019s numbers.</b> The NZ Community Fault Model gives each fault SR_pref, SR_min and SR_max. '
+             'Following Coffey et al. (accepted, BSSA), a Gaussian is fitted to the bounds alone: centred at the midpoint of '
+             'SR_min and SR_max, with an sd of their width / 3.92, and its negative part set to zero. SR_pref does not set the '
+             'centre; it only decides whether a fault counts as periodic (1 mm/yr or more) or aperiodic. '
+             '<b>(2) The timeframe factor.</b> That Gaussian is multiplied by a factor, the ratio of a fault\u2019s true '
+             'long-term slip rate to one measured over a finite window, which captures only a few earthquakes. Its '
+             'distribution comes from simulating the paper\u2019s earthquake histories (after Styron, 2019): a reference '
+             'fault slipping 1 mm/yr with a mean recurrence of 1,000 years; periodic faults\u2019 times between events '
+             'Brownian Passage Time or lognormal, with a coefficient of variation drawn between 0.2 and 0.7; aperiodic '
+             'faults\u2019 BPT, lognormal or exponential (25/25/50%), with a coefficient of variation of 1 to 1.5; each '
+             'event\u2019s slip lognormal with a mean of 1 m and an sd of 0.75 m; each window placed uniformly in time and '
+             'measured between the two earthquakes that bound it, the rule that reproduces the paper\u2019s Tables 1 and 2'
+             + (f' (an rms error of {m_t.group(1)} and {m_t.group(2)} in log over their seven quantiles at eight timeframes)'
+                if m_t else '') + '. The factor passes exactly through those tables\u2019 seven quantiles and takes the '
+             'simulation\u2019s shape between and beyond them. Each fault\u2019s scaled timeframe (its timeframe \u00d7 1,000 '
+             '/ its recurrence interval, which the paper does not publish) is fitted so that its 97.5% point matches the '
+             'paper\u2019s Table S4' + (f'; S4\u2019s medians, which do not enter that fit, are then matched to '
+             f'{m_4.group(2)}\u2013{m_4.group(3)} (5\u201395% of faults)' if m_4 else '') + '. '
+             '<b>(3) The density.</b> The product\u2019s density is computed exactly, by quadrature over the factor on a fine '
+             'grid of its normal score, scaled as a whole by the slip-rate factor (target and spread alike), and tabulated as '
+             '\u22122 ln p on a uniform grid of slip rates: 120 points across its 16\u201384% width, from its 0.01% to its 99.99% '
+             'point, continued linearly beyond. Where the simulation\u2019s sampling noise ripples a density (faults with a '
+             'narrow or zero CFM range, and far tails), the table is made unimodal, the closest falling-then-rising curve. '
+             '<b>(4) Into the likelihood.</b> Each slip-rate row\u2019s residual is proportional to the slip rate\u2019s '
+             'difference from the row\u2019s target, and the table is weighted so that, were the density the row\u2019s '
+             'split normal, its misfit would be the split normal\u2019s exactly: the template weights, a section\u2019s k '
+             'rows and DATATYPES_EQUAL\u2019s weights carry over unchanged. '
+             + (f'The sampler reads the tables in every update and swap: here {m_r.group(1)} slip-rate rows through '
+                f'{m_r.group(2)} tables ({m_r.group(3)} points). ' if m_r else 'The sampler reads the tables in every update '
+                'and swap. ')
+             + 'These densities are not log-concave (their upper tails are long), so the slice sampler\u2019s shortcut, '
+             'which skips evaluations on stretches it can bound, uses each row\u2019s quasiconvexity instead (its largest '
+             'misfit on an interval is at one end), and stays exact. The fit check counts each section by its own '
+             'density\u2019s mean and variance of \u22122 ln p'
+             + (f': {m_e.group(1)} \u00b1 {m_e.group(2)} for the slip sections, in place of the Gaussian\u2019s '
+                f'{m_e.group(3)} \u00b1 {m_e.group(4)}' if m_e else '') + ' (a skewed density\u2019s expected misfit is '
+             'larger than a Gaussian\u2019s 1). '
+             + (('<b>The summed slip rates.</b> With SLIP_SUM, each cross-section is scored the same way. Its target sum '
+                 'is the sum, over its parent faults, of each one\u2019s slip rate times its subsections\u2019 projected '
+                 'weights (each parent one rate, the parents independent, as the Gaussian version has them), so its density '
+                 'is the convolution of their exact densities, computed by FFT (a parent too narrow for the grid enters as '
+                 'a Gaussian of its own mean and variance). Each is weighted so that a Gaussian density would give exactly '
+                 'the Gaussian term about the summed targets'
+                 + (f'. Here {m_s.group(1)} cross-sections, their expected term {m_s.group(2)} (a Gaussian\u2019s '
+                    f'{m_s.group(3)})' if m_s else '') + '. ') if ssum else ''))
+
     figure('fig_targets_paleo.png', 'Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs\u2019 '
            'Gaussian in rate (bestEstimate \u00b1 its one-sigma sd) and the coloured bar the 15.9\u201384.1% range of the '
            'site\u2019s recurrence-interval PDF, as rates, which the paleo misfit in years scores it by. Both are centred on '
@@ -1137,7 +1213,10 @@ def main():
             'for the many off ruptures, bounds from cached log ratios settle most decisions without logarithms'
             + (f' (here {rng(sweep_s, "{:.3f}")} s per sweep for {ch} chains on {cfg.get("threads", "n/a")} threads)'
                if sweep_s else '') + '. ' if tau else '')
-         + ('The summed slip rates are quadratic in the rates, so they enter the exact updates as extra rows of the misfit. '
+         + (('The summed slip rates are scored, like the slip rates, by exact densities (below), so they too enter every '
+             'update exactly, as extra rows of the misfit each read from its own table; not being quadratic in the rates, '
+             'they are no longer folded into the slip-rate rows. ' if exact_slip else
+             'The summed slip rates are quadratic in the rates, so they enter the exact updates as extra rows of the misfit. ')
             if ssum else '')
          + f'Swap moves exchange the rates of near-duplicate ruptures ({fmt(swaps)} pairs; '
          f'{fmt(acc and 100 * acc, "{:.1f}")}% of swaps accepted), and the fraction on in each bin is redrawn after every '
@@ -1385,6 +1464,30 @@ def main():
                + (', and the reference\u2019s sums (black outline)' if ref else '') + '.', LW, max_h=lmax - 1.8 * cm)
         figure(fig_ss[4], 'Rupture rates by magnitude, second part.', LW * 0.86, max_h=lmax - 1.4 * cm)
         story += [NextPageTemplate('portrait'), PageBreak()]
+
+    _as = f'{a.prior}/along_strike/Alpine_Jacksons_to_Kaniere.png'
+    if os.path.isdir(os.path.join(RUN, a.prior, 'along_strike')):
+        n_as = len([f for f in os.listdir(os.path.join(RUN, a.prior, 'along_strike')) if f.endswith('.png')])
+        para('<b>Along strike.</b> ' + tt('plot_along_strike.py') + f' draws each of the {n_as} named faults along its '
+             'strike, subsection by subsection, after NZSHM22\u2019s \u201cAlong-Strike Values\u201d on its solution '
+             'reports\u2019 special fault pages (without their nucleation-rate, moment-rate and b-value panels). Each '
+             'subsection is drawn as a step across its own trace\u2019s extent in longitude (in latitude for a fault that '
+             'runs more north\u2013south), in geographical order. Four panels share that axis: the participation rate, the '
+             'rate of every rupture through the subsection, and of those of M \u2265 7 and M \u2265 8; the paleo-visible '
+             'participation rate, each rupture weighted by UCERF3\u2019s probability that a site at the subsection\u2019s '
+             'middle would record it (as the paleo rows weight them), with the fault\u2019s paleo sites (best estimate, 1\u03c3 '
+             'and 2\u03c3); the slip rate, with the CFM\u2019s SR_pref, the run\u2019s target and its 2.275\u201397.725% range, '
+             'and the posterior; and the magnitudes of the ruptures through each subsection: its posterior mean '
+             'participation rate in each 0.1-magnitude bin, in colour on a log scale (each column the subsection\u2019s '
+             'participation MFD), with its rate-weighted median magnitude. Panels 1\u20133 show the posterior mean as a line '
+             'and the kept draws\u2019 2.275\u201397.725% as a band, with the reference solutions dash-dotted. '
+             + (fref(_as) + ' is the Alpine Fault\u2019s Jacksons-to-Kaniere section; ' if _as in num else '')
+             + 'the rest are in ' + tt(f'{a.prior}/along_strike/') + ' (one PNG per fault and along_strike.csv, every '
+             'value per subsection).')
+        figure(_as, 'Along strike: the Alpine Fault, Jacksons to Kaniere. From the top: participation rate (all ruptures, '
+               'M \u2265 7, M \u2265 8), paleo-visible participation rate with the paleo sites, slip rate (CFM SR_pref, the '
+               'target and its 2.275\u201397.725% range, the posterior), and the magnitudes of the ruptures through each '
+               'subsection (participation rate per 0.1-magnitude bin, and the median magnitude).', FW * 0.75, max_h=22 * cm)
 
     head(f'{SN["opensha"]}. Output for OpenSHA')
     para(f'{tt("make_solution.py")} writes the posterior-mean rates as an OpenSHA fault-system solution\u2019s rates file '

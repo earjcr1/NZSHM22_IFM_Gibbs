@@ -311,6 +311,26 @@ def slip_sum_pdf_tables(P, info, rows_s, c_eff, per_sd=400):
                 E=np.array(E), V=np.array(V))
 
 
+def slip_pdf_quantiles(P, rows, ps):
+    """--slip-misfit exact: each slip-rate row's exact corrected density's quantiles ps, in mm/yr with the slip-rate
+    factor in them (the fault's table from cleaning, slip_pdf_*, which spans its 1e-4 to 1 - 1e-4 quantiles); an array
+    len(ps) x len(rows), NaN for a row without a density."""
+    out = np.full((len(ps), len(rows)), np.nan)
+    if P.get('slip_pdf_key') is None:
+        return out
+    key = np.asarray(P['slip_pdf_key'])[np.asarray(rows)]
+    off, y0, h, g = np.asarray(P['slip_pdf_off'], np.int64), P['slip_pdf_y0'], P['slip_pdf_h'], P['slip_pdf_g']
+    f = float(P['slip_pdf_f'])
+    for k in np.unique(key[key >= 0]):
+        gk = np.asarray(g[off[k]:off[k + 1]], float)
+        y = y0[k] + h[k] * np.arange(len(gk))
+        pd_ = np.exp(-0.5 * gk)
+        cdf = np.concatenate([[0.0], np.cumsum(0.5 * (pd_[1:] + pd_[:-1]) * h[k])])
+        cdf = 1e-4 + (1 - 2e-4) * cdf / cdf[-1]
+        out[:, key == k] = (np.interp(ps, cdf, y) * f)[:, None]
+    return out
+
+
 def split_terms(P, rows, res, tabs=None):
     """Each residual's term in the misfit (on chi2's scale times sigma^2): the split normal's weight x res^2
     (split_weights), or, with tabs (slip_pdf_tables' tables, --slip-misfit exact), the row's tabulated exact misfit. rows:

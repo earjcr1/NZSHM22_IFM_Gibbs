@@ -120,10 +120,16 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     o_s = np.where(sd > 0, old_k * sd, f_in * rate)      # --old-sd K: K SD in its place (1: SlipRateStdDev itself as 1 sd)
     ts, sl, sh, om, os_ = (mean_s(v) for v in (t, s_lo, s_hi, o_m, o_s))
     n16, n84 = sn_quantile(ts, sl, sh, 0.158655), sn_quantile(ts, sl, sh, 0.841345)
+    exact = str(cfg.get('misfit_slip')) == 'exact' and P.get('slip_pdf_key') is not None
+    if exact:                                            # MISFIT_SLIP 'exact': the exact corrected density's points
+        from cru_common import slip_pdf_quantiles
+        q_ = slip_pdf_quantiles(P, rows, [0.158655, 0.841345])
+        n16, n84 = mean_s(q_[0]), mean_s(q_[1])
     col = neighbour_colours(ts, BLUES6_CYCLE)
     cfm = bool(cfg.get('cfm_sliprates', True))
     tf = bool(cfg.get('cfm_timeframe'))
-    what = (('CFM split normal' + (', timeframe-corrected' if tf else '')) if cfm else 'the inputs’ Gaussian, rescaled')
+    what = ('exact timeframe-corrected density' if exact else
+            ('CFM split normal' + (', timeframe-corrected' if tf else '')) if cfm else 'the inputs’ Gaussian, rescaled')
     fac = cfg.get('slip_rate_factor', 0.8)
     med = lambda v: float(np.median(v))
     sub_txt = (f'{S} fault sections. Grey: NZSHM22’s Gaussian, mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev (the 0.8 on the mean '

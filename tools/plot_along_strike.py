@@ -96,18 +96,8 @@ def slip_targets(P, cfg, nsub):
     t[orig] = c
     lo[orig], hi[orig] = sn_quantile(c, slo, shi, PLO), sn_quantile(c, slo, shi, PHI)
     if exact:
-        key = np.asarray(P['slip_pdf_key'])[rows]
-        off, y0, h, g = P['slip_pdf_off'], P['slip_pdf_y0'], P['slip_pdf_h'], P['slip_pdf_g']
-        qs = {}
-        for k in np.unique(key):
-            gk = np.asarray(g[off[k]:off[k + 1]], float)
-            y = y0[k] + h[k] * np.arange(len(gk))
-            pd_ = np.exp(-0.5 * gk)
-            cdf = np.concatenate([[0.0], np.cumsum(0.5 * (pd_[1:] + pd_[:-1]) * h[k])])
-            cdf = 1e-4 + (1 - 2e-4) * cdf / cdf[-1]
-            qs[k] = (np.interp(PLO, cdf, y) * f, np.interp(PHI, cdf, y) * f)
-        lo[orig] = [qs[k][0] for k in key]
-        hi[orig] = [qs[k][1] for k in key]
+        from cru_common import slip_pdf_quantiles
+        lo[orig], hi[orig] = slip_pdf_quantiles(P, rows, [PLO, PHI])
     return t, lo, hi, exact
 
 
