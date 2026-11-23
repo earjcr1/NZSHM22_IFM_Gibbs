@@ -306,7 +306,7 @@ def main():
     ap = argparse.ArgumentParser(description='The best fit under the likelihood as fitted (see the module docstring).')
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem (default cru_clean.npz)')
     ap.add_argument('--start', default=None, help='the NNLS fit to start from (default: nnls/nnls_vectors.npz next to --problem)')
-    ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log', 'gaussian+years', 'gaussian+log'],
+    ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'gaussian+years'],
                     help="the paleo rows' misfit, as gibbs.py --paleo-misfit (default gaussian); needs --rupture-set")
     ap.add_argument('--rupture-set', default=None, help='the OpenSHA rupture set (its paleo_constraint_data.json)')
     ap.add_argument('--mfd-misfit', default='gaussian', choices=['gaussian', 'log10', 'gaussian+log10', 'pdf'],
@@ -332,11 +332,6 @@ def main():
     ap.add_argument('--plate-rate', default=None, metavar='HI or LO,HI', help='each strip\'s share of the plate rate within '
                     'these limits, as gibbs.py --plate-rate (needs --rupture-set)')
     ap.add_argument('--mfd-monotonic', action='store_true', help='the monotonic MFD, as gibbs.py --mfd-monotonic')
-    ap.add_argument('--mfd-rise-sd', type=float, default=0.89, metavar='M', help='as gibbs.py --mfd-rise-sd (default 0.89)')
-    ap.add_argument('--lowest-bin', type=float, default=6.8, help='as gibbs.py --lowest-bin (default 6.8)')
-    ap.add_argument('--bin-width', type=float, default=0.1, help='as gibbs.py --bin-width (default 0.1)')
-    ap.add_argument('--mfd-step-sd', type=float, default=None, metavar='B',
-                    help='the MFD steps\' term, as gibbs.py --mfd-step-sd (B in b-value units), in the misfit')
     ap.add_argument('--snap-floor', action='store_true', help='the fit put in the sampler\'s set of rates: each rate below '
                     '--floor set to 0, then, where a slip-rate, paleo or MFD row is predicted at 0, a rupture crossing it switched '
                     'on at twice the floor (as gibbs.py\'s positive start), and scaled inside the constraints again')
@@ -345,6 +340,7 @@ def main():
     ap.add_argument('--al-rounds', type=int, default=20, help='augmented-Lagrangian rounds at most (default 20)')
     ap.add_argument('--out', default=None, help='output stem (default: nnls/fitted_vectors next to --problem)')
     a = ap.parse_args()
+    a.mfd_rise_sd, a.lowest_bin, a.bin_width, a.mfd_step_sd = 0.89, 6.8, 0.1, None   # fixed since 2026-11-23, as gibbs.py
     here = os.path.dirname(os.path.abspath(a.problem))
     out = a.out or os.path.join(here, 'nnls', 'fitted_vectors')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)

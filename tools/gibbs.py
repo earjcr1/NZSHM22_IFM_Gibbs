@@ -14,27 +14,23 @@ spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a log
 up to a soft top at its bin's target rate, and the fraction on in each bin is estimated. --slab sqrt makes an on
 rupture's rate uniform in sqrt(rate) instead (density m^-1/2, not 1/m), the cross-check on how the lower end of the
 rates is treated. (The per-bin log-uniform boxes, binbox, binbox-floor and binbox-theta, and the single log-box were
-removed on November 23rd, 2026.) --prior linear is an optional linear-space prior:
-each rupture's rate uniform from 0 to its bin's target rate, drawn by the exact truncated-normal updates above.
+removed on November 23rd, 2026, with the linear and halfway priors.)
 --down-the-middle adds a balance term to the misfit: each data type's relative shortfall s (summed predictions against
 summed targets) costs A s^2, one A for every type (or, with --down-the-middle zero-model, each type's own, its zero-model
-misfit), as extra rows of G and d, for any prior. --band F (F = 10, say; the notebook's BAND) keeps every data row with a
-positive target predicted within a factor F of it, from d/F to F d: a hard constraint, for any prior but the retired
-hierarchical one and without transfer moves. Each update is drawn from its conditional restricted to the rates that keep
-every row of its column inside the band (band_bounds in the kernel), spike-and-slab never takes an off or on state the
-band forbids, and a swap that would leave it is rejected. A start outside the band is first moved inside it by a
-penalized least-squares fit (band_start), kept beside the problem as <problem>_band<F>_start.npz and reused by later
-runs with the same problem, band, start and bounds. Each recorded draw's count of rows outside the band, always 0, is
-kept as band_outside. --positive (the notebook's default) keeps every such row above zero instead, through the same
-machinery, and --mfd-monotonic and --plate-rate add constraint rows of their own outside the likelihood (eps x the
-quantity kept, d = 0, eps = 1e-9, so they add nothing measurable to chi2): no magnitude bin's total above its lower
-neighbour's where the targets do not rise, and each strip's share of the Pacific-Australia plate rate within limits
-(plate_rate.py builds those rows from the rupture set's geometry and slips, on the strips of cross-sections
-perpendicular to the plate motion that --slip-sum uses too, --cross-sections). Two soft terms can join the misfit
-beside the data, each recorded apart from chi2 on chi2's scale: --slip-sum, the slip along the plate motion summed
-along each cross-section perpendicular to it against the targets' sums (rows of G and d, so the kernel is unchanged),
-and --log-band, a soft band, a Gaussian penalty on each prediction's log ratio to its target, which is not quadratic
-in the rates and is kept by Metropolis steps within the kernel's updates. See --help for the rest.
+misfit), as extra rows of G and d, for any prior. Hard limits on rows: --all-positive (the notebook's) keeps every
+slip-rate, paleo and MFD prediction above zero, and --mfd-monotonic and --plate-rate add constraint rows of their own
+outside the likelihood (eps x the quantity kept, d = 0, eps = 1e-9, so they add nothing measurable to chi2): no magnitude
+bin's total above its lower neighbour's where the targets do not rise, and each strip's share of the Pacific-Australia
+plate rate within limits (plate_rate.py builds those rows from the rupture set's geometry and slips, on the strips of
+cross-sections perpendicular to the plate motion that --slip-sum uses too, --cross-sections). Each update is drawn from
+its conditional restricted to the rates that keep every limited row of its column inside its limits (band_bounds in the
+kernel), spike-and-slab never takes an off or on state the limits forbid, a swap that would leave them is rejected, and
+each recorded draw's count of rows outside them, always 0, is kept as band_outside. (The factor band, --band,
+--slip-band, --paleo-band, and the soft band, --log-band, --slip-log-band, --paleo-log-band, were removed on November
+23rd, 2026, the user's request: the misfits in log rate and years already make a prediction far off its target costly.)
+--slip-sum adds a soft term beside the data, recorded apart from chi2 on chi2's scale: the slip along the plate motion
+summed along each cross-section perpendicular to it against the targets' sums (rows of G and d, so the kernel is
+unchanged). See --help for the rest.
 
 Backends: a C kernel compiled on first use with $CC (default 'cc') and loaded through ctypes; chains run in
 parallel threads (ctypes releases the GIL).  Each thread moves its chains through the ruptures together, reading each
@@ -4080,67 +4076,6 @@ def selftest_groupweights(backends=('c', 'numpy'), ws=0.4, wp=3.0):
     return bool(ok)
 
 
-def selftest_logband(backends=('c', 'numpy')):
-    """The soft band (--log-band) on two spike-and-slab rates with weak targets (each about 0.4 of its uncertainty, so
-    the likelihood alone would let the predictions fall far below them), with swap moves between them, against a grid
-    integral of likelihood x prior x exp(-penalty): P(on) and E[log10 m | on] of each rate."""
-    from scipy.special import betaln
-    print('soft band (--log-band): spike-and-slab with swaps vs a grid integral')
-    ok = True
-    # the same prior for both rates, as swap moves need (the sampler's pairs are always in one magnitude bin)
-    Gs, sig, lo10, su, a_, b_ = np.array([[1.0, 0.7], [0.5, 1.0]]), 0.1, np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
-    dP, tau = np.array([0.04, 0.03]), 0.5
-    w = 1.0 / (2.0 * (tau * LN10) ** 2)
-    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
-    gw = []
-    for ui, sv in zip(u, su):
-        ww = np.full(len(ui), ui[1] - ui[0])
-        ww[[0, -1]] *= 0.5
-        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
-        gw.append(f / f.sum())
-    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
-    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
-
-    def Lb(m1, m2):
-        Y = np.stack(np.broadcast_arrays(m1 + 0.7 * m2, 0.5 * m1 + m2), -1)
-        with np.errstate(divide='ignore'):
-            pen = w * np.sum(np.log(Y / dP) ** 2, -1)
-        return np.exp(-0.5 * np.sum((Y - dP) ** 2, -1) / sig ** 2 - pen)
-    L1, L2, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
-    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2), pg[2] * L12.sum()   # both off: impossible
-    W_ = w10 + w01 + w11
-    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
-    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
-           (pg[1] * (gw[1] * u[1]) @ L2 + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
-    for be in backends:
-        T = Target(sp.csc_matrix(Gs), dP, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
-                   pairs=(np.array([0]), np.array([1]), np.array([Gs[:, 0] @ Gs[:, 1]])))
-        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
-        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
-        T.pkind = 3
-        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
-        T.lw = dict(W=np.full(2, w), LD=np.log(dP), DY=np.ascontiguousarray(dP), rows=np.arange(2), tau=tau)
-        K, sw = (8, 40000) if be == 'c' else (4, 4000)
-        tr = sample(T, np.tile([0.04, 0.0], (K, 1)), sw, sw // 10, 1, be, 1, 23, monitor=(0, 1), verbose=False,
-                    keep_samples=False, swaps=True)
-        Mo = tr['mon'][:, sw // 10:, :]
-        ok &= bool((Mo > 0).any(-1).all())                # never both off: the penalty forbids a zero prediction
-        for i in range(2):
-            on = (Mo[:, :, i] > 0).astype(float)
-            p = on.mean()
-            if on.std() == 0:
-                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
-            else:
-                zp = (p - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
-            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
-            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * p)))
-            ok &= abs(zp) < 4 and abs(zu) < 4
-            print(f'   {be:5s} rate {i}: P(on) {p:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
-                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
-    print('SELFTEST (soft band)', 'PASSED' if ok else 'FAILED')
-    return bool(ok)
-
-
 def selftest_band(backends=('c', 'numpy')):
     """The band (--band), positivity (--positive), the MFD's monotonicity (--mfd-monotonic, two rates in two bins,
     against the exact answer with m1 > m0 forbidden) and the plate rate (--plate-rate, a row of both signs kept between
@@ -4425,6 +4360,7 @@ def selftest_band(backends=('c', 'numpy')):
     return bool(ok)
 
 
+
 def selftest_hier(backends=('c', 'numpy')):
     """Hierarchical lognormal prior: (1) rate updates with fixed hyperparameters vs a grid in log rate;
     (2) with the likelihood switched off, the full sampler must reproduce the hyperpriors."""
@@ -4484,51 +4420,6 @@ def selftest_hier(backends=('c', 'numpy')):
         print(f'   {be:6s} spread held at 1.2: bin centres mean z ({", ".join(f"{v:+.2f}" for v in zs)}), sd z ({", ".join(f"{v:+.2f}" for v in zsd)})')
     print('SELFTEST (hierarchical)', 'PASSED' if ok else 'FAILED')
     return ok
-
-
-def band_start(G, d, rows, F, m0, hi, verbose=True):
-    """A start inside the band from m0 (rates, 0 <= m <= hi): the least-squares fit to the data with a penalty, growing
-    in steps, on predictions outside a band a little narrower than the band (a factor F^0.9), stopped as soon as every
-    row lies within F^0.95 of its target, so strictly inside the band (the start needs only to be inside it; how well it
-    fits matters only to the first sweeps of burn-in). Each rate is measured in units of 1 / ||G_i|| for the
-    optimizer, which has the same minimum but converges several times faster (column norms span two orders of
-    magnitude or more). None if the steps end with rows still outside the band."""
-    from scipy.optimize import minimize
-    G = sp.csr_matrix(G)
-    c = 1.0 / np.maximum(np.sqrt(np.asarray(G.multiply(G).sum(0)).ravel()), 1e-300)   # each rate's unit
-    Gs = G @ sp.diags(c)
-    Gst = Gs.T.tocsr()
-    rows = np.asarray(rows)
-    f_in = F ** 0.9
-    lo, hi_y = np.full(len(d), -np.inf), np.full(len(d), np.inf)
-    lo[rows], hi_y[rows] = d[rows] / f_in, d[rows] * f_in
-    out = lambda y, f=F: int(np.sum((y[rows] < d[rows] / f) | (y[rows] > d[rows] * f)))
-    u = np.clip(np.asarray(m0, np.float64), 0.0, hi) / c
-    bounds = list(zip(np.zeros(len(u)), np.broadcast_to(hi, len(u)) / c))
-    for lam in (1e2, 1e4, 1e6, 1e8):
-        def fg(x):
-            y = Gs @ x
-            e, v = y - d, np.minimum(y - lo, 0.0) + np.maximum(y - hi_y, 0.0)
-            return 0.5 * e @ e + 0.5 * lam * v @ v, Gst @ (e + lam * v)
-        inside = {}
-
-        def stop(xk):                                    # inside the band with a margin: done
-            if out(Gs @ xk, F ** 0.95) == 0:
-                inside['x'] = np.array(xk)
-                raise StopIteration
-        try:
-            res = minimize(fg, u, jac=True, method='L-BFGS-B', bounds=bounds, callback=stop,
-                           options=dict(maxiter=20000, maxfun=40000))
-            u = inside.get('x', res.x)
-        except StopIteration:                            # an older SciPy passes it on instead of stopping
-            u = inside['x']
-        m = u * c
-        n_out = out(G @ m)
-        if verbose:
-            print(f'   penalty {lam:g}: chi2 {np.sum((G @ m - d) ** 2):.1f}, {n_out} rows outside the band', flush=True)
-        if n_out == 0:
-            return m
-    return None
 
 
 def mstep_build(T, rows, orig, sigma_s, width):
@@ -4708,16 +4599,6 @@ def positive_start(T, U):
     return U, added
 
 
-def band_start_key(G, d, rows, F, m0, hi):
-    """A fingerprint of everything band_start's result depends on: the problem's matrix and targets, the banded rows, the
-    factor, the start it moves and the rates' upper bounds."""
-    G = sp.csr_matrix(G)
-    h = hashlib.sha1(repr(float(F)).encode() if np.ndim(F) == 0 else np.ascontiguousarray(F, np.float64).tobytes())
-    for v in (G.indptr, G.indices, G.data, d, rows, m0, np.broadcast_to(hi, len(m0))):
-        h.update(np.ascontiguousarray(v).tobytes())
-    return h.hexdigest()
-
-
 def rupture_bins(P, rows, block):
     """Each rupture's magnitude bin: the index, in rows, of the bin row holding it."""
     Gr = P['G'].tocsr()
@@ -4732,7 +4613,6 @@ def rupture_bins(P, rows, block):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--problem', default='cru_clean.npz')
-    ap.add_argument('--prelim', default=None, help='diagnostics from preliminaries.py (default: next to --problem)')
     ap.add_argument('--chains', type=int, default=4)
     ap.add_argument('--sweeps', type=int, default=4000)
     ap.add_argument('--burn', type=int, default=1000)
@@ -4757,83 +4637,36 @@ def main():
                          "own A, its zero-model misfit, so s = -1 or +1 costs a type what the zero model costs it in chi2 "
                          "(cru_common.balance_rows); as extra rows of G and d, so for any prior. "
                          "The recorded chi2 and predictions stay on the data rows; the term is recorded on its own")
-    ap.add_argument('--slab', default='log', choices=['log', 'sqrt'],
-                    help="spike-and-slab: the slab's shape below its top: 'log' (log-uniform, density 1/m; the default) or 'sqrt' "
-                         "(uniform in sqrt m, density m^-1/2, half the log-uniform's pull of each rate towards 0; small rates "
-                         "cost more, so fewer ruptures are on: the cross-check on how the lower end of the rates is treated)")
     ap.add_argument('--bins-block', default='MFD', help='lognormal prior: row block whose rows define the bins')
-    ap.add_argument('--s-range', default='0.05,5', help='lognormal prior: uniform hyperprior range for s (decades)')
-    ap.add_argument('--mu-prior', default='-6,10', help='lognormal prior: normal hyperprior (mean, sd) for each log10 centre')
     ap.add_argument('--hyper-every', type=int, default=None,
                     help='spike-and-slab and lognormal priors: update the hyperparameters (the fractions on; the centres and '
                          'spread) every this many sweeps (default: every sweep for spike-and-slab, every --thin sweeps for '
                          'lognormal)')
-    ap.add_argument('--s-fixed', type=float, default=None,
-                    help='lognormal prior: hold the within-bin spread at this value (decades) and learn only the bin centres')
-    ap.add_argument('--pnc-pilot', default=None,
-                    help='lognormal prior: a pilot run (.npz) used to pick the data-pinned rates for partial non-centring')
-    ap.add_argument('--pnc-scale', type=float, default=1.0,
-                    help='a rate counts as data-pinned if its pilot 95th percentile x ||G_i|| x spread / sigma exceeds this')
-    ap.add_argument('--transfers', default=None,
-                    help='transfer-direction library from build_transfers.py: one pass of exact transfer moves per recorded draw')
-    ap.add_argument('--band', type=float, default=None, metavar='F',
-                    help='keep the prediction of every data row with a positive target (slip-rate, MFD-bin and paleo rows; '
-                         'each subsection its own row) within a factor F of its target, from d/F to F d: a hard constraint on '
-                         'the rates, for any prior (10: an order of magnitude either way). A start outside it is first moved '
-                         'inside by a penalized least-squares fit, made once per problem: it is kept beside --problem '
-                         '(<problem>_band<F>_start.npz) and taken from there by later runs with the same problem, band and '
-                         'start')
-    ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'log', 'gaussian+years', 'gaussian+log'],
+    ap.add_argument('--paleo-misfit', default='gaussian', choices=['gaussian', 'years', 'gaussian+years'],
                     help='the paleo rows\' misfit (the notebook\'s PALEO_MISFIT): \'gaussian\' (default), the inputs\' '
                          'Gaussian in rate; \'years\': -2 ln of each site\'s recurrence-interval PDF in years, a curve '
                          'through its quantiles with its mode at 1/bestEstimate (paleo_misfit.py; needs --rupture-set and '
-                         'spike-and-slab, and keeps each paleo prediction above zero; the soft band then acts on the slip-rate rows only); \'log\': the '
+                         'spike-and-slab, and keeps each paleo prediction above zero); \'log\': the '
                          'same curve\'s density in log rate, its mode at bestEstimate; \'gaussian+years\' (the notebook\'s '
                          'MISFIT \'half\'): half the Gaussian in rate plus half the years curve, the geometric mean of the two')
-    ap.add_argument('--slip-band', default=None, metavar='positive|F',
-                    help='the slip-rate rows\' hard limit (the notebook\'s SLIP_BAND): \'positive\', each subsection\'s '
-                         'prediction above zero, or a factor F above 1, each within F of its target; per row group, in place '
-                         'of --positive and --band (which act on every positive-target row, the MFD bins too)')
-    ap.add_argument('--paleo-band', default=None, metavar='positive|F',
-                    help='the paleo rows\' hard limit, as --slip-band (the notebook\'s PALEO_BAND until 2026-11-05); with '
-                         '--paleo-misfit, positive unless a factor is given')
-    ap.add_argument('--slip-log-band', type=float, default=None, metavar='TAU',
-                    help='a soft band on the slip-rate rows (the notebook\'s SLIP_BAND_SOFT), as --log-band, with '
-                         '--slip-band positive')
     ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10'],
                     help="the slip-rate rows' misfit: 'split' (default), the Gaussian (a split normal with the CFM's slip "
                          "rates); 'split+log10', half of it plus half a Gaussian in log10(prediction / target) with the same "
                          "sd, s = log10(1 + sd / target) on each side (sd the side's effective sd, the template weights' "
                          "included, as --mfd-misfit log10 has the bins'), the geometric mean of the two densities, so a "
                          'prediction an order of magnitude off is unlikely and two orders far more so (each section still one '
-                         'measurement; spike-and-slab, with --slip-band positive, not with the soft bands); \'log10\', the log10 '
+                         'measurement; spike-and-slab, each slip-rate prediction kept above zero); \'log10\', the log10 '
                          'Gaussian alone')
-    ap.add_argument('--paleo-log-band', type=float, default=None, metavar='TAU',
-                    help='a soft band on the paleo rows (the notebook\'s PALEO_BAND_SOFT), as --log-band, with --paleo-band '
-                         'positive, and not with --paleo-misfit years or log')
-    ap.add_argument('--log-band', type=float, default=None, metavar='TAU',
-                    help='with --positive, spike-and-slab only: a soft version of the band (the notebook\'s BAND_SOFT), a '
-                         'Gaussian penalty on each positive-target data row\'s log ratio of prediction to target, 1/2 '
-                         '(log10(prediction / target) / TAU)^2, TAU decades at 1 sd (1: within an order of magnitude at 1 '
-                         'sd, two at 2 sd; 2: within two orders at 1 sd), each slip-rate subsection\'s '
-                         'term divided by the k subsections of its section; kept exactly by a Metropolis step on each '
-                         'update (the switch on or off and swaps take it exactly; a slab move is accepted by its change). '
-                         'Recorded apart from chi2')
-    ap.add_argument('--positive', action='store_true',
-                    help='an alternative to --band (not with it), spike-and-slab only: keep the prediction of every data row '
-                         'with a positive target above zero in every draw, that is, at least one of the ruptures in each row '
-                         'on, with no other limit. A start that predicts 0 for some rows gets, for each, a rupture crossing it '
-                         'switched on at twice its slab floor')
     ap.add_argument('--mfd-misfit', default='gaussian', choices=['gaussian', 'log10', 'gaussian+log10', 'pdf'],
                     help="the MFD bins' misfit: gaussian (default), the inputs' Gaussian in rate; log10, each bin's total "
                          "scored by ((log10(total) - log10(R_j)) / s_j)^2, s_j = log10(1 + sigma_j / R_j) (the soft top's "
-                         "width), in place of the Gaussian, with positivity on the bins (spike-and-slab, the per-group "
-                         "--slip-band and --paleo-band or --positive); gaussian+log10, half of each, the geometric mean; pdf "
+                         "width), in place of the Gaussian, with positivity on the bins (spike-and-slab, --all-positive "
+                         "or --positive); gaussian+log10, half of each, the geometric mean; pdf "
                          "(MFD_GR: a problem cleaned with preliminaries.py --mfd-gr), each bin by -2 ln of its own target PDF "
                          "in log rate, from its minimum, through the paleo curves' tables (the curves saved with the problem)")
     ap.add_argument('--all-positive', action='store_true',
-                    help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always): --slip-band and '
-                         '--paleo-band positive unless given as a factor, and the MFD bins above zero; through the per-group limits')
+                    help='every slip-rate, paleo and MFD prediction kept above zero (the notebook always), through the '
+                         'per-group limits')
     ap.add_argument('--group-weights', default=None, choices=['equal'],
                     help='DATATYPES_EQUAL: weight each data group\'s log likelihood so that the slip rates (with the summed '
                          'slip rates), the MFD bins and the paleo rates count equally: each as a third of their effective '
@@ -4845,13 +4678,6 @@ def main():
                          'hyperparameters under their MFD_GR priors, in place of each bin\'s own PDF; each pair of neighbouring '
                          'bins\' step in log10 total may depart from the curve\'s by about TAU decades, and their mean level from '
                          'it by about TAU (0.025: about 6%% a step)')
-    ap.add_argument('--mfd-step-sd', type=float, default=None, metavar='B',
-                    help='the MFD\'s steps held to the target\'s, softly: each pair of neighbouring magnitude bins\' step in '
-                         'log10 total, less the target\'s own step there, is to stray from the draw\'s common tilt (the mean of '
-                         'those differences over the pairs) by about B x the bin width decades, B in b-value units (0.25: a step '
-                         'ratio off by about 6%%); a soft term recorded apart from chi2, near the number of pairs less 1 if the '
-                         'steps scatter as B says. The target\'s own bends (the partitioning\'s) cost nothing, and the MFD\'s '
-                         'level and tilt are left to the bins. C backend only')
     ap.add_argument('--mfd-monotonic', action='store_true',
                     help='with --bins-block\'s magnitude bins: in every draw, wherever a bin\'s target is not above the next '
                          'lower bin\'s (neighbouring bins, counted up from --lowest-bin in steps of --bin-width; a bin '
@@ -4861,14 +4687,6 @@ def main():
                          'eps x (rho x lower bin total - upper bin total) >= 0, rho = 1 except where the target rises, with eps = 1e-9, '
                          'which add at most about 1e-20 to '
                          'chi2; a start that breaks it is scaled down bin by bin first')
-    ap.add_argument('--mfd-rise-sd', type=float, default=0.89, metavar='M',
-                    help='--mfd-monotonic: where a bin\'s target rises above the next lower bin\'s, the upper total may '
-                         'be up to rho times the lower, rho the ratio at the lower bin\'s target of the target difference '
-                         'plus M sd of it (from the two bins\' uncertainties; default 0.89, the median distance of the other '
-                         'pairs\' walls above their target differences with the NZSHM22 inputs: 1.427 for M6.8-6.9 there); '
-                         'a ratio, so it caps the MFD\'s shape and not its level; negative: such pairs are left free')
-    ap.add_argument('--lowest-bin', type=float, default=6.8, help='--mfd-monotonic: the lowest magnitude bin\'s lower edge')
-    ap.add_argument('--bin-width', type=float, default=0.1, help='--mfd-monotonic: the magnitude bins\' width')
     ap.add_argument('--cross-sections', default='all', choices=['all', 'between'],
                     help='--slip-sum and --plate-rate: their strips of cross-sections perpendicular to the plate motion '
                          '(Beavan et al. 2002\'s Euler pole), the subsections\' mean trace length wide (8.5 km at 211,000 '
@@ -4905,7 +4723,6 @@ def main():
                     help='spike-and-slab: also swap ruptures in different magnitude bins whose columns have cosine above C '
                          '(the notebook: 0.95), with the prior\'s ratio (the bins\' fractions on and slabs) in the acceptance; '
                          'needs cleaning with preliminaries.py --dup-cross-cos for pairs below 0.99')
-    ap.add_argument('--backend', default='c', choices=['c', 'numpy'])
     ap.add_argument('--threads', type=int, default=os.cpu_count() or 1)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--out', default='gibbs_run')
@@ -4917,13 +4734,23 @@ def main():
                     'evenly spaced over the recorded draws after burn-in) in <out>_kept.npy, float32, with their chain and '
                     'record numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
     ap.add_argument('--slip-block', default='S', help='row block of slip-rate rows (subsection totals in the running summaries)')
-    ap.add_argument('--hist-width', type=float, default=0.01, help='bin width, in decades, of the running log-rate histogram '
-                    '(quantiles and modes are resolved to about this)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-two verdicts; 'current' only "
+                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-one verdicts; 'current' only "
                          "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
                          "term, swap moves, the band, the column passes with the summed slip rates folded, and swaps across bins), eight verdicts")
     a = ap.parse_args()
+    # fixed since 2026-11-23 (their options removed, the user's request): the diagnostics beside the problem, the slab
+    # log-uniform, no hierarchical prior, transfer moves, all-rows positivity (--all-positive, per group, remains) or MFD
+    # step term, the monotonic MFD's rise cap 0.89, the bins from 6.8 in steps of 0.1, the C kernel, histograms 0.01 wide
+    a.prelim, a.slab, a.s_range, a.mu_prior, a.s_fixed, a.pnc_pilot, a.pnc_scale = None, 'log', '0.05,5', '-6,10', None, None, 1.0
+    a.transfers, a.positive, a.mfd_step_sd, a.mfd_rise_sd = None, False, None, 0.89
+    a.lowest_bin, a.bin_width, a.backend, a.hist_width = 6.8, 0.1, 'c', 0.01
+    if a.selftest is None and not str(a.prior).startswith('spikeslab'):
+        raise SystemExit(f'--prior {a.prior}: only spike-and-slab remains (spikeslab or spikeslab:A:TOP:a:b); the other priors '
+                         '(lognormal, flat, exponential, the boxes, linear, halfway) were removed in November 2026')
+    a.slip_band = a.paleo_band = None              # each group's limit, set below to 'positive' or left off (the factor
+                                                   # and soft bands, --band, --slip-band, --paleo-band and --*log-band, were
+                                                   # removed on 2026-11-23, the user's request: the misfits make them needless)
     if a.selftest == 'current':
         ok = selftest_zlo()
         ok &= selftest_edges()
@@ -4943,7 +4770,6 @@ def main():
         ok &= selftest_spikeslab(gam=0.5)
         ok &= selftest_balance()
         ok &= selftest_band()
-        ok &= selftest_logband()
         ok &= selftest_paleo()
         ok &= selftest_paleo(b=0.5)
         ok &= selftest_split()
@@ -5139,9 +4965,6 @@ def main():
         from paleo_misfit import curve_mode, load_sites, report_lines, tables
         if not spike_mode:
             raise SystemExit('--paleo-misfit needs spike-and-slab')
-        if a.band is not None and not a.positive:
-            raise SystemExit('--paleo-misfit with --band: give the per-group --slip-band (the paleo rows then kept above '
-                             'zero, or within --paleo-band)')
         from cru_common import find_rupture_set
         rd_p = find_rupture_set(a.rupture_set, search=False) if a.rupture_set else None
         if rd_p is None:
@@ -5170,9 +4993,6 @@ def main():
     if a.mfd_misfit != 'gaussian':
         if not spike_mode or a.transfers:
             raise SystemExit('--mfd-misfit log10 needs spike-and-slab, without --transfers')
-        if a.log_band is not None:
-            raise SystemExit('--mfd-misfit log10 with --log-band (every positive-target row, the bins among them): give the '
-                             'per-group --slip-log-band instead')
         if a.bins_block not in P['block_names']:
             raise SystemExit(f'--mfd-misfit log10: no row block named {a.bins_block!r} (--bins-block)')
         mf_rows = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.bins_block))
@@ -5193,9 +5013,6 @@ def main():
     if a.slip_misfit != 'split':                   # 1/sqrt 2), or scaled out of it
         if not spike_mode or a.transfers:
             raise SystemExit(f'--slip-misfit {a.slip_misfit} needs spike-and-slab, without --transfers')
-        if a.slip_log_band is not None or a.log_band is not None or a.paleo_log_band is not None:
-            raise SystemExit(f'--slip-misfit {a.slip_misfit} with a soft band: it already scores each slip-rate prediction '
-                             'in log10 (the soft bands are left out)')
         if a.slip_block not in P['block_names']:
             raise SystemExit(f'--slip-misfit {a.slip_misfit}: no row block named {a.slip_block!r} (--slip-block)')
         sm_rows = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
@@ -5328,73 +5145,42 @@ def main():
                 + ('' if str(c_[2]) in ('1', '1.0') else f', times {c_[2]}') + '): each slip-rate row a split '
               f'normal, {len(sk_)} of them lopsided, sd above / below the mode median {10 ** np.median(sk_):.2f} (5-95% {10 ** np.percentile(sk_, 5):.2f}-'
               f'{10 ** np.percentile(sk_, 95):.2f}); their misfit evaluated exactly in every update and swap')
-    band_rows = None
-    grp = any(v is not None for v in (a.slip_band, a.paleo_band, a.slip_log_band, a.paleo_log_band))
-    if grp and (a.positive or a.band is not None or a.log_band is not None):
-        raise SystemExit('give --positive, --band and --log-band (every positive-target row) or the per-group --slip-band, '
-                         '--paleo-band, --slip-log-band and --paleo-log-band, not both')
+    grp = any(v is not None for v in (a.slip_band, a.paleo_band))
     pos_g = np.zeros(0, np.int64)                  # with per-group limits: the rows with positivity
     if a.all_positive:                             # every data group above zero
-        if a.positive or a.band is not None or a.log_band is not None:
-            raise SystemExit('--all-positive is per group: not with --positive, --band or --log-band')
+        if a.positive:
+            raise SystemExit('--all-positive is per group: not with --positive')
         a.slip_band = a.slip_band or 'positive'
         a.paleo_band = a.paleo_band or 'positive'
-    if (mf_rows is not None or a.paleo_misfit != 'gaussian' or a.all_positive) and not a.positive and a.band is None:
+    if (mf_rows is not None or a.paleo_misfit != 'gaussian' or a.all_positive) and not a.positive:
         grp = True                                 # --mfd-misfit, --paleo-misfit, --all-positive: positivity through the per-group limits
     if grp:
         if dirs is not None or lognormal is not None:
-            raise SystemExit('--slip-band and --paleo-band are not implemented for transfer moves or the hierarchical prior')
+            raise SystemExit('the per-group limits are not implemented for transfer moves or the hierarchical prior')
         sb_ = list(P['block_names'])
         dpos = np.asarray(P['d'])[:P['G'].shape[0]] > 0
         blk = np.asarray(P['block'])
         g_slip = np.flatnonzero(dpos & (blk == sb_.index(a.slip_block))) if a.slip_block in sb_ else np.zeros(0, np.int64)
         not_pal = [sb_.index(b_) for b_ in (a.slip_block, a.bins_block) if b_ in sb_]
         g_pal = np.flatnonzero(dpos & ~np.isin(blk, not_pal))   # every positive-target row in neither group: the paleo rows
-        def band_arg(v, name):
-            if v is None or v == 'positive':
-                return v
-            try:
-                f_ = float(v)
-            except ValueError:
-                raise SystemExit(f'--{name} {v}: give positive or a factor above 1')
-            if not f_ > 1:
-                raise SystemExit(f'--{name} {v}: give positive or a factor above 1 (10: an order of magnitude either way)')
-            return f_
-        sl_b, pa_b = band_arg(a.slip_band, 'slip-band'), band_arg(a.paleo_band, 'paleo-band')
+        sl_b, pa_b = a.slip_band, a.paleo_band
         if pa_b is None and a.paleo_misfit != 'gaussian':
             pa_b = 'positive'                      # --paleo-misfit: each paleo prediction above zero (its misfit is
-                                                   # infinite at 0), unless --paleo-band gives a factor
-        if sm_rows is not None and sl_b is None:
-            raise SystemExit(f'--slip-misfit {a.slip_misfit} needs --slip-band (its log10 misfit is infinite at 0)')
-        for tau_, b_, name in ((a.slip_log_band, sl_b, 'slip'), (a.paleo_log_band, pa_b, 'paleo')):
-            if tau_ is not None and (b_ != 'positive' or not tau_ > 0):
-                raise SystemExit(f'--{name}-log-band {tau_:g}: give a width above 0, with --{name}-band positive')
-        if a.paleo_log_band is not None and a.paleo_misfit != 'gaussian':
-            raise SystemExit('--paleo-log-band with --paleo-misfit: the paleo misfit already scores each paleo prediction')
+                                                   # infinite at 0)
         g_mfd = (mf_rows if mf_rows is not None else                 # --mfd-misfit, --all-positive: the bins above 0
                  np.flatnonzero(dpos & (blk == sb_.index(a.bins_block))) if a.all_positive and a.bins_block in sb_
                  else np.zeros(0, np.int64))
         pos_g = np.r_[g_slip if sl_b == 'positive' else np.zeros(0, np.int64), g_pal if pa_b == 'positive' else np.zeros(0, np.int64),
                       g_mfd]
-        b_rows, b_F = [], []
-        for rows_, b_ in ((g_slip, sl_b), (g_pal, pa_b)):
-            if isinstance(b_, float):
-                b_rows.append(rows_); b_F.append(np.full(len(rows_), b_))
-        b_rows = np.concatenate(b_rows) if b_rows else np.zeros(0, np.int64)
-        b_F = np.concatenate(b_F) if b_F else np.zeros(0)
-        if len(pos_g) or len(b_rows):
+        if len(pos_g):
             try:
-                T.set_groups(pos_g, b_rows, b_F)
+                T.set_groups(pos_g, np.zeros(0, np.int64), np.zeros(0))
             except ValueError as e:
-                raise SystemExit(f'--slip-band / --paleo-band: {e}')
-        if len(b_rows):
-            band_rows, band_F = b_rows, b_F
-        desc_ = lambda b_: 'no limit' if b_ is None else 'each above zero' if b_ == 'positive' else f'each within a factor {b_:g} of its target'
+                raise SystemExit(f'the per-group limits: {e}')
+        desc_ = lambda b_: 'no limit' if b_ is None else 'each above zero'
         print(f'slip-rate rows ({len(g_slip)}): {desc_(sl_b)}; paleo rows ({len(g_pal)}): {desc_(pa_b)}; the MFD bins: '
               + (f'each above zero' if len(g_mfd) else 'no limit')
-              + ('; a start outside the limits is moved inside first' if len(pos_g) or len(b_rows) else ''))
-    if a.positive and a.band is not None:
-        raise SystemExit('--positive and --band: give one or the other')
+              + ('; a start outside the limits is moved inside first' if len(pos_g) else ''))
     if a.positive:                                 # positivity: every data row with a positive target above zero
         if dirs is not None or lognormal is not None:
             raise SystemExit('--positive is not implemented for transfer moves or the hierarchical prior')
@@ -5405,16 +5191,6 @@ def main():
         print(f'positivity: the predictions of {len(T.band["rows"])} of the {T.n_data} data rows (those with a positive '
               'target) kept above zero, at least one rupture on in each; a start that predicts 0 for some gets ruptures '
               'switched on first')
-    if a.band is not None:                         # the band: every data row with a positive target
-        if not a.band > 1:
-            raise SystemExit(f'--band {a.band:g}: give a factor above 1 (10: an order of magnitude either way)')
-        if dirs is not None or lognormal is not None:
-            raise SystemExit('--band is not implemented for transfer moves or the hierarchical prior')
-        band_rows = np.flatnonzero(P['d'] > 0)
-        band_F = a.band
-        T.set_band(a.band, band_rows)
-        print(f'band: the predictions of {len(band_rows)} of the {T.n_data} data rows (those with a positive target) kept '
-              f'within a factor {a.band:g} of their targets; any start outside it is moved inside first')
     if a.init == 'nnls':
         with np.load(fprelim) as pr0:
             if 'm_nnls' not in pr0.files:
@@ -5451,41 +5227,6 @@ def main():
     else:
         X0 = np.load(a.init)['final_X'] if a.init.endswith('.npz') else np.load(a.init)
         X0 = np.tile(X0, (a.chains, 1)) if X0.ndim == 1 else X0[np.arange(a.chains) % X0.shape[0]]
-    if band_rows is not None:                      # a start outside the band: moved inside it first
-        Gd = sp.csr_matrix(P['G'])
-        y0 = (Gd @ X0.T).T
-        n_out = np.sum((y0[:, band_rows] < P['d'][band_rows] / band_F) | (y0[:, band_rows] > P['d'][band_rows] * band_F), 1)
-        if n_out.any():
-            hi_m = T.hi * (scale if scale is not None else 1.0)
-            x0 = X0[int(np.argmax(n_out))]
-            # the fit is deterministic, so it is made once per problem and kept beside it: later runs (the other
-            # replicates) with the same problem, band, start and bounds take it from there
-            lab_ = (f'{a.band:g}' if not grp else ''.join(f'{nm}{b_:g}' for nm, b_ in (('slip', sl_b), ('paleo', pa_b))
-                                                            if isinstance(b_, float)))
-            cache = os.path.splitext(a.problem)[0] + f'_band{lab_}_start.npz'
-            key = band_start_key(Gd, P['d'], band_rows, band_F, x0, hi_m)
-            ms = None
-            if os.path.exists(cache):
-                with np.load(cache) as c:
-                    if str(c['key']) == key:
-                        ms = np.array(c['m'])
-            if ms is not None:
-                print(f'band: the start leaves {n_out.max()} rows outside it; the start inside it that an earlier run '
-                      f'found from it is taken from {cache}')
-            else:
-                print(f'band: the start leaves {n_out.max()} rows outside it; a penalized least-squares fit from it:')
-                ms = band_start(Gd, P['d'], band_rows, band_F, x0, hi_m)
-                if ms is None:
-                    raise SystemExit('band: no start inside it was found; the band may admit no model of these inputs')
-                tmp = cache[:-4] + f'.{os.getpid()}.tmp.npz'
-                np.savez(tmp, m=ms, key=key, band=band_F)
-                os.replace(tmp, cache)               # whole or not at all, should another run read it meanwhile
-                print(f'band: kept for later runs on this problem in {cache}')
-            X0 = np.tile(ms, (a.chains, 1))
-            Xs = T.init(X0 if scale is None else X0 / scale)
-            left = T.band_outside(T.residual(Xs[:1]))[0]
-            if left:                               # e.g. rates below the slab floor, switched off by the prior
-                raise SystemExit(f'band: the start found leaves {left} rows outside it once the prior\'s support is applied')
     if a.positive or len(pos_g):                   # a start predicting 0 for some rows: ruptures switched on in them
         Us = T.init(X0 if scale is None else X0 / scale)
         n_out = T.band_outside(T.residual(Us))
@@ -5497,63 +5238,6 @@ def main():
             chi1 = float(np.sum(T.residual(Us[:1])[0, :T.n_data] ** 2))
             print(f'positivity: the start predicts 0 for {n_out.max()} rows; {added} ruptures crossing them switched on at '
                   f'twice their slab floor (chi2 {chi0:.4f} -> {chi1:.4f})')
-    if grp and (a.slip_log_band is not None or a.paleo_log_band is not None):   # the soft band, by row group
-        if T.pkind != 3 or dirs is not None:
-            raise SystemExit('--slip-log-band and --paleo-log-band need spike-and-slab, without transfer moves')
-        wt = np.ones(T.N)
-        sb = list(P['block_names'])
-        if a.slip_block in sb:                     # a section's k subsections share its term: each 1/k of it
-            Sr = np.flatnonzero(P['block'] == sb.index(a.slip_block))
-            sec = np.asarray(P['section'])[Sr]
-            if (sec >= 0).all():
-                ks = np.bincount(np.unique(sec, return_inverse=True)[1])
-                wt[Sr] = 1.0 / ks[np.unique(sec, return_inverse=True)[1]]
-        W, LD, rows_l, tau_r = np.zeros(T.N), np.zeros(T.N), [], []
-        for rows_, tau_ in ((g_slip, a.slip_log_band), (g_pal, a.paleo_log_band)):
-            if tau_ is not None:
-                W[rows_] = wt[rows_] / (2.0 * (tau_ * LN10) ** 2)
-                rows_l.append(rows_); tau_r.append(np.full(len(rows_), float(tau_)))
-        rows_l, tau_r = np.concatenate(rows_l), np.concatenate(tau_r)
-        LD[rows_l] = np.log(T.d[rows_l])
-        T.lw = dict(W=np.ascontiguousarray(W), LD=np.ascontiguousarray(LD), DY=np.ascontiguousarray(T.d, np.float64),
-                    rows=rows_l, tau=tau_r)
-        y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, rows_l]
-        pen0 = 2.0 * float(np.sum(W[rows_l] * np.log(y0 / T.d[rows_l]) ** 2)) if (y0 > 0).all() else np.inf
-        print('soft band: a penalty 1/2 (log10(prediction / target) / tau)^2, in the misfit beside the data, kept by a '
-              'Metropolis step, on ' + ' and '.join(f'the {nm} rows ({len(r_)}; tau {t_:g})' for nm, r_, t_ in
-                                                     (('slip-rate', g_slip, a.slip_log_band), ('paleo', g_pal, a.paleo_log_band))
-                                                     if t_ is not None)
-              + f' (each slip-rate subsection 1/k of its section\'s); the start\'s {pen0:.1f} (on chi2\'s scale), '
-              f'{int(np.sum(np.abs(np.log10(np.maximum(y0, 1e-300) / T.d[rows_l])) > tau_r))} rows beyond their tau')
-    if a.log_band is not None:                     # the soft band: weights on the positive-target data rows
-        if not a.positive or T.pkind != 3 or dirs is not None:
-            raise SystemExit('--log-band needs --positive and spike-and-slab, without transfer moves')
-        if not a.log_band > 0:
-            raise SystemExit(f'--log-band {a.log_band:g}: give a width above 0, in decades')
-        rows_l = np.flatnonzero(P['d'] > 0)
-        wt = np.ones(T.N)
-        sb = list(P['block_names'])
-        if a.slip_block in sb:                     # a section's k subsections share its term: each 1/k of it
-            Sr = np.flatnonzero(P['block'] == sb.index(a.slip_block))
-            sec = np.asarray(P['section'])[Sr]
-            if (sec >= 0).all():
-                ks = np.bincount(np.unique(sec, return_inverse=True)[1])
-                wt[Sr] = 1.0 / ks[np.unique(sec, return_inverse=True)[1]]
-        if pm_rows is not None and a.slip_block in sb:   # with --paleo-misfit, the slip-rate rows only
-            rows_l = np.intersect1d(rows_l, np.flatnonzero(P['block'] == sb.index(a.slip_block)))
-        W = np.zeros(T.N)
-        W[rows_l] = wt[rows_l] / (2.0 * (a.log_band * LN10) ** 2)
-        LD = np.zeros(T.N)
-        LD[rows_l] = np.log(T.d[rows_l])
-        T.lw = dict(W=np.ascontiguousarray(W), LD=np.ascontiguousarray(LD), DY=np.ascontiguousarray(T.d, np.float64),
-                    rows=rows_l, tau=float(a.log_band))
-        y0 = (T.residual(T.init(X0[:1] if scale is None else X0[:1] / scale)) + T.d)[0, rows_l]
-        pen0 = 2.0 * float(np.sum(W[rows_l] * np.log(y0 / T.d[rows_l]) ** 2)) if (y0 > 0).all() else np.inf
-        print(f'soft band: a penalty 1/2 (log10(prediction / target) / {a.log_band:g})^2 on {len(rows_l)} rows (each slip-rate '
-              f'subsection 1/k of its section\'s' + ('; the slip-rate rows only, with --paleo-misfit' if pm_rows is not None else '')
-              + '), in the misfit beside the data, kept by a Metropolis step; the start\'s '
-              f'{pen0:.1f} (on chi2\'s scale), {int(np.sum(np.abs(np.log10(np.maximum(y0, 1e-300) / T.d[rows_l])) > a.log_band))} rows beyond '
-              f'{a.log_band:g} decades of their targets')
     if sm_rows is not None:                        # --slip-misfit: the log misfit, through the soft band's machinery
         from cru_common import geo_moments, slip_log_sds
         s_lo, s_hi, wk_ = slip_log_sds(P, sm_rows)[:3]   # each row's log10 sds, below and above: its effective sd's (1/k: a
@@ -5605,8 +5289,7 @@ def main():
               + f' from its minimum, kept by a Metropolis step; the start\'s curve misfit {f0:.1f} (on chi2\'s scale, weighted {b_p:g})')
     if mf_rows is not None and a.mfd_misfit == 'pdf':   # MFD_GR: the bins' PDFs as curves, appended to the paleo curves' tables
         if not (grp or a.positive):
-            raise SystemExit('--mfd-misfit pdf with --band: give the per-group --slip-band and --paleo-band instead (it keeps '
-                             'each bin above zero)')
+            raise SystemExit('--mfd-misfit pdf needs each bin kept above zero (the per-group limits, or --positive)')
         from paleo_misfit import curve_tables, site_moments
         if T.lw is None:
             T.lw = dict(W=np.zeros(T.N), LD=np.zeros(T.N), DY=np.ascontiguousarray(T.d, np.float64),
@@ -5644,8 +5327,7 @@ def main():
               f'sites\'), kept by a Metropolis step; the start\'s {f0:.1f} (on chi2\'s scale)')
     elif mf_rows is not None:                      # --mfd-misfit log10: the bins' log misfit, through the soft band's machinery
         if not (grp or a.positive):
-            raise SystemExit(f'--mfd-misfit {a.mfd_misfit} with --band: give the per-group --slip-band and --paleo-band instead (it '
-                             'keeps each bin above zero)')
+            raise SystemExit(f'--mfd-misfit {a.mfd_misfit} needs each bin kept above zero (the per-group limits, or --positive)')
         if T.lw is None:
             T.lw = dict(W=np.zeros(T.N), LD=np.zeros(T.N), DY=np.ascontiguousarray(T.d, np.float64),
                         rows=np.array([], np.int64), tau=None)

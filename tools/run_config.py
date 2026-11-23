@@ -22,8 +22,6 @@ MISFIT_GROUP_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'spl
                       'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}  # for gibbs.py
 
 # Fixed since 2026-11-09, no longer settings (tools/run_nb.py NAME=VALUE still overrides each one, for sensitivity tests):
-BLOCKS = None                                  # row groups by original row numbers ('S=0-387,MFD=695-713,P=714-753'); None: the slip-rate rows (up to
-                                               # the first soft zero-forcing penalty row) and the magnitude-bin rows detected, any group named checked
 SLIP_SECTIONS = 'auto'                         # each run of subsections holding copies of one fault section's slip rate one measurement (its rows
                                                # divided by sqrt(k)), stopping at each parent fault's end; 'none': each subsection its own measurement;
                                                # or a file in DATA_DIR of 'original_row section' lines. Runs are named SLIP_SECTIONS... only when not 'auto'
@@ -58,7 +56,7 @@ DISPERSED_STARTS = True                        # every chain from its own prior 
                                                # every chain from the NNLS best fit, which cleaning then computes, for tests only
                                                # (tools/run_quick_checks.sh)
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
-FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
+FIXED = ('SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
          'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
@@ -82,7 +80,7 @@ def derived_settings(g):
                      ('half',) * 3: 'half'}.get((g['MISFIT_SLIP'], g['MISFIT_MFD'], g['MISFIT_PALEO']), 'mixed')   # for gibbs.py
     if g['MFD_GR']:                                # MFD_GR: the bins scored by their own PDFs, whatever MISFIT_MFD says
         out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'
-    fixed = dict(BLOCKS=BLOCKS, SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
+    fixed = dict(SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
                  CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None, DOWN_THE_MIDDLE=DOWN_THE_MIDDLE,
                  SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK, MFD_UNCERTAINTY=MFD_UNCERTAINTY)
     fixed['DISPERSED_STARTS'] = DISPERSED_STARTS

@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 """Dispersed starts for the sampler's chains (November 17th, 2026, the user's request; the notebook's DISPERSED_STARTS).
 
-    python dispersed_starts.py --problem cru_clean.npz --chains 16 [--noise 2] [--seed S] [--workers 4]
+    python dispersed_starts.py --problem cru_clean.npz --chains 16 [--seed S] [--workers 4]
                                [--polish-sd 0.1] [--out starts.npy] [--fit-args BEST_FIT_AS_FITTED_ARGS ...]
 
 Each chain gets its own start, made in two steps:
-  1. (since November 20th, 2026, the notebook passes --prior-share 1, the user's choice: every chain from a prior draw;
-     the randomized fits remain for --prior-share below 1)
-     half of them (1 - --prior-share) from best fits to the data, the other half from the prior, so that the chains
-     approach the posterior from both sides (the user's choice, 2026-11-17): best fits are sparse, a few ruptures
-     carrying each bin, while the posterior spreads its rate over many more; chains from both ends that still agree are
-     the stronger test.
-     - best fits: randomized best fits, each the NNLS fit to the data plus a fresh draw of NOISE times their stated
-       noise (randomized_nnls.py's fits, each from its own seed spawned from --seed); with NOISE 2, the default, they are
-       over-dispersed relative to the posterior. None starts from cleaning's unperturbed NNLS fit (the user's choice, for
-       consistency: every chain's start is a draw); that fit is the report's reference.
+  1. a prior draw (every chain since November 20th, 2026, the user's choice; the randomized best fits that started half
+     the chains before, and randomized_nnls.py with them, were removed on November 23rd, 2026):
      - prior draws: in each magnitude bin, a fraction on drawn uniformly (the prior's Beta(1, 1)), each rupture on with
        that probability (at least one), its rate log-uniform from twice the slab floor up to the bin's target R_j (the
        slab), and the bin's rates then scaled together so that they add up to R_j times a factor exp(2 (sigma_j / R_j)
@@ -36,8 +28,7 @@ Each chain gets its own start, made in two steps:
      630,000 ruptures the full fit took 27 minutes, but its first 500 iterations did 95% of the work (227 -> 152 against
      147 at the end); a polish moves the rates only along the directions the data see (G's rows: rank 2,372 of 615,700
      rates), so the starts keep their differences in which ruptures carry the rate.
-Without --fit-args (a run scored as NNLS scores it, with no other terms or constraints), the fits are the starts.
-The fits and the polishes run in --workers processes, one thread each.
+Without --fit-args the prior draws are the starts. The polishes run in --workers processes, one thread each.
 
 Writes --out (default starts.npy next to --problem): a (chains, ruptures) array over the cleaned problem's ruptures, for
 gibbs.py --init; its report beside it (starts_report.txt): each start's Gaussian chi2 on the cleaned rows before the
@@ -55,7 +46,6 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from cru_common import gr_curves, load_problem, mfd_monotonic, prelim_path, report_to
-from randomized_nnls import ensemble
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -87,16 +77,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem (default cru_clean.npz)')
     ap.add_argument('--chains', type=int, required=True, help='the number of chains (one start each)')
-    ap.add_argument('--noise', type=float, default=2.0, help='the randomized fits\' noise, times the stated noise (default 2)')
-    ap.add_argument('--seed', type=int, default=1, help='seed of the noise draws (default 1)')
+    ap.add_argument('--seed', type=int, default=1, help='seed of the prior draws (default 1)')
     ap.add_argument('--workers', type=int, default=min(4, os.cpu_count() or 1), help='processes (default 4)')
     ap.add_argument('--polish-sd', type=float, default=0.0, help='with a longer --polish-iter: stop once the misfit falls by '
                     'less than this times the fit check\'s sd over --polish-window iterations (default 0: off)')
     ap.add_argument('--polish-window', type=int, default=100, help='iterations for --polish-sd (default 100)')
     ap.add_argument('--polish-iter', type=int, default=30, help='the polish\'s iterations per augmented-Lagrangian round '
                     '(default 30: feasibility, not fit; at most 1000)')
-    ap.add_argument('--prior-share', type=float, default=0.5, help='the share of the chains started from prior draws, 0 to 1 '
-                    '(default 0.5; the notebook: 1); the rest from randomized fits')
     ap.add_argument('--floor', type=float, default=1e-10, help='the slab floor (default 1e-10)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
     ap.add_argument('--mfd-gr-tau', type=float, default=None, metavar='TAU',
@@ -106,8 +93,8 @@ def main():
     ap.add_argument('--out', default=None, help='the starts (default starts.npy next to --problem)')
     ap.add_argument('--fit-args', nargs='*', default=[], help='(last) best_fit_as_fitted.py\'s arguments for the polish')
     a = ap.parse_args(argv)
-    if a.chains < 1 or not a.noise > 0 or not 1 <= a.polish_iter <= 1000 or not 0 <= a.prior_share <= 1:
-        raise SystemExit('--chains, --polish-iter: 1 or more; --noise: above 0; --prior-share: 0 to 1')
+    if a.chains < 1 or not 1 <= a.polish_iter <= 1000:
+        raise SystemExit('--chains and --polish-iter: 1 or more (--polish-iter at most 1000)')
     here = os.path.dirname(os.path.abspath(a.problem))
     out = a.out or os.path.join(here, 'starts.npy')
     report_to(os.path.splitext(out)[0] + '_report.txt')
@@ -119,23 +106,16 @@ def main():
     with np.load(prelim_path(a.problem)) as z:
         base = np.asarray(z['m_nnls'], np.float64) if 'm_nnls' in z.files else None   # none since 2026-11-21 (--no-nnls)
     t0 = time.time()
-    n_prior = int(round(a.prior_share * a.chains)) if a.chains > 1 else int(a.prior_share >= 1)
-    n_fit = a.chains - n_prior
-    print(f'dispersed starts: {a.chains} chains; {n_fit} from randomized best fits'
-          + (f' (NNLS to the data plus {a.noise:g} x their stated noise, seed {a.seed})' if n_fit else '')
-          + f' and {n_prior} from prior draws (each bin\'s '
+    n_prior, n_fit = a.chains, 0                     # every chain from a prior draw
+    print(f'dispersed starts: {a.chains} chains, each from a prior draw (each bin\'s '
           'fraction on uniform, rates log-uniform up to its target, the bin then scaled to its target), '
           + (f'each then polished for feasibility by best_fit_as_fitted.py with the run\'s misfit, terms and constraints '
              f'({a.polish_iter} iterations per round' + (f'; or until its misfit settles, {a.polish_sd:g} x the fit check\'s '
              f'sd over {a.polish_window} iterations' if a.polish_sd > 0 else '') + ')'
              if fit_args else 'used as they are (the run is scored as NNLS scores it)')
           + f'; {a.workers} workers', flush=True)
-    res = ensemble(os.path.abspath(a.problem), n_fit, a.seed, a.workers, noise=a.noise) if n_fit else []
     X = np.zeros((a.chains, n))
-    for k, r in enumerate(res):
-        X[k, r['idx']] = r['val']
     kind = ['fit'] * n_fit + ['prior'] * n_prior
-    kind_arr = np.array(kind)
     if n_prior:                                          # prior draws, each bin scaled to its target (see above)
         MM = mfd_monotonic(P, a.bins_block)              # the bins' members and targets R_j (rates per year)
         lf = np.log(2 * a.floor)
@@ -210,14 +190,12 @@ def main():
     TT = np.array([[x[m].sum() for m in MMd['members']] for x in X]) / MMd['R']
     own = np.median(MMd['sig'] / MMd['R'])
     sp = lambda T_: float(np.median(np.std(np.log(np.maximum(T_, 1e-300)), 0)))
-    print(f'dispersion: the starts\' bin totals spread by {100 * sp(TT):.0f}% (median over bins, sd in log; fits '
-          f'{100 * sp(TT[kind_arr == "fit"]) if (kind_arr == "fit").sum() > 1 else float("nan"):.0f}%, prior draws '
-          f'{100 * sp(TT[kind_arr == "prior"]) if (kind_arr == "prior").sum() > 1 else float("nan"):.0f}%). For comparison: the '
+    print(f'dispersion: the starts\' bin totals spread by {100 * sp(TT):.0f}% (median over bins, sd in log). For comparison: the '
           f'bins\' own uncertainties, {100 * own:.0f}% (median), and the posterior\'s spread, usually much narrower (19,000 '
           'ruptures with MFD_GR: 8%, the bins\' own 24-75%); the convergence report\'s bins_posterior.csv gives this run\'s. '
           'Starts spread wider than the posterior are over-dispersed, as R-hat needs')
     np.save(out, X)
-    print(f'wrote {out} ({a.chains} x {n}) in {time.time() - t0:.0f} s (the fits {t_fits:.0f} s)')
+    print(f'wrote {out} ({a.chains} x {n}) in {time.time() - t0:.0f} s (the draws {t_fits:.0f} s)')
 
 
 if __name__ == '__main__':

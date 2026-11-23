@@ -123,6 +123,10 @@ costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the n
 all types, the largest that keeps every type at or below one extra measurement (cru_common.balance_rows weights;
 extra rows of G and d). The notebook's default is False since early November 2026, with the band. The recorded chi2 and
 predictions stay on the data rows, and the term is recorded on its own; the best fit and randomized_nnls.py ignore it.
+[Since 2026-11-23 the factor and soft bands' options (--band, --slip-band, --paleo-band, --log-band, --slip-log-band,
+--paleo-log-band), band_start and selftest_logband are removed (the user: the misfits make them needless); --all-positive,
+--mfd-monotonic and --plate-rate keep the limits machinery (set_groups, band_bounds, selftest_band), and the log misfits keep
+the soft band's kernel path (lw_change, col_dots_lw). What follows on the bands is history.]
 Bands by row group (since November 4th, 2026; the notebook's SLIP_BAND, SLIP_BAND_SOFT until 2026-11-10, and until November 5th PALEO_BAND,
 PALEO_BAND_SOFT, since then gibbs.py options only: --paleo-misfit years keeps the paleo rows above zero itself):
 --slip-band and --paleo-band (positive or a factor F) and --slip-log-band and --paleo-log-band (TAU, with that group's

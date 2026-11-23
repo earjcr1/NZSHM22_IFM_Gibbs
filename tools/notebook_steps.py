@@ -132,7 +132,7 @@ def record_config(**more):
         g['CONFIG'] = dict(
             run_minutes=g['RUN_MINUTES'], targets=g['TARGETS'], dispersed_starts=g['DISPERSED_STARTS'], seed=g['SEED_USED'],
             code_dir=HERE, data_dir=g['DATA_DIR'], run_dir=g['RUN_DIR'], settings=g['P'], floor=g['FLOOR'],
-            representatives=g['REPRESENTATIVES'], blocks=g['BLOCKS'],
+            representatives=g['REPRESENTATIVES'],
             slip_sections=g['SLIP_SECTIONS'], mfd_uncertainty=g['MFD_UNCERTAINTY'], down_the_middle=g['DOWN_THE_MIDDLE'],
             misfit=g['MISFIT'], misfit_slip=g['MISFIT_SLIP'], misfit_mfd=g['MISFIT_MFD'],
             mfd_gr=g['MFD_GR'] and g['MFD_GR_SPEC'], misfit_paleo=g['MISFIT_PALEO'], mfd_monotonic=g['MFD_MONOTONIC'],
@@ -307,8 +307,6 @@ def cleaning_args():
          '--mfd-uncertainty', g['MFD_UNCERTAINTY']]
     if g['DISPERSED_STARTS']:                          # no best fit: every chain starts from a prior draw (since 2026-11-21)
         a += ['--no-nnls']
-    if g['BLOCKS']:
-        a += ['--blocks', g['BLOCKS']]
     if g['CFM_SLIPRATES']:                             # the slip-rate rows rebuilt from the CFM, as split normals
         a += ['--cfm-sliprates', g['CFM_CSV']]
         a += ['--cfm-timeframe', os.path.join(os.path.dirname(HERE), 'data', 'cfm_timeframe_sliprates.csv')] if g['CFM_TIMEFRAME'] else []
@@ -412,9 +410,8 @@ def starts_args():
     g = _G['g']
     import run_plan
     chains = g['RUN_PLAN']['chains'] if g['RUN_PLAN'] is not None else run_plan.CHAINS_PER_THREAD * g['THREADS']
-    a = ['--problem', 'cru_clean.npz', '--chains', chains, '--noise', 2, '--seed', replicate_seed(1000),
-         '--workers', g['THREADS'], '--out', 'starts.npy', '--floor', 10.0 ** g['FLOOR'], '--bins-block', g['BIN_BLOCK'],
-         '--prior-share', 1]
+    a = ['--problem', 'cru_clean.npz', '--chains', chains, '--seed', replicate_seed(1000),   # every chain a prior draw
+         '--workers', g['THREADS'], '--out', 'starts.npy', '--floor', 10.0 ** g['FLOOR'], '--bins-block', g['BIN_BLOCK']]
     if g['MFD_GR'] and g['MFD_GR_TAU'] is not None:      # the prior draws on a G-R curve, as the sampler scores the bins
         a += ['--mfd-gr-tau', g['MFD_GR_TAU']]
     fit = _terms()

@@ -362,15 +362,9 @@ def main():
                          '630k inputs)')
     ap.add_argument('--no-nnls', action='store_true',
                     help='skip the best nonnegative least-squares fit (and its nnls/ outputs; the notebook since 2026-11-21)')
-    ap.add_argument('--huge', type=float, default=1e10, help='entries above this mark columns forced to zero')
-    ap.add_argument('--sigma', type=float, default=1.0)
-    ap.add_argument('--lo', type=float, default=0.0)
-    ap.add_argument('--hi', type=float, default=1.0)
     ap.add_argument('--out', default='cru_clean.npz')
     ap.add_argument('--figure', action='store_true', help='also draw the diagnostics (prelim.png: per-rupture scales, the '
                     'spectrum, the resolution diagonal, the best fit\'s residuals)')
-    ap.add_argument('--blocks', default=None, help="optional names for row blocks, e.g. 'S=0-387,MFD=695-713,P=714-753' (original row numbers); "
-                    "the slip-rate and magnitude-bin rows are detected automatically if not named, and checked if named")
     ap.add_argument('--bins-block', default='MFD', help='name of the magnitude-bin rows (detected automatically if --blocks does not name them)')
     ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 of the diagnostic and reporting cutoff (the notebook\'s '
                     'FLOOR, -10 by default), compared with the collective negligibility scale')
@@ -404,10 +398,6 @@ def main():
                          'magnitude bins, for gibbs.py --swap-cos-cross (the notebook: 0.95); same-bin pairs stay at 0.99')
     ap.add_argument('--no-duplicates', action='store_true', help='skip the near-duplicate search (about 13 s at 2e5 '
                     'ruptures); gibbs.py --swap-cos then finds no pairs')
-    ap.add_argument('--keep-soft-penalties', action='store_true',
-                    help='keep the rows after the slip-rate rows that have a target of 0 and a single entry (soft zero-forcing '
-                         'penalties, 1e4 in the NZSHM22 inputs) as the inputs give them, instead of forcing their ruptures to 0 '
-                         'as the penalty rows do (they then cap those ruptures softly, and the fit check leaves them out)')
     ap.add_argument('--cfm-sliprates', default=None, metavar='CSV',
                     help='rebuild the slip-rate rows from the NZ Community Fault Model (NZ_CFM_v1_0.csv: SR_pref, SR_min, '
                          'SR_max per parent fault), each a split normal in mm/yr with its mode at the inputs\' factor (0.8) '
@@ -417,22 +407,10 @@ def main():
                     help='each rupture\'s slip along its subsections in the slip-rate rows: uniform (default; NZSHM22\'s Dsr '
                          'Uniform, as the inputs have it), or tapered (UCERF3\'s sqrt-sine taper by area along the rupture, '
                          'its average slip unchanged; plate_rate.slip_taper); needs --rupture-set')
-    ap.add_argument('--cfm-sigmas', type=float, default=2.0,
-                    help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2; the inputs read them as 1)')
-    ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'],
-                    help='--cfm-sliprates: SR_pref as each split normal\'s mode (default) or its median (the mode then moved, '
-                         'each side\'s sd kept; a fault whose mode would fall at or below 0 keeps SR_pref as the mode)')
-    ap.add_argument('--cfm-rounding', action='store_true',
-                    help='--cfm-sliprates: each fault\'s SR_pref, SR_min and SR_max known to half the finest step among them '
-                         'as written (1, 0.1, 0.01 mm/yr, ...), uniform, its variance added in quadrature to each side\'s sd')
     ap.add_argument('--cfm-timeframe', default=None, metavar='CSV',
                     help='--cfm-sliprates: each fault\'s slip rate corrected for its timeframe (Coffey et al.; the table '
                          'timeframe_sliprates.py writes, data/cfm_timeframe_sliprates.csv): its mode, 2.5%% and 97.5%% points '
                          'in place of SR_pref, SR_min and SR_max, with no --cfm-rounding and the mode as the mode')
-    ap.add_argument('--cfm-timeframe-shape', default='fit', choices=['fit', 'ends'],
-                    help='--cfm-timeframe: each fault\'s split normal fitted to its corrected distribution\'s 16%%, 50%% and 84%% '
-                         'points (fit, the default since 2026-11-09: its median and body exactly, its mean closely), or its mode '
-                         'with the 2.5%% and 97.5%% points at 2 sd (ends, before; its median and mean a median 7%% high)')
     ap.add_argument('--cfm-template-rho', type=float, default=None, metavar='RHO',
                     help='--cfm-sliprates: faults of QualCode 2-5 sharing an identical SR_pref / SR_min / SR_max treated as '
                          'correlated (rho): each one\'s rows weighted 1 / sqrt(1 + (n - 1) rho) for a group of n; 1: a group '
@@ -453,6 +431,11 @@ def main():
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()
+    # fixed since 2026-11-23 (their options removed, the user's request): the problem's scale and box, the penalty rows'
+    # threshold, the row groups detected (no --blocks), the soft zero-forcing rows forced to 0, and the CFM's reading: SR_min
+    # and SR_max at 2 sd, SR_pref the mode, no rounding, the timeframe-corrected split normals fitted to 16/50/84%
+    args.huge, args.sigma, args.lo, args.hi, args.blocks, args.keep_soft_penalties = 1e10, 1.0, 0.0, 1.0, None, False
+    args.cfm_sigmas, args.cfm_pref, args.cfm_rounding, args.cfm_timeframe_shape = 2.0, 'mode', False, 'fit'
     t0 = time.time()
     sig, u = args.sigma, args.hi - args.lo
     stem = os.path.splitext(args.out)[0]                 # side outputs are named after --out
