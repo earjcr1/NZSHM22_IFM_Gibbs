@@ -732,7 +732,7 @@ Since November 23rd, 2026 every run takes its slip rates from the NZ Community F
   - `Comments`.
 
   Each subsection's parent is matched to a CFM line by exact name. A parent fault missing from the CFM stops cleaning.
-- **Coffey et al. (accepted, BSSA), Table S4:** each fault's slip rate widened for the few earthquakes a short timeframe captures. The user's file, `SuppTS4_IFM_SR_updated_Jul2026.csv`, is not in the repository. `tools/timeframe_sliprates.py --s4` reads it and writes `data/cfm_timeframe_sliprates.csv`, with a report beside it.
+- **Coffey et al. (accepted, BSSA), Table S4:** each fault's slip rate widened for the few earthquakes a short timeframe captures. The user's file, `SuppTS4_IFM_SR_updated_Jul2026.csv`, is not in the repository; it is in `Inversions/Papers/GC_sliprates/`, beside the repository's folder (identical copies are in the slip-rate manuscript's folders; MD5 66a78206…). `tools/timeframe_sliprates.py --s4` reads it and writes `data/cfm_timeframe_sliprates.csv`, with a report beside it.
 - **`data/cfm_rate_fixes.csv`:** faults that take another fault's rate. There is one, Teviot, which takes Old Man's ("Rate fixes", below).
 - **`data/cfm_rate_sources.csv`:** 63 faults whose identical-looking rate is their own or borrowed, not a template ("Coincidental templates left out", below).
 
@@ -791,7 +791,7 @@ Of those that exist, the one closest to the corrected distribution in Kullback�
 - **The split normal's centre is not the corrected mode for the log fits.** Hariki's centre is 0.060 against a corrected mode of 0.040. The KL choice keeps the whole distribution closest, not its peak (for log 2.5/50/97.5, centre / corrected mode is a median 1.12).
 - **Templates count as one measurement at ρ = 1.** The 46 faults at 0.05 / 0.01 / 0.1 together weigh as one fault. That is right if the template's error is shared in full.
 - **The sds are tight relative to the other data.** Each side's sd is 0.8 × the fitted split normal's, a median 0.28 of NZSHM22's 2 × `SlipRateStdDev`. In run _1795076220 the slip-rate rows' χ² is 1,694 ± 71 over the draws against 328 measurements, and the posterior mean's is 876. NZSHM22's solution with the MFD's σ ×1 scores 404 on the same rows, near the count, so the slip rates can nearly all be met. The excess is the trade-off with the MFD and the paleo rates, which `DATATYPES_EQUAL` sets deliberately (the slip rates ×0.42). The smoke test at 2e4 shows the same: slip rates 176 over 52 measurements; NZSHM22's 19k solution scores 114 on them.
-- **One input is outside the repository:** Coffey et al.'s Table S4 (`SuppTS4_IFM_SR_updated_Jul2026.csv`). The corrected table built from it is in the repository.
+- **One input is outside the repository:** Coffey et al.'s Table S4 (`Inversions/Papers/GC_sliprates/SuppTS4_IFM_SR_updated_Jul2026.csv`). The corrected table built from it is in the repository.
 
 ## Slip rates from the CFM (November 4th, 2026; `CFM_SLIPRATES`, `True` by default since November 5th, `False` before; `preliminaries.py --cfm-sliprates`)
 
