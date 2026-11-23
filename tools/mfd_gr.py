@@ -25,6 +25,16 @@ constant share of the total, the minimum and maximum magnitudes and the run's N5
 regional_inversion_target_mfds.json. load_parts checks the rebuild against the stored MFDs at the run's own N5 and b
 (19k, 211k and 630k: every component to 1e-14 or better).
 
+A rupture set made without an inversion has none of those files (2026-11-23, the user's request): then everything comes
+from its fault_sections.geojson, properties.csv and indices.csv (rupture_set_parts). pdf_s from each subsection's polygon
+over NZSHM22's gridded seismicity (fault_polygons.py: its sum 0.04-0.11% above NZSHM22's at 19k-630k, a quirk of Java's
+geometry; the supra-seismogenic target within 0.15% of NZSHM22's); the minimum magnitudes by NZSHM22's rule
+(rupture_set_inputs.section_min_mags, from 6.8); the kink the bin nearest the moment-weighted mean of the subsections'
+minimum magnitudes (NZSHM22_FaultSystemRupSetCalc.getMeanMinMag: length x down-dip width x SlipRate, all at the same
+slip-rate factor); minimum 6.8, maximum 10, and NZSHM22's run, N5 3.4 and b 0.959 (NZSHM22_RUN; the user's choice, 2026-11-23: the N5 of
+the 630k solutions of November 2026; the 19k, 211k and first 630k solutions used 3.92), for the comparison with
+NZSHM22's bins.
+
 Each component is proportional to N5, so a bin's target is N5 x f_j(b). The knobs are NZSHM22's (Rollins et al., 2024,
 BSSA 114, 150-181, Table 1, upper-plate IFM; the user's choice, 2026-11-17, replacing independent N5 and b triples):
 b's 10th percentile, mean and 90th percentile (0.823, 0.959, 1.089), read as a split normal; the mean N(M>=5)
@@ -55,6 +65,10 @@ X = NZ_MIN_MAG + DELTA * np.arange(NZ_NUM_BINS)          # the bins' centres
 M_MAX_OFF_FAULT = 8.05                                  # NZSHM22's off-fault maximum (less half a bin in the code)
 ON_CORR, OFF_CORR = 0.98, 1.01                          # its hand-set rate corrections in the off-fault MFD
 FIRST_WEIGHT_POWER_MAG = 7.0                            # its sigma recipe's reference magnitude
+NZSHM22_RUN = dict(n5=3.4, b=0.959, minMag=6.8, maxMag=10.0, power=0.25, scalar=0.1)    # for a rupture set without an
+                                                        # inversion: NZSHM22's crustal run (N5 3.4, the user's choice of
+                                                        # 2026-11-23, as the 630k solutions of November 2026; 3.92 before),
+                                                        # minimum 6.8 (OpenSHA's 6.8001 is against aliasing)
 FILES = ('regional_inversion_target_mfds.json', 'inversion_target_mfds.json', 'sub_seismo_on_fault_mfds.csv',
          'mod_sect_min_mags.csv', 'properties.csv')
 
@@ -72,13 +86,12 @@ def gr(n5, b, i_hi):
 
 
 def solution_dir(rupture_dir):
-    """The folder holding an inversion solution's MFD files: rupture_dir itself or its ruptures/."""
+    """The folder holding an inversion solution's MFD files: rupture_dir itself or its ruptures/; None if neither has them
+    all (a rupture set made without an inversion: rupture_set_parts)."""
     for d in (rupture_dir, os.path.join(rupture_dir, 'ruptures')):
         if all(os.path.exists(os.path.join(d, f)) for f in FILES):
             return d
-    miss = [f for f in FILES if not os.path.exists(os.path.join(rupture_dir, f))]
-    raise FileNotFoundError(f'{rupture_dir}: MFD_GR needs an OpenSHA inversion solution\'s rupture set, with '
-                            + ', '.join(miss) + ' (a rupture set made without an inversion has none of them)')
+    return None
 
 
 def components(parts, n5, b):
@@ -105,8 +118,11 @@ def components(parts, n5, b):
 
 def load_parts(rupture_dir):
     """What the partitioning takes from a solution (see the module's notes), checked by rebuilding its stored MFDs at
-    its own N5 and b. Raises ValueError if they are not reproduced."""
+    its own N5 and b. Raises ValueError if they are not reproduced. Without the solution's files, rupture_set_parts.
+    parts['source']: 'solution' or 'rupture set'."""
     d = solution_dir(rupture_dir)
+    if d is None:
+        return rupture_set_parts(rupture_dir)
     reg = json.load(open(os.path.join(d, 'regional_inversion_target_mfds.json')))
     if reg.get('TVZ', {}).get('totalTargetGR') is not None:
         raise ValueError(f'{d}: the TVZ region has its own MFDs; MFD_GR handles the sans-TVZ region only')
@@ -140,6 +156,46 @@ def load_parts(rupture_dir):
                          f'b {parts["b_run"]:g} (largest relative differences ' + ', '.join(f'{k} {v:.1e}' for k, v in err.items())
                          + '); this solution\'s code may partition otherwise')
     parts['check'] = err
+    parts['source'] = 'solution'
+    return parts
+
+
+def rupture_set_parts(rupture_dir):
+    """The partitioning's inputs from a rupture set alone (fault_sections.geojson, properties.csv, indices.csv; see the
+    module's notes): the shares from fault_polygons.py, the minimum magnitudes by NZSHM22's rule, the kink from their
+    moment-weighted mean, NZSHM22_RUN's magnitudes and run. parts['stored']: the components at NZSHM22's run (N5 3.4,
+    b 0.959), NZSHM22's bins as its code would build them for this rupture set."""
+    from cru_common import find_rupture_set
+    from fault_polygons import section_shares, horz_km
+    from rupture_set_inputs import section_min_mags
+    d = find_rupture_set(rupture_dir, search=False)
+    need = ('fault_sections.geojson', 'properties.csv', 'indices.csv')
+    if d is None or not all(os.path.exists(os.path.join(d, f)) for f in need):
+        raise FileNotFoundError(f'{rupture_dir}: MFD_GR needs an OpenSHA rupture set (its ' + ', '.join(need) + '), or an '
+                                'inversion solution\'s, with ' + ', '.join(FILES))
+    R = NZSHM22_RUN
+    feats = json.load(open(os.path.join(d, 'fault_sections.geojson')))['features']
+    pdf = section_shares(d)
+    minm = section_min_mags(d, R['minMag'])
+    w = np.zeros(len(feats))                              # each subsection's moment rate, up to a constant (calcMomentRate(true))
+    for k, f in enumerate(feats):
+        p = f['properties']
+        c = np.asarray(f['geometry']['coordinates'], float)
+        length = float(np.sum(horz_km(c[:-1, 1], c[:-1, 0], c[1:, 1], c[1:, 0])))
+        width = (p['LowDepth'] - p['UpDepth']) / math.sin(math.radians(p['DipDeg']))
+        aseis, coupling = p.get('AseismicSlipFactor') or 0.0, p.get('CouplingCoeff')
+        w[k] = length * width * (1 - aseis) * p['SlipRate'] * (1.0 if coupling is None else coupling)
+    w = np.where(np.isfinite(w), w, 0.0)
+    mean_min = float(np.sum(minm * w) / w.sum())
+    with open(os.path.join(d, 'properties.csv')) as f:
+        head = f.readline().strip().split(',')
+        mags = np.loadtxt(f, delimiter=',', usecols=(head.index('Magnitude'),), ndmin=1)
+    parts = dict(dir=d, pdf=pdf, f_on=float(pdf.sum()), minm=minm, mmax=float(mags.max()), minMag=R['minMag'],
+                 maxMag=R['maxMag'], n5_run=R['n5'], b_run=R['b'], power=R['power'], scalar=R['scalar'],
+                 kink=ci(mean_min), mean_min_mag=mean_min, source='rupture set')
+    parts['i_top'] = ci(min(parts['mmax'], parts['maxMag']))
+    parts['stored'] = components(parts, R['n5'], R['b'])
+    parts['check'] = None
     return parts
 
 
@@ -387,8 +443,13 @@ def report_lines(parts, GB, lo=None):
     st = parts['stored']['supra']
     L = [f'MFD_GR (mfd_gr.py): each bin\'s target PDF propagated from {knob_text(GB["knobs"])}, through NZSHM22\'s partitioning '
          f'of the total GR, from {parts["dir"]}',
-         f'   the solution\'s own run (N5 {parts["n5_run"]:g}, b {parts["b_run"]:g}) reproduced: '
-         + ', '.join(f'{k} {v:.0e}' for k, v in parts['check'].items()) + ' (largest relative differences)',
+         (f'   the solution\'s own run (N5 {parts["n5_run"]:g}, b {parts["b_run"]:g}) reproduced: '
+          + ', '.join(f'{k} {v:.0e}' for k, v in parts['check'].items()) + ' (largest relative differences)'
+          if parts.get('source') == 'solution' else
+          '   a rupture set without an inversion: the subsections\' shares of the gridded seismicity from their polygons '
+          '(fault_polygons.py), their minimum magnitudes by NZSHM22\'s rule, the kink at the moment-weighted mean minimum '
+          f'magnitude {parts["mean_min_mag"]:.4f}; NZSHM22\'s bins at its run (N5 {parts["n5_run"]:g}, b {parts["b_run"]:g}) '
+          'as its code would build them here (within ~0.1%)'),
          f'   the rupture set: largest magnitude {parts["mmax"]:.3f} (top bin {X[parts["i_top"]]:.2f}); {len(parts["pdf"])} '
          f'sections, the seismicity PDF\'s share on the faults {parts["f_on"]:.4f}; minimum supra-seismogenic magnitudes '
          f'{parts["minm"].min():.2f}-{parts["minm"].max():.2f}; the off-fault MFD\'s kink at the {X[parts["kink"]]:.2f} bin',
@@ -405,14 +466,14 @@ def report_lines(parts, GB, lo=None):
         L.append(f'   {X[j]:5.2f} {R:10.4e} {st[j]:10.4e} {f_["best"] / R:6.3f} ' + ' '.join(f'{x:6.3f}' for x in q)
                  + f' {b_["sd"] / R:6.3f} {"":>10s} {np.abs(f_["err"]).max():10.4f} {f_["dmis"]:11.3f}')
     sel = np.array(sorted(GB['F']))
-    L.append(f'   total of the targets {GB["R"][sel].sum():.5g} per year (the solution\'s {st[sel].sum():.5g}); fit: quantile errors '
+    L.append(f'   total of the targets {GB["R"][sel].sum():.5g} per year (NZSHM22\'s {st[sel].sum():.5g}); fit: quantile errors '
              'in decades, and the largest |difference| between the curve\'s misfit and the exact one between the 0.1% and 99.9% points')
     return L
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('rupture_set', help='an OpenSHA inversion solution\'s folder or its ruptures/')
+    ap.add_argument('rupture_set', help='an OpenSHA inversion solution\'s folder or its ruptures/, or a rupture set\'s')
     ap.add_argument('--mfd-gr', default='0.823,0.959,1.089,2.65,3.40,4.57,0.66,1.41',
                     help='B10,B,B90,N10,N,N90,S_LO,S_HI[,M1,M2,M3] (default: NZSHM22\'s upper-plate IFM, Rollins et al. 2024, Table 1; '
                     'append the magnitude-uncertainty factor, e.g. ' + ','.join(f'{x_:g}' for x_ in MAGUNCERT) + ', for RECONSIDER_MAGUNCERT)')

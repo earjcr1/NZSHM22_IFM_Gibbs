@@ -779,58 +779,6 @@ def rupture_magnitudes(rupture_dir):
     return out
 
 
-def logbox_mean(a, b, se, u_hi, npts=400001):
-    """Mean rate of the log-box prior: flat in log10 m on [a, b], half-Gaussian edges of sd se decades
-    (se = 0: hard edges), truncated at log10 m <= u_hi."""
-    lo = a - 12 * se if se > 0 else a
-    hi = u_hi if se > 0 else min(b, u_hi)
-    u = np.linspace(lo, hi, npts)
-    f = np.ones_like(u)
-    if se > 0:
-        f = np.where(u < a, np.exp(-(a - u) ** 2 / (2 * se ** 2)), np.where(u > b, np.exp(-(u - b) ** 2 / (2 * se ** 2)), 1.0))
-    return float(np.sum(f * 10.0 ** u) / np.sum(f))
-
-
-def resolve_logbox(spec, P, block='MFD'):
-    """Edges (a, b, se) in log10 rate and a description, for a log-uniform ("log-box") prior spec:
-       logbox:A:B:SE           absolute edges 10^A and 10^B;
-       logbox-centre:W:SE[:C]  width W decades, centred in log10 on C (default: the average data-imposed rate);
-                               the box's centre is the prior median;
-       logbox-mean:W:SE        width W decades, placed so that the prior mean rate equals that average.
-    SE is the soft-edge width in decades (0 = hard edges)."""
-    parts = spec.split(':')
-    kind = parts[0]
-    u_hi = float(np.log10(P['hi'])) if np.isfinite(P['hi']) else 50.0
-    n = P['G'].shape[1]
-    rbar = average_data_rate(P, block) if block in P['block_names'] else None
-    if kind == 'logbox':
-        a, b, se = map(float, parts[1:4])
-    elif kind in ('logbox-centre', 'logbox-mean'):
-        if rbar is None:
-            raise ValueError(f'{kind} needs the magnitude-bin row block {block!r}')
-        W, se = float(parts[1]), float(parts[2])
-        if kind == 'logbox-centre':
-            c = float(parts[3]) if len(parts) > 3 else np.log10(rbar)
-            a, b = c - W / 2, c + W / 2
-        else:
-            lo_, hi_ = np.log10(rbar) - 12.0, min(np.log10(rbar) + W, u_hi)
-            for _ in range(60):
-                mid = 0.5 * (lo_ + hi_)
-                if logbox_mean(mid - W, mid, se, u_hi) < rbar:
-                    lo_ = mid
-                else:
-                    hi_ = mid
-            b = 0.5 * (lo_ + hi_)
-            a = b - W
-    else:
-        raise ValueError(f'unknown log-box spec {spec!r}')
-    mean = logbox_mean(a, b, se, u_hi)
-    desc = (f'log-uniform between 1e{a:.2f} and 1e{b:.2f} (centre 1e{(a + b) / 2:.2f}), edge sd {se:g} decades; '
-            f'prior mean rate {mean:.2e}, implied prior total {n * mean:.3g}/yr'
-            + (f' (data-imposed total {rbar * n:.4g}/yr, average rate {rbar:.2e})' if rbar is not None else ''))
-    return a, b, se, desc
-
-
 def prelim_path(problem):
     """The diagnostics file preliminaries.py writes next to a cleaned problem: prelim_results.npz beside cru_clean.npz,
     or <stem>_prelim_results.npz beside <stem>.npz for any other name."""
@@ -968,6 +916,24 @@ def reference_rates(spec, P):
             f'{100 * removed / m_all.sum():.2g}% of its total) are not in these predictions' if removed > 0 else '')
     return dict(m=m_all[P['keep_cols']], label=label, path=path, total=float(m_all.sum()), removed=removed,
                 n_removed=n_removed, note=note)
+
+
+REF_MARKERS = ('s', 'D')                                 # the fit figures' references: the first a square, the second a
+REF_INKS = ('#0b0b0b', '#52514e')                        # diamond in dark grey (2026-11-23: two NZSHM22 solutions at once)
+REF_OFFSETS = (0.78, 0.22)                              # where in a bin (fraction of its width) plot_rate_magnitude puts each
+
+
+def reference_list(specs, P):
+    """The fit figures' --reference, given up to twice: reference_rates for each, with its marker, ink and index (k)."""
+    specs = [s for s in (specs or []) if s]
+    if len(specs) > len(REF_MARKERS):
+        raise SystemExit(f'--reference: at most {len(REF_MARKERS)} (given {len(specs)})')
+    out = []
+    for k, s in enumerate(specs):
+        r = reference_rates(s, P)
+        r.update(k=k, marker=REF_MARKERS[k], ink=REF_INKS[k])
+        out.append(r)
+    return out
 
 
 FIGURE_SETTINGS = (('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),

@@ -39,35 +39,67 @@ PALEO_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 # rupture sets without their own: an OpenSHA rupture set made without an inversion has none (630k, November 2026)
 
 
-def paleo_json(rupture_dir, verbose=True):
-    """The paleo constraint data for a rupture set: its own paleo_constraint_data.json, or else PALEO_JSON, once each
-    site's section index and name are checked against the rupture set's fault_sections.geojson (the same subsections:
-    the 211k and 630k rupture sets share all 2,325). The callers check the paleo rows' targets against it as well."""
+SITE_MAX_KM = 5.25                                       # NZSHM22_PaleoRates.fetchConstraints: a site farther than this
+R_EARTH = 6371.0072                                      # from every subsection's trace is left out
+
+
+def _seg_km(lat1, lon1, lat2, lon2, lat3, lon3):
+    """LocationUtils.distanceToLineSegmentFast: the point 3's distance to the segment 1-2 (degrees in, km out), flat
+    earth with longitudes scaled by the cosine of the weighted mean latitude, as Line2D.ptSegDist."""
+    r = np.pi / 180
+    l1, l2, l3, o1 = lat1 * r, lat2 * r, lat3 * r, lon1 * r
+    sc = np.cos(0.5 * l3 + 0.25 * l1 + 0.25 * l2)
+    x2, y2, x3, y3 = (lon2 * r - o1) * sc, l2 - l1, (lon3 * r - o1) * sc, l3 - l1
+    ll = x2 * x2 + y2 * y2
+    t = np.where(ll > 0, np.clip((x3 * x2 + y3 * y2) / np.where(ll > 0, ll, 1.0), 0.0, 1.0), 0.0)
+    return np.hypot(x3 - t * x2, y3 - t * y2) * R_EARTH
+
+
+def map_sites(data, feats):
+    """PALEO_JSON's sites on a rupture set's subsections as NZSHM22 maps them (NZSHM22_PaleoRates.fetchConstraints):
+    each site at the subsection whose trace is nearest its dataLocation (LocationList.minDistToLine), left out beyond
+    5.25 km; file order kept. Returns the data with sectionIndex and sectionName set, and the sites left out."""
+    tr = [np.asarray(f['geometry']['coordinates'], float) for f in feats]
+    seg = np.concatenate([np.c_[np.full(len(c) - 1, k), c[:-1, 1], c[:-1, 0], c[1:, 1], c[1:, 0]] for k, c in enumerate(tr)])
+    out, gone = [], []
+    for c in data['paleoRateConstraints']:
+        la, lo = c['dataLocation']
+        dk = _seg_km(seg[:, 1], seg[:, 2], seg[:, 3], seg[:, 4], la, lo)
+        j = int(np.argmin(dk))                           # the first of equal distances, as the code's strict <
+        if dk[j] > SITE_MAX_KM:
+            gone.append(c.get('name', '?'))
+            continue
+        k = int(seg[j, 0])
+        c = dict(c, sectionIndex=int(feats[k]['properties']['FaultID']), sectionName=feats[k]['properties']['FaultName'])
+        out.append(c)
+    return dict(data, paleoRateConstraints=out), gone
+
+
+def paleo_data(rupture_dir, verbose=True):
+    """The paleo constraint data for a rupture set (dict): its own paleo_constraint_data.json, or else PALEO_JSON's sites
+    mapped onto its subsections by NZSHM22's rule (map_sites; the 19k rupture set keeps 40 of the 65 sites, the 211k and
+    630k all 65, on the same subsections as their solutions' files). The callers check the paleo rows' targets as well."""
     f = os.path.join(rupture_dir, 'paleo_constraint_data.json')
     if os.path.exists(f):
-        return f
+        return json.load(open(f))
     if not os.path.exists(PALEO_JSON):
         raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set, nor {PALEO_JSON}')
     gj = os.path.join(rupture_dir, 'fault_sections.geojson')
     if not os.path.exists(gj):
-        raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set, and no fault_sections.geojson to check {PALEO_JSON} against')
-    names = {int(g['properties']['FaultID']): g['properties']['FaultName'] for g in json.load(open(gj))['features']}
-    bad = [c.get('name', '?') for c in json.load(open(PALEO_JSON))['paleoRateConstraints']
-           if names.get(int(c.get('sectionIndex', -1))) != c.get('sectionName')]
-    if bad:
-        raise ValueError(f'{PALEO_JSON}: {len(bad)} paleo sites\' sections do not match the rupture set {rupture_dir} '
-                         f'(e.g. {bad[0]}): give the rupture set its own paleo_constraint_data.json')
+        raise FileNotFoundError(f'{f}: no paleo constraint data in the rupture set, and no fault_sections.geojson to map {PALEO_JSON} onto')
+    data, gone = map_sites(json.load(open(PALEO_JSON)), json.load(open(gj))['features'])
     if verbose:
-        print(f'paleo sites: the rupture set has no paleo_constraint_data.json; using {PALEO_JSON} (every site\'s section '
-              'index and name match its fault sections)')
-    return PALEO_JSON
+        print(f'paleo sites: the rupture set has no paleo_constraint_data.json; {PALEO_JSON}\'s sites mapped onto its '
+              f'subsections (nearest trace within {SITE_MAX_KM:g} km, as NZSHM22): {len(data["paleoRateConstraints"])} kept'
+              + (f', {len(gone)} left out' if gone else ''))
+    return data
 
 
 def load_sites(rupture_dir, verbose=True):
     """The paleo constraints in file order: name, section index, bestEstimate, one-sigma sd, and the four rate quantiles
-    (2.275, 15.865, 84.135, 97.725%); from the rupture set's paleo_constraint_data.json or, without one, PALEO_JSON
-    (paleo_json)."""
-    C = json.load(open(paleo_json(rupture_dir, verbose)))['paleoRateConstraints']
+    (2.275, 15.865, 84.135, 97.725%); from the rupture set's paleo_constraint_data.json or, without one, PALEO_JSON's
+    sites mapped onto its subsections (paleo_data)."""
+    C = paleo_data(rupture_dir, verbose)['paleoRateConstraints']
     out = []
     for c in C:
         u = {t['type']: t for t in c['uncertainties']}

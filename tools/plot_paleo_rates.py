@@ -67,7 +67,7 @@ import textwrap
 import numpy as np
 
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
-                        legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
+                        legend_above, legend_height, load_problem, neighbour_colours, reference_list, run_predictions,
                         run_config, figure_settings, settings_lines)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
@@ -118,8 +118,9 @@ def main():
     ap.add_argument('--slip-block', default='S', help='the slip-rate row group (default S)')
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin row group (default MFD)')
     ap.add_argument('--label', type=int, default=4, help='label this many rows furthest from their targets (default 4)')
-    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates to mark on every "
-                    "panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz)")
+    ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates to "
+                    "mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors "
+                    "(.npz); up to two (give it twice: the second a grey diamond)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
@@ -235,9 +236,8 @@ def main():
     fit_note = (f' as the likelihood scores them ({pmode!r}: ' + (f'the Gaussian in rate; the curve, {curve_txt}, for comparison'
                 if b_p <= 0 else f'half the Gaussian in rate, half {curve_txt}' if b_p < 1 else curve_txt) + ')'
                 if TH is not None else '')
-    ref = None
-    if a.reference:                                      # another model's predictions, marked on every panel
-        ref = reference_rates(a.reference, P)
+    refs = reference_list(a.reference, P)                # other models' predictions, marked on every panel (up to two)
+    for ref in refs:
         yw = Gp @ ref['m']
         r = yw / sc - t
         ref.update(y=yw / sc, chi2=paleo_fit(yw), in1=float(np.mean(np.abs(r / u) <= 1)),
@@ -246,7 +246,7 @@ def main():
                     f'{100 * ref["in1"]:.0f}% of rows within one uncertainty of their targets, {100 * ref["in2"]:.0f}% '
                     f'within two; prediction / target: median {ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to '
                     f'{ref["q"][2]:.2f})' + (f'; {ref["note"]}' if ref['note'] else ''))
-    rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the table
+    rc = ''.join(f' {"reference" if len(refs) == 1 else f"ref {r_k + 1}":>10s}' for r_k in range(len(refs)))   # the references' columns
     settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
     # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
@@ -272,7 +272,7 @@ def main():
         for k in np.argsort(orig, kind='stable'):
             qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, k]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
             lines.append(f'{orig[k]:7d} {t[k]:9.4g} {D["y"][k]:16.4g} {qs} {D["r"][k]:+11.4g} {D["r"][k] / u[k]:+7.2f} '
-                         f'{D["ratio"][k]:7.3f}' + (f' {ref["y"][k]:10.4g}' if ref else ''))
+                         f'{D["ratio"][k]:7.3f}' + ''.join(f' {ref["y"][k]:10.4g}' for ref in refs))
     text = '\n'.join(lines)
     print('\n'.join(l for l in lines if not l[:7].strip().isdigit() and not l.lstrip().startswith('row ')))
 
@@ -295,14 +295,14 @@ def main():
     else:                                            # cleaned without the best fit: the axes follow what is plotted
         vals = np.concatenate([np.r_[D['y'], D['q'][0] if D['q'] is not None else [], D['q'][2] if D['q'] is not None else []]
                                for D in data])
-        if ref is not None:
+        for ref in refs:
             vals = np.r_[vals, ref['y']]
         pos = vals[vals >= t.min() / 100]
         lo_b, hi_b = min(t.min(), pos.min() if pos.size else t.min()), max(t.max(), vals.max())
         hi_lin = 1.05 * max(t.max(), vals.max())
     lo, hi = lo_b / 1.4, hi_b * 1.4
     edge, top, top_lin = lo * 1.12, hi / 1.12, hi_lin * 0.985   # where predictions beyond the axes sit
-    allv = [D['y'] for D in data] + ([ref['y']] if ref else [])
+    allv = [D['y'] for D in data] + [ref['y'] for ref in refs]
     clipped = any(((v < edge) | (v > top) | (v > top_lin)).any() for v in allv)
     axes_line = (f'axes: ' + ('fixed by the targets and the best fit (NNLS; the central 96% of its predictions)' if fixed
                              else 'from the targets and the predictions shown (no best fit in the cleaning results)')
@@ -326,11 +326,11 @@ def main():
                'predictions beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * max(2, note.count('\n'))           # room for the note: three lines at least, so that the panels keep their size
-    n_h = 4 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries
+    n_h = 4 + int(bars) + int(kx) + int(clipped) + len(refs)   # the legend's entries
     lc = 3 if n_h > 3 else n_h
     leg_pt = legend_height(7, 3) + 6                 # room for the fullest legend, whichever entries this one has, so
                                                          # that the panels keep their size
-    sub_pt = 25.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    sub_pt = 25.0 + 12.5 * max(0, len(refs) - 1)         # the subtitle's extra lines: each model's misfit on a line of its own (room for one reference's, with or without it; a line more for a second)
     tab = settings_lines(settings) if settings else None
     top_in, row_in, bot_in = 0.45 + (leg_pt + sub_pt) / 72, 5.6, 0.8 + extra   # figure layout, in inches
     if tab:
@@ -374,9 +374,10 @@ def main():
                 ax.fill_between(xs, np.maximum(xs - 2.0, lim[0]), xs + 2.0, color=BAND2, lw=0, zorder=0.4)
                 ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
             ax.plot(lim, lim, color=INK, lw=1.0, zorder=2)
-            if ref is not None:                      # the reference's predictions, in front of the posterior's
-                scatter_edges(ax, t, ref['y'], lo_e, hi_e, dict(s=26, marker='s', facecolors='none', edgecolors=REF,
-                              linewidths=0.5, zorder=3.2), dict(s=28, facecolors='none', edgecolors=REF, linewidths=0.5, zorder=3.2))
+            for ref in refs:                         # each reference's predictions, in front of the posterior's
+                scatter_edges(ax, t, ref['y'], lo_e, hi_e, dict(s=26 if ref['k'] == 0 else 22, marker=ref['marker'],
+                              facecolors='none', edgecolors=ref['ink'], linewidths=0.5, zorder=3.2),
+                              dict(s=28, facecolors='none', edgecolors=ref['ink'], linewidths=0.5, zorder=3.2))
             if D['xs'] is not None:                  # each kept draw's predictions, as x's, within the axes
                 draw_xs(ax, np.broadcast_to(t, D['xs'].shape), np.clip(D['xs'], *lim), np.broadcast_to(col, D['xs'].shape),
                         alpha=0.05)
@@ -420,7 +421,7 @@ def main():
                 ax.set_ylabel(f'{mm} prediction (per year)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
         sub = (f'{D["label"] if len(data) > 1 else mm} over the {len(rows)} paleo rows: {misfit_text(D["chi2"], "years", fig=True)}\n'
-               + (f'{ref["label"]}: {misfit_text(ref["chi2"], "years", fig=True)}\n' if ref is not None else '')
+               + ''.join(f'{ref["label"]}: {misfit_text(ref["chi2"], "years", fig=True)}\n' for ref in refs)
                + f'{D["label"] if len(data) > 1 else mm}: within one sd {100 * D["in1"]:.0f}%, two '
                f'{100 * D["in2"]:.0f}%' + (f'; within the sites\' own 15.9–84.1% ranges {100 * D["own1"]:.0f}%, 2.3–97.7% '
                                            f'{100 * D["own2"]:.0f}%' if phys else ''))
@@ -442,9 +443,9 @@ def main():
         n_k = max(len(D['xs']) for D in data if D['xs'] is not None)
         handles.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
                         f'each of the {n_k:,} kept draws\' prediction'))
-    if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.5),
-                        f'{ref["label"]}'))
+    for ref in refs:
+        handles.append((Line2D([], [], ls='none', marker=ref['marker'], ms=5 if ref['k'] == 0 else 4.5, mfc='none',
+                               mec=ref['ink'], mew=0.5), f'{ref["label"]}'))
     handles.append((Line2D([], [], color=INK, lw=1.0), 'prediction = target'))
     if phys:
         handles += [(tuple(Line2D([], [], color=c, lw=1.6, alpha=0.55) for c in few), 'the site\'s 15.9–84.1% range'),

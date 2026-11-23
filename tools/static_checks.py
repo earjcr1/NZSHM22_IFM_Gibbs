@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py']
+SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'randomized_nnls.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'fig_mfd_levels.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -161,10 +161,11 @@ check(not any("plot_targets.py'" in c for _, c in cells) and "'--figure'" in src
       and all(f_ in open(f'{ROOT}/tools/make_summary_pdf.py').read() for f_ in ('fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png')),
       'the targets old and new (plot_targets.py) and the cleaning figure (preliminaries.py --figure) on request, out of the '
       'notebook since 2026-11-17; the summary PDF shows them when present')
-check("elif a.prior == 'linear':" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_linear()') == 1,
-      "gibbs.py --prior linear (command line only), with its exact test in the full self-test set")
-check("halfway_mode = a.prior.startswith('halfway')" in src['gibbs.py'] and src['gibbs.py'].count('ok &= selftest_halfway()') == 1,
-      "gibbs.py --prior halfway (command line only), with its exact test in the full self-test set")
+check(all(t_ not in src['gibbs.py'] for t_ in ('selftest_linear', 'selftest_halfway', 'resolve_logbox', 'mixw', 'hi_vec', 'theta_mode'))
+      and 'resolve_logbox' not in src['cru_common.py']
+      and "'halfway', 'linear', 'logbox'" in src['gibbs.py'],
+      "the single log-box, the per-bin boxes (binbox, binbox-floor, binbox-theta), the halfway and the linear priors removed "
+      "(2026-11-23, the user's request; gibbs.py --prior refuses them by name)")
 _cfg_keys = re.findall(r'(\w+)=', STEPS[STEPS.index("g['CONFIG'] = dict("):STEPS.index("g['CONFIG'].update(more)")])
 check(re.findall(r"^DOWN_THE_MIDDLE = ('[\w-]+'|\w+)", src['run_config.py'], re.M) == ['False'] and 'down_the_middle' in _cfg_keys
       and not re.search(r'^DOWN_THE_MIDDLE = ', cells[0][1], re.M)
@@ -292,15 +293,16 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['Tru
       and not re.findall(r'^CFM_SLIPRATES = ', cells[0][1], re.M)
       and not re.findall(r'^CFM_FILE = ', cells[0][1], re.M) and "cfm_file=g['CFM_CSV']" in ''.join(c for c in [NBALL])
       and "\nCFM_CSV = os.path.join(" in src['cru_common.py'] and os.path.exists(f'{ROOT}/data/NZ_CFM_v1_0.csv')
-      and any("a += ['--cfm-sliprates', g['CFM_CSV']]" in c and "if not g['SLIP_AS_GIVEN']:" in c
-          and "'--slip-sd-multiplier', str(g['SD_MULTIPLIER_'])" in c and "'--rupture-set', g['RUPTURE_DIR']]" in c for c in [NBALL])
+      and any("a += ['--cfm-sliprates', g['CFM_CSV']]" in c and 'SLIP_AS_GIVEN' not in c
+          and "'--slip-rate-factor', str(g['SLIP_RATE_FACTOR']), '--rupture-set', g['RUPTURE_DIR']]" in c
+          and 'slip-sd-multiplier' not in c and 'SD_MULTIPLIER_' not in c for c in [NBALL])
       and "'--cfm-sliprates', default=None" in src['preliminaries.py'] and '\ndef rebuild(' in src['cfm_sliprates.py']
       and re.findall(r'^SLIP_RATE_FACTOR = (\S+)', cells[0][1], re.M) == ['0.8'] and 'slip_rate_factor' in _cfg_keys
-      and "'--slip-rate-factor', type=float, default=None" in src['preliminaries.py'] and '\ndef rescale_inputs(' in src['cfm_sliprates.py']
+      and "'--slip-rate-factor', type=float, default=None" in src['preliminaries.py'] and '\ndef rescale_inputs(' not in src['cfm_sliprates.py']
       and not any(re.findall(rf'^{s_} = ', cells[0][1], re.M) for s_ in ('SLIP_SD_MULTIPLIER', 'CFM_PREF', 'CFM_ROUNDING'))
-      and "out['SD_MULTIPLIER_'] = 1 if fixed['CFM_SLIPRATES'] else 2.5" in src['run_config.py']
+      and 'SD_MULTIPLIER_' not in src['run_config.py'] and 'FACTOR_DEFAULT' not in src['cfm_sliprates.py']
       and {'slip_sd_multiplier', 'cfm_pref', 'cfm_rounding'} <= set(_cfg_keys)
-      and "'--slip-sd-multiplier', type=float, default=None" in src['preliminaries.py']
+      and "'--slip-sd-multiplier'" not in src['preliminaries.py']
       and "'--cfm-pref', default='mode', choices=['mode', 'median']" in src['preliminaries.py']
       and re.findall(r'^CFM_TIMEFRAME = (\S+)', cells[0][1], re.M) == ['True'] and 'cfm_timeframe' in _cfg_keys
       and "'--cfm-timeframe', default=None" in src['preliminaries.py'] and '\ndef load_timeframe(' in src['cfm_sliprates.py']
@@ -314,16 +316,17 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['Tru
       and "'--cfm-rate-links', action='store_true'" in src['preliminaries.py'] and '\ndef rate_links(' in src['cfm_sliprates.py']
       and src['gibbs.py'].count('ok &= selftest_split()') == 1 and 'static double sp_lik(' in src['gibbs.py']
       and "P.get('split_lo2') is not None" in src['gibbs.py'] and 'split_weights(' in src['block_fit.py'],
-      'notebook CFM_SLIPRATES = True (by default since 2026-11-05, not a setting since 2026-11-09: below the settings, False '
-      'only for sensitivity tests through run_nb.py; each slip rate a split normal from the CFM, data/NZ_CFM_v1_0.csv '
+      'notebook CFM_SLIPRATES = True (by default since 2026-11-05, not a setting since 2026-11-09, always True and not '
+      'overridable since 2026-11-23, the inputs\' own slip-rate Gaussians no longer rescaled or used; each slip rate a split normal from the CFM, data/NZ_CFM_v1_0.csv '
       '(cru_common.CFM_CSV, no CFM_FILE); False: the inputs\', cfm_sliprates.py), CFM_TIMEFRAME\'s split normals fitted to each corrected distribution\'s 16/50/84% points (--cfm-timeframe-shape fit, since 2026-11-09), SLIP_RATE_FACTOR = 0.8; no CFM_PREF, CFM_ROUNDING or SLIP_SD_MULTIPLIER since 2026-11-09 (SR_pref the '
-      'mode, no rounding, the sds as given: multiplier 1 with the CFM, 2.5 for the inputs; recorded, preliminaries.py keeps '
-      'the options), recorded and passed to preliminaries.py --cfm-sliprates, --slip-rate-factor and --slip-sd-multiplier; gibbs.py evaluates the split misfit '
+      'mode, no rounding, the sds as given: multiplier 1 with the CFM and without it (2.5 for the inputs until 2026-11-23: no factor 2 since); recorded, preliminaries.py keeps '
+      'the options), recorded and passed to preliminaries.py --cfm-sliprates and --slip-rate-factor (--slip-sd-multiplier removed 2026-11-23); gibbs.py evaluates the split misfit '
       'exactly (its test in the full self-test set) and block_fit.py weighs it')
-check('\ndef paleo_json(' in src['paleo_misfit.py'] and 'paleo_json(rupture_dir' in src['paleo_misfit.py']
-      and os.path.exists(f'{ROOT}/data/paleo_constraint_data.json'),
-      'paleo sites: the rupture set\'s paleo_constraint_data.json, or, for a rupture set made without an inversion (630k), '
-      'data/paleo_constraint_data.json once its sites\' sections match the rupture set\'s (paleo_misfit.paleo_json)')
+check('\ndef paleo_data(' in src['paleo_misfit.py'] and '\ndef map_sites(' in src['paleo_misfit.py']
+      and 'SITE_MAX_KM = 5.25' in src['paleo_misfit.py'] and os.path.exists(f'{ROOT}/data/paleo_constraint_data.json'),
+      'paleo sites: the rupture set\'s paleo_constraint_data.json, or, for a rupture set made without an inversion, '
+      'data/paleo_constraint_data.json\'s sites mapped onto its subsections as NZSHM22 maps them (nearest trace within '
+      '5.25 km; paleo_misfit.paleo_data; reproduces the 19k, 211k and 630k solutions\' files exactly)')
 check(sum(c.count('*ref_args()') for c in [NBALL]) == 4 and '\ndef reference_rates(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
@@ -345,7 +348,7 @@ check(not any('RANDOMIZED_NNLS' in c or "'randomized_nnls.py'" in c for c in [NB
 for s in ('gibbs.py', 'preliminaries.py', 'summarize_runs.py', 'plot_rate_magnitude.py', 'check_convergence.py'):
     d = argdefault(trees[s], '--diag-floor')
     check(d == -10, f'{s} --diag-floor default {d!r}')
-m = re.findall(r"spike_mode:.*\n.*\n\s*W, se, top = float\(sp_\[0\] or (-?\d+)\)", src['gibbs.py'])
+m = re.findall(r"spike_mode = True.*\n.*\n\s*W, se, top = float\(sp_\[0\] or (-?\d+)\)", src['gibbs.py'])
 check(m == ['-10'], f'gibbs.py spike-and-slab default slab floor {m}')
 cfg = cells[0][1]
 check(re.findall(r'^FLOOR = (-?\d+)', cfg, re.M) == ['-10'] and not re.search(r'^(SLAB|DIAG)_FLOOR', cfg, re.M),
@@ -418,9 +421,14 @@ pre_opts = {a.value for n in ast.walk(trees['preliminaries.py']) if isinstance(n
             for a in n.args if isinstance(a, ast.Constant)}
 check('--keep-soft-penalties' in pre_opts and '--no-nnls' in pre_opts and '--from-rupture-set' in pre_opts
       and "a += ['--no-nnls']" in STEPS and "src = ['--from-rupture-set', g['RUPTURE_DIR']]" in STEPS
-      and '\ndef build_inputs(' in src['rupture_set_inputs.py'],
+      and '\ndef build_inputs(' in src['rupture_set_inputs.py']
+      and '\ndef slip_rates(' in src['rupture_set_inputs.py'] and '\ndef supra_target(' in src['rupture_set_inputs.py']
+      and '\ndef rupture_set_parts(' in src['mfd_gr.py'] and 'NZSHM22_RUN = dict(n5=3.4,' in src['mfd_gr.py']
+      and '\ndef section_shares(' in src['fault_polygons.py'] and os.path.exists(os.path.join(ROOT, 'data', 'Floor_AddoptiEEPAScomb-CRU_pdf.csv')),
       'preliminaries.py has --keep-soft-penalties, --no-nnls (the notebook passes it with DISPERSED_STARTS, since 2026-11-21) '
-      'and --from-rupture-set (rupture_set_inputs.build_inputs; the notebook with MFD_GR and the CFM, cru_A/cru_D not read)')
+      'and --from-rupture-set (rupture_set_inputs.build_inputs; the notebook with MFD_GR and the CFM, cru_A/cru_D not read; '
+      'from a bare rupture set too since 2026-11-23: slip_rates, supra_target, mfd_gr.rupture_set_parts with NZSHM22_RUN N5 3.4, '
+      'fault_polygons.section_shares and data/Floor_AddoptiEEPAScomb-CRU_pdf.csv)')
 dense_g = re.findall(r'\bG[a-z]?\.toarray\(\)', src['preliminaries.py'])        # a whole G made dense: 4 GB at 2e5, 11 at 5e5
 check(not dense_g and 'qr_insert' in src['preliminaries.py'], 'preliminaries.py makes no dense copy of G (the best fit updates a QR '
       'factorization)' + (f'; found {", ".join(dense_g)}' if dense_g else ''))
@@ -451,12 +459,13 @@ check('setup(globals())' in cells[0][1] and 'g.update(derived_settings(g))' in S
       and cells[0][1].index('setup(globals())') > cells[0][1].index('SEED = ')
       and all(re.search(rf'^{s_} = ', _rc, re.M) and not re.search(rf'^{s_} = ', cells[0][1], re.M)
               for s_ in ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'DISPERSED_STARTS'))
-      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')" in _rc
+      and "FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')" in _rc
+      and "if 'CFM_SLIPRATES' in ov and ov['CFM_SLIPRATES'] is not True:" in _rc
       and "('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')" in _rc
       and 'from run_config import OVERRIDABLE' in open(f'{ROOT}/tools/run_nb.py').read(),
       'notebook: BLOCKS, SLIP_SECTIONS, RUPTURE_SET, CROSS_SECTIONS, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed '
       'in tools/run_config.py since 2026-11-17 (2026-11-09 below the settings; run_nb.py overrides them through _OVERRIDES, for '
-      'sensitivity tests); the notebook calls derived_settings; runs named SLIP_SECTIONS... only off auto')
+      'sensitivity tests, all but CFM_SLIPRATES, always True since 2026-11-23); the notebook calls derived_settings; runs named SLIP_SECTIONS... only off auto')
 _cfgmap = dict((v, k) for k, v in re.findall(r"(\w+)=g\['([A-Z][A-Z0-9_]+)'\]",
                                               STEPS[STEPS.index("g['CONFIG'] = dict("):STEPS.index("g['CONFIG'].update(more)")]))
 _runname = src['run_config.py'][src['run_config.py'].index('\ndef run_name('):]
@@ -478,7 +487,7 @@ for s_ in MODEL_SETTINGS:
 check(not _gaps, f'the {len(MODEL_SETTINGS)} model settings are each defined, recorded, in FIGURE_SETTINGS, in RUN_NAME, in the '
       'summary PDF and documented (the configuration cell\'s comment, REPORT.md, CLAUDE.md)' + (': ' + '; '.join(_gaps) if _gaps else ''))
 _pin = re.search(r'PIN=\((.*?)\)\s+#', open(f'{ROOT}/tools/run_quick_checks.sh').read(), re.S).group(1)
-_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'DATATYPES_EQUAL', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_SLIPRATES', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
+_unpinned = [s_ for s_ in ('MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'DATATYPES_EQUAL', 'SLIP_ALONG_RUPTURE', 'PLATE_RATE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO', 'CFM_RATE_LINKS', 'SEED', 'SLIP_RATE_FACTOR', 'SLIP_SUM',
                             'DOWN_THE_MIDDLE', 'FLOOR', 'RUN_PLAN', 'TARGETS')
              if f'{s_}=' not in _pin]
 check(not _unpinned, 'run_quick_checks.sh pins every setting its reference values depend on'

@@ -6,7 +6,7 @@ and the calls of the workflow's scripts; everything here reads the notebook's se
     setup(globals())          # in the configuration cell, after the settings
 
 setup(g): run_config.derived_settings (each group's misfit mode, the fixed settings, RUN_NAME, RUN_DIR); every setting
-checked (ValueError naming it); SEED_USED, MFD_GR_SPEC, PLATE_LIMITS, SLIP_AS_GIVEN; DATA_DIR and RUN_DIR resolved from the
+checked (ValueError naming it); SEED_USED, MFD_GR_SPEC, PLATE_LIMITS; DATA_DIR and RUN_DIR resolved from the
 notebook's folder, the scripts and data files checked; RUN_DIR made and entered; the log started in RUN_DIR/spikeslab/;
 the rupture set found (RUPTURE_DIR); the configuration written (workflow_config.json, CONFIG). All of it into g.
 """
@@ -90,7 +90,7 @@ def setup(g):
     nb_dir = g['_NOTEBOOK_DIR']
     resolve = lambda p: os.path.normpath(os.path.join(nb_dir, os.path.expanduser(str(p))))
     g['DATA_DIR'], g['RUN_DIR'] = resolve(g['DATA_DIR']), resolve(g['RUN_DIR'])
-    no_ad = g['MFD_GR'] and g['CFM_SLIPRATES']         # G and d from the rupture set: cru_A and cru_D not needed
+    no_ad = g['MFD_GR'] and g['CFM_SLIPRATES']         # G and d from the rupture set: cru_A and cru_D not needed (the CFM always)
     for f_ in (() if no_ad else (g['A_FILE'], g['D_FILE'])) + (() if g['SLIP_SECTIONS'] in ('auto', 'none') else (g['SLIP_SECTIONS'],)):
         if not os.path.exists(os.path.join(g['DATA_DIR'], f_)):
             raise FileNotFoundError(f"{f_} is not in DATA_DIR ({g['DATA_DIR']})")
@@ -110,10 +110,10 @@ def setup(g):
                         else find_rupture_set(os.path.join(g['DATA_DIR'], rs), search=False) if rs else None)
     if rs not in (None, 'auto') and g['RUPTURE_DIR'] is None:
         raise FileNotFoundError(f'RUPTURE_SET = {rs!r}: no OpenSHA rupture set there (indices.csv, or ruptures/indices.csv)')
-    g['SLIP_AS_GIVEN'] = not g['CFM_SLIPRATES'] and g['SLIP_RATE_FACTOR'] == 0.8   # the inputs' slip rows untouched
     need = [n_ for n_, on in (('SLIP_ALONG_RUPTURE tapered', g['SLIP_ALONG_RUPTURE'] == 'tapered'), ('SLIP_SUM', g['SLIP_SUM']),
                               ('PLATE_RATE', g['PLATE_RATE']), ('MFD_GR', g['MFD_GR']),
-                              ('MISFIT_PALEO', g['PALEO_MISFIT'] != 'gaussian'), ('CFM_SLIPRATES', not g['SLIP_AS_GIVEN'])) if on]
+                              ('MISFIT_PALEO', g['PALEO_MISFIT'] != 'gaussian'),
+                              ('the slip-rate factor and sds (always applied since 2026-11-23)', True)) if on]
     if need and not g['RUPTURE_DIR']:
         raise FileNotFoundError(f'{need[0]} needs the model\'s OpenSHA rupture set (RUPTURE_SET), for the faults\' geometry or '
                                 'the paleo data; none found')
@@ -140,7 +140,7 @@ def record_config(**more):
             cfm_pref='mode', cfm_rounding=False, cfm_timeframe=g['CFM_TIMEFRAME'] and g['CFM_SLIPRATES'],
             cfm_timeframe_shape='fit' if g['CFM_TIMEFRAME'] and g['CFM_SLIPRATES'] else None,
             cfm_template_rho=g['CFM_TEMPLATE_RHO'], cfm_rate_links=g['CFM_RATE_LINKS'] and g['CFM_TEMPLATE_RHO'] is not None,
-            slip_rate_factor=g['SLIP_RATE_FACTOR'], slip_sd_multiplier=g['SD_MULTIPLIER_'], cross_sections=g['CROSS_SECTIONS'],
+            slip_rate_factor=g['SLIP_RATE_FACTOR'], slip_sd_multiplier=1, cross_sections=g['CROSS_SECTIONS'],
             slip_sum=g['SLIP_SUM'], slip_sum_l0=g['SLIP_SUM_L0'], rupture_set=g['RUPTURE_SET'], rupture_dir=g['RUPTURE_DIR'],
             reference=(ref_args() or [None, None])[1], slip_block=g['SLIP_BLOCK'], bin_block=g['BIN_BLOCK'],
             threads=g['THREADS'], log_file=g['LOG_FILE'], started=time.strftime('%Y-%m-%d %H:%M'))
@@ -258,9 +258,7 @@ def cleaning_args():
         a += ['--mfd-gr', g['MFD_GR_SPEC'], '--rupture-set', g['RUPTURE_DIR']]
     if g['SLIP_ALONG_RUPTURE'] == 'tapered':
         a += ['--slip-along', 'tapered', '--rupture-set', g['RUPTURE_DIR']]
-    if not g['SLIP_AS_GIVEN']:                         # the slip-rate factor on each whole distribution
-        a += ['--slip-rate-factor', str(g['SLIP_RATE_FACTOR']), '--slip-sd-multiplier', str(g['SD_MULTIPLIER_']),
-              '--rupture-set', g['RUPTURE_DIR']]
+    a += ['--slip-rate-factor', str(g['SLIP_RATE_FACTOR']), '--rupture-set', g['RUPTURE_DIR']]   # on the CFM's split normals
     return a
 
 

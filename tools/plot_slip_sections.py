@@ -91,7 +91,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from cru_common import (CATEGORICAL, darker, draw_xs, figure_legend, kept_draws, kept_predictions, legend_above,
-                        legend_height, load_problem, magnitude_bins, neighbour_colours, reference_rates,
+                        legend_height, load_problem, magnitude_bins, neighbour_colours, reference_list,
                         run_predictions, run_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
@@ -236,8 +236,9 @@ def main():
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='lower magnitude edge of the lowest bin row left after '
                     'cleaning (default 6.8)')
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
-    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates to mark, such as "
-                    "the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz)")
+    ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates to "
+                    "mark, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz); up to two "
+                    "(give it twice: the second a grey diamond, and a dashed outline)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the result set's label (default: the one next to --problem, if any; 'none': the label)")
     a = ap.parse_args()
@@ -323,10 +324,18 @@ def main():
     Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, G.shape[0], scale, avg,
                                                   check=(Gs, K, keep_c))   # the kept draws' column means
     nK, ons = (0, None) if Xk is None else (len(K), [])
-    ref = None
-    if a.reference:                                      # another model's column means, beside the posterior's
-        ref = reference_rates(a.reference, P)
+    refs = reference_list(a.reference, P)                # other models' column means, beside the posterior's (up to two)
+    for ref in refs:
         ref['ys'] = ((Gs @ ref['m']) / scale) @ avg
+        ref['ls'] = '-' if ref['k'] == 0 else (0, (3, 1.5))   # its outline in the rupture figures
+    tags = []                                            # each reference in the panels' titles: its label, or its start
+    for ref in refs:
+        lab = ref['label']
+        tags.append(lab if len(lab) <= 20 else re.split('[_-]', lab)[0][:14] or 'reference')
+    if len(set(tags)) < len(tags):
+        tags = [f'{t_} {k_ + 1}' for k_, t_ in enumerate(tags)]
+    for ref, t_ in zip(refs, tags):
+        ref['tag'] = t_
     settings = run_settings(a.config, a.problem)       # every setting, whatever its value, so every table has the same size
     if settings:
         settings = [('model', model or 'posterior mean')] + settings
@@ -344,11 +353,11 @@ def main():
              f'{label} ({path}): {spread}']
     if empty:
         lines.append(f'named faults with no slip-rate rows here, left out: {", ".join(empty)}')
-    if ref is not None:
+    for ref in refs:
         lines.append(f'reference: {ref["label"]} ({ref["path"]})' + (f'; {ref["note"]}' if ref['note'] else ''))
     if settings:
         lines.append('settings: ' + ', '.join(f'{n} {v}' for n, v in settings))
-    rc = f' {"reference":>10s}' if ref else ''
+    rc = ''.join(f' {"reference" if len(refs) == 1 else f"ref {r_k + 1}":>10s}' for r_k in range(len(refs)))
     lines.append(f'{"column":>6s} {"sections" if named else "section":>8s} {"rows":>14s} {"k":>3s} {"connected":>9s} '
                  f'{"ruptures":>8s} {"confined":>8s} {"target":>9s} {"mean":>9s} '
                  + ' '.join(f'{f"{v:g}%":>9s}' for v in QS) + f' {"at 0":>6s}{rc}  name')
@@ -357,7 +366,7 @@ def main():
               else ' '.join(f'{"-":>9s}' for _ in QS) + f' {"-":>6s}')
         lines.append(f'{j:6d} {span(np.unique(sec[groups[g]])):>8s} {span(orig[groups[g]]):>14s} {len(groups[g]):3d} '
                      f'{deg[g]:9d} {int(n_r[g]):8d} {100 * alone[g]:7.1f}% {tg[g]:9.4g} {ym[j]:9.4g} {qs}'
-                     + (f' {ref["ys"][j]:10.4g}' if ref else '') + f'  {names[g]}')
+                     + ''.join(f' {ref["ys"][j]:10.4g}' for ref in refs) + f'  {names[g]}')
     text = '\n'.join(lines)
     print('\n'.join(lines[:5]))
 
@@ -374,7 +383,7 @@ def main():
     x = np.arange(N, dtype=np.float64)
     col = neighbour_colours(x)
     tsel = tg[pick]
-    big = [tsel + 1.0, ym] + ([q[4]] if q is not None else []) + ([ref['ys']] if ref else [])
+    big = [tsel + 1.0, ym] + ([q[4]] if q is not None else []) + [ref['ys'] for ref in refs]
     hi = 1.5 * max(float(np.max(v)) for v in big)
     small = np.r_[tsel, q[1] if q is not None else []]
     small = small[small > 0]
@@ -411,8 +420,9 @@ def main():
                     (tuple(Line2D([], [], color=c, lw=0.9, path_effects=thin) for c in few), 'posterior 2.5–97.5%')]
     handles += [(Line2D([], [], color=INK, lw=1.0), 'target'),
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
-    if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=5, mfc='none', mec=REF, mew=0.8), ref['label']))
+    for ref in refs:
+        handles.append((Line2D([], [], ls='none', marker=ref['marker'], ms=5 if ref['k'] == 0 else 4.5, mfc='none',
+                               mec=ref['ink'], mew=0.8), ref['label']))
     handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'below the axis (on its edge), '
                     'including 0'))
     lc = 3
@@ -446,10 +456,11 @@ def main():
         b0 = max(tsel[j] - 1.0, lo)
         ax.add_patch(Rectangle((j - w, b0), 2 * w, tsel[j] + 1.0 - b0, facecolor=BAND, lw=0, zorder=0.5))
     ax.hlines(tsel, x - w, x + w, colors=INK, lw=1.0, zorder=3)
-    if ref is not None:                                  # the reference's values, beside the posterior's
-        scatter_edges(ax, x + 0.24, ref['ys'], edge, top, dict(s=20, marker='s', facecolors='none', edgecolors=REF,
-                      linewidths=0.8, zorder=3.6), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.8,
-                      zorder=3.6))
+    for ref in refs:                                     # each reference's values, beside the posterior's (either side)
+        scatter_edges(ax, x + (0.24 if ref['k'] == 0 else -0.24), ref['ys'], edge, top,
+                      dict(s=20 if ref['k'] == 0 else 17, marker=ref['marker'], facecolors='none', edgecolors=ref['ink'],
+                           linewidths=0.8, zorder=3.6),
+                      dict(s=22, facecolors='none', edgecolors=ref['ink'], linewidths=0.8, zorder=3.6))
     if Xk is not None:                                   # each kept draw's column means, as x's across the column
         jx = x[None, :] + np.random.default_rng(0).uniform(-0.22, 0.22, Xk.shape)
         draw_xs(ax, jx, np.clip(Xk, edge, top), np.broadcast_to(col, Xk.shape), alpha=0.12)
@@ -518,7 +529,7 @@ def main():
             ons.append(tuple(np.concatenate(v) for v in zip(*got)))
     del K
     on_v = [o[2] for o in ons if len(o[2])] if ons is not None else []
-    sets = [[m[i] for i in idx]] + ([[ref['m'][i] for i in idx]] if ref is not None else [])
+    sets = [[m[i] for i in idx]] + [[ref['m'][i] for i in idx] for ref in refs]
     low = np.concatenate([r[r > 0] for r in sets[0]] + [[v.min()] for v in on_v])   # the axis starts at the smallest
     high = np.concatenate([low] + [r[r > 0] for rs in sets[1:] for r in rs] + [[v.max()] for v in on_v])
     h_lo, h_hi = np.floor(2 * np.log10(low.min())) / 2, np.ceil(2 * np.log10(high.max())) / 2
@@ -538,30 +549,28 @@ def main():
     lines2 = [f'the ruptures crossing each {unit} of {os.path.basename(out)}, counted by their posterior mean rates '
               f'({label}, {path}): log10 bins 0.25 wide from {h_lo:g} to {h_hi:g}; "total" is the sum of those means, the '
               f'{unit}\'s event rate, and "90% from" how many of the largest make up 90% of it']
-    if ref is not None:
-        lines2.append(f'reference: {ref["label"]} ({ref["path"]}), its rates of the same ruptures: "below axis" counts '
-                      f'those under 10^{h_lo:g}, 0 included')
-    rc = (f' {"ref total":>10s} {"ref 90%":>8s} {"ref largest":>11s} {"below axis":>10s} {"ref at 0":>8s}'
-          if ref is not None else '')
+    for ref in refs:
+        lines2.append(f'reference{"" if len(refs) == 1 else " " + str(ref["k"] + 1)}: {ref["label"]} ({ref["path"]}), its '
+                      f'rates of the same ruptures: "below axis" counts those under 10^{h_lo:g}, 0 included')
+    rn = lambda r_: 'ref' if len(refs) == 1 else f'ref{r_["k"] + 1}'
+    rc = ''.join(f' {rn(r_) + " total":>10s} {rn(r_) + " 90%":>8s} {rn(r_) + " largest":>11s} {"below axis":>10s} '
+                 f'{rn(r_) + " at 0":>8s}' for r_ in refs)
     lines2.append(f'{"column":>6s} {"sections" if named else "section":>8s} {"ruptures":>8s} {"at 0":>5s} {"total":>10s} '
                   f'{"90% from":>8s} {"largest":>9s} {"log10 rate: 5%":>14s} {"50%":>6s} {"95%":>6s}{rc}  name')
     for j, g in enumerate(pick):
         st = stats[0][j]
         rv = ''
-        if ref is not None:
-            sr = stats[1][j]
-            rv = f' {sr["tot"]:10.4g} {sr["n90"]:8d} {sr["top"]:11.3g} {sr["below"]:10d} {sr["zero"]:8d}'
+        for r_k in range(len(refs)):
+            sr = stats[1 + r_k][j]
+            rv += f' {sr["tot"]:10.4g} {sr["n90"]:8d} {sr["top"]:11.3g} {sr["below"]:10d} {sr["zero"]:8d}'
         lines2.append(f'{j:6d} {span(np.unique(sec[groups[g]])):>8s} {st["n"]:8d} {st["zero"]:5d} {st["tot"]:10.4g} '
                       f'{st["n90"]:8d} {st["top"]:9.3g} {st["q"][0]:14.2f} {st["q"][1]:6.2f} {st["q"][2]:6.2f}{rv}  '
                       f'{names[g]}')
-    whats = ['ruptures per bin'] + ([f'ruptures per bin by {ref["label"]}\'s rates'] if ref is not None else [])
+    whats = ['ruptures per bin'] + [f'ruptures per bin by {ref["label"]}\'s rates' for ref in refs]
     for k, what in enumerate(whats):
         lines2 += ['', f'{what} (each column a bin, by its lower edge in log10 rate per year)',
                    f'{"column":>6s} ' + ' '.join(f'{e:6.2f}' for e in bins[:-1])]
         lines2 += [f'{j:6d} ' + ' '.join(f'{c:6d}' for c in stats[k][j]['counts']) for j in range(N)]
-    tag = ''                                             # the reference in the panels' titles: its label, or its start
-    if ref is not None:
-        tag = ref['label'] if len(ref['label']) <= 14 else re.split('[_-]', ref['label'])[0][:14] or 'reference'
     col_w, ax_h = 2.8, 1.6                               # inches: each panel's column (with its gap), its height
     set_in = 0.15 * 2 * len(tab) if tab else 0.0         # the settings table, two lines per group
     leg_in = (legend_height(1, 1) + 6) / 72              # the legend (one row), between the settings and the subtitle
@@ -572,8 +581,9 @@ def main():
         styled, with the unused ones hidden, its width and height in inches, the note wrapped)."""
         nrow = -(-n // ncol)
         fw = 1.0 + ncol * col_w
-        gap_h = 0.72 if title_lines > 2 else 0.58        # between rows: the tick labels and the next row's titles
-        top_h = 0.55 + set_in + leg_in + 0.3 + (0.6 if title_lines > 2 else 0.45)   # title, settings, legend, subtitle,
+        tl = max(2, title_lines)
+        gap_h = 0.30 + 0.14 * tl                         # between rows: the tick labels and the next row's titles
+        top_h = 0.55 + set_in + leg_in + 0.3 + 0.15 + 0.15 * tl   # title, settings, legend, subtitle,
         note = textwrap.fill(note, int((fw - 0.5) * 17), break_on_hyphens=False)   # the first titles
         note_h = 0.12 + 0.15 * (note.count('\n') + 1)
         bot_h = note_h + 0.5                             # the note, the lowest panels' ticks and label
@@ -640,10 +650,11 @@ def main():
     if ons is not None:
         note2 += (f' Each x counts the ruptures on in one of the {nK:,} kept draws, by their rates in it (a draw\'s bins with '
                   'none are not drawn); faint, so that where the draws gather shows darkest.')
-    if ref is not None:
-        note2 += (f' The black outline counts the same ruptures by {ref["label"]}\'s rates. That is a single model, which '
-                  'compares with a single draw more than with the means: averaging over the draws puts rate on more '
-                  'ruptures, at lower rates, than one model does.')
+    if refs:
+        note2 += (' The black outline counts the same ruptures by ' + ' and the dashed grey one by '.join(
+                  f'{ref["label"]}\'s rates' for ref in refs) + '. ' + ('That is a single model, which compares'
+                  if len(refs) == 1 else 'Each is a single model, which compares') + ' with a single draw more than with '
+                  'the means: averaging over the draws puts rate on more ruptures, at lower rates, than one model does.')
     xf = FuncFormatter(lambda v, _: f'{v:g}'.replace('-', '−'))
     yf = FuncFormatter(lambda v, _: f'{v:,.0f}' if v >= 1 else '')      # counts, as plain numbers
 
@@ -669,10 +680,11 @@ def main():
         a_.yaxis.set_minor_formatter(NullFormatter())
         title = (f'{labels[k]}\n{st["n"]:,} {"rupture" if st["n"] == 1 else "ruptures"}, '
                  f'{st["n90"]:,} {"carries" if st["n90"] == 1 else "carry"} 90%' + (f'; {st["zero"]} at 0' if st['zero'] else ''))
-        if ref is not None:                              # the reference's rates of the same ruptures
-            sr = stats[1][k]
-            a_.stairs(sr['counts'], bins, baseline=None, color=REF, lw=0.9, zorder=3.2, path_effects=halo)
-            title += (f'\n{tag}: {sr["n90"]:,} {"carries" if sr["n90"] == 1 else "carry"} 90%, '
+        for ref in refs:                                 # each reference's rates of the same ruptures
+            sr = stats[1 + ref['k']][k]
+            a_.stairs(sr['counts'], bins, baseline=None, color=ref['ink'], lw=0.9, ls=ref['ls'], zorder=3.2 - 0.1 * ref['k'],
+                      path_effects=halo)
+            title += (f'\n{ref["tag"]}: {sr["n90"]:,} {"carries" if sr["n90"] == 1 else "carry"} 90%, '
                       f'{sr["below"]:,} below $10^{{{h_lo:g}}}$')
         a_.set_xlim(h_lo, h_hi)
         a_.xaxis.set_major_formatter(xf)
@@ -683,12 +695,13 @@ def main():
     if ons is not None:
         leg2.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
                      f'those on in each of the {nK:,} kept draws, by their rates in it'))
-    if ref is not None:
-        leg2.append((Patch(facecolor='none', edgecolor=REF, linewidth=0.9), f'the same ruptures by {ref["label"]}\'s rates'))
-    figures(out2, draw_rates, 3 if ref is not None else 2, f'Rupture rates of each {each}{ordered}',
+    for ref in refs:
+        leg2.append((Patch(facecolor='none', edgecolor=ref['ink'], linewidth=0.9, linestyle=ref['ls']),
+                     f'the same ruptures by {ref["label"]}\'s rates'))
+    figures(out2, draw_rates, 2 + len(refs), f'Rupture rates of each {each}{ordered}',
             f'The ruptures crossing each {unit} of {os.path.basename(out)}, counted by their posterior mean rates'
-            + (f' and by {ref["label"]}\'s' if ref is not None else '') + '; panels in that figure\'s order and colours',
-            leg2, note2, 'ruptures', 'log10 rate (per year)' if ref is not None else 'log10 posterior mean rate (per year)',
+            + ''.join(f' and by {ref["label"]}\'s' for ref in refs) + '; panels in that figure\'s order and colours',
+            leg2, note2, 'ruptures', 'log10 rate (per year)' if refs else 'log10 posterior mean rate (per year)',
             lines2)
 
     # the third figure: the same ruptures' rates summed by magnitude bin, each column's participation rate per bin
@@ -728,17 +741,19 @@ def main():
               f'summed by magnitude bin ({len(mrows)} bin rows of {a.bins_block}, counted up from {mlo[0]:.2f} in steps of '
               f'{mw:g}), the posterior mean of each {unit}\'s rate of events in each bin; "events" is their total, the '
               f'{unit}\'s event rate']
-    if ref is not None:
-        lines3.append(f'reference: {ref["label"]} ({ref["path"]}), its rates of the same ruptures summed the same way')
+    for ref in refs:
+        lines3.append(f'reference{"" if len(refs) == 1 else " " + str(ref["k"] + 1)}: {ref["label"]} ({ref["path"]}), its '
+                      'rates of the same ruptures summed the same way')
     if unbinned:
         lines3.append(f'{unbinned} of the ruptures counted are in no bin row, so in no bin')
-    rc = f' {"ref events":>10s}' if ref is not None else ''
+    rc = (f' {"ref events":>10s}' if len(refs) == 1 else
+          ''.join(f' {f"ref{r_k + 1} events":>11s}' for r_k in range(len(refs))))
     lines3.append(f'{"column":>6s} {"ruptures":>8s} {"magnitudes":>12s} {"events":>10s}{rc}  name')
     for j, g in enumerate(pick):
         lines3.append(f'{j:6d} {len(idx[j]):8d} {spans[j]:>12s} {sets[0][j].sum():10.4g}'
-                      + (f' {sets[1][j].sum():10.4g}' if ref is not None else '') + f'  {names[g]}')
-    whats = ['posterior mean rate per magnitude bin'] + ([f'{ref["label"]}\'s rate per magnitude bin'] if ref is not None
-                                                         else [])
+                      + ''.join(f' {sets[1 + r_k][j].sum():{10 if len(refs) == 1 else 11}.4g}' for r_k in range(len(refs)))
+                      + f'  {names[g]}')
+    whats = ['posterior mean rate per magnitude bin'] + [f'{ref["label"]}\'s rate per magnitude bin' for ref in refs]
     for k, what in enumerate(whats):
         lines3 += ['', f'{what} (each column a bin, by its lower edge)',
                    f'{"column":>6s} ' + ' '.join(f'{e:9.2f}' for e in edges[:-1])]
@@ -747,15 +762,17 @@ def main():
              f'{mw:g} wide: the posterior mean of its rate of events of that size (a rupture\'s magnitude is known only to '
              f'its bin row; the rows are counted up from {mlo[0]:.1f}). Unlike the counts by rate, these totals compare '
              'directly with a single model\'s. Rates on a log scale; bins more than six decades below a panel\'s largest '
-             'are not drawn.' + (f' The black outline is the same for {ref["label"]}\'s rates.' if ref is not None else ''))
+             'are not drawn.' + (' The black outline is the same for ' + ' and the dashed grey one for '.join(
+                 f'{ref["label"]}\'s rates' for ref in refs) + '.' if refs else ''))
     if ons is not None:                                  # each kept draw's totals by bin, and how often a bin has none
         note3 = (f'Each x is one of the {nK:,} kept draws: the total rate of the {unit}\'s ruptures in one magnitude bin, '
                  f'{mw:g} wide (a rupture\'s magnitude is known only to its bin row; the rows are counted up from '
                  f'{mlo[0]:.1f}), faint, so that where the draws gather shows darkest; the circle is their posterior mean. '
                  'The strip marked 0 shows, by its opacity, the share of draws in which none of the bin\'s ruptures is on. '
                  'Rates on a log scale, down to the lowest draws\' (at most seven decades below the largest).'
-                 + (f' The black outline is the same for {ref["label"]}\'s rates, a single model, which compares with a '
-                    'single draw.' if ref is not None else ''))
+                 + (' The black outline is the same for ' + ' and the dashed grey one for '.join(
+                    f'{ref["label"]}\'s rates' for ref in refs) + (', a single model, which compares with a single draw.'
+                    if len(refs) == 1 else '; each is a single model, which compares with a single draw.') if refs else ''))
         nsl = len(edges) - 1
         dm, has = [], []
         for k, i in enumerate(idx):                      # per column: draws x bins, the totals of its ruptures on
@@ -802,9 +819,10 @@ def main():
         a_.yaxis.set_minor_formatter(NullFormatter())
         title = (f'{labels[k]}\n{len(idx[k]):,} {"rupture" if len(idx[k]) == 1 else "ruptures"}, {spans[k]}\n'
                  f'events/yr: {sci(float(sets[0][k].sum()))}')
-        if ref is not None:                              # the reference's rates of the same ruptures
-            a_.stairs(mfd[1][k], edges, baseline=None, color=REF, lw=0.9, zorder=3.2, path_effects=halo)
-            title += f'; {tag} {sci(float(sets[1][k].sum()))}'
+        for ref in refs:                                 # each reference's rates of the same ruptures
+            a_.stairs(mfd[1 + ref['k']][k], edges, baseline=None, color=ref['ink'], lw=0.9, ls=ref['ls'],
+                      zorder=3.2 - 0.1 * ref['k'], path_effects=halo)
+            title += (f'; {ref["tag"]} ' if len(refs) == 1 else f'\n{ref["tag"]}: ') + sci(float(sets[1 + ref['k']][k].sum()))
         a_.set_xlim(edges[0], edges[-1])
         a_.xaxis.set_major_locator(MultipleLocator(0.5))
         a_.xaxis.set_major_formatter(FuncFormatter(lambda x_, _: f'{x_:.1f}'))
@@ -819,11 +837,12 @@ def main():
     else:
         leg3 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), f'the {unit}\'s ruptures\' '
                  'posterior mean rates, summed by magnitude bin')]
-    if ref is not None:
-        leg3.append((Patch(facecolor='none', edgecolor=REF, linewidth=0.9), f'the same for {ref["label"]}\'s rates'))
-    figures(out3, draw_magnitudes, 3, f'Rupture rates of each {each} by magnitude{ordered}',
+    for ref in refs:
+        leg3.append((Patch(facecolor='none', edgecolor=ref['ink'], linewidth=0.9, linestyle=ref['ls']),
+                     f'the same for {ref["label"]}\'s rates'))
+    figures(out3, draw_magnitudes, 3 if len(refs) <= 1 else 3 + len(refs), f'Rupture rates of each {each} by magnitude{ordered}',
             f'The ruptures crossing each {unit} of {os.path.basename(out)}: their posterior mean rates'
-            + (f' and {ref["label"]}\'s' if ref is not None else '') + ' summed by magnitude bin; panels in that figure\'s '
+            + ''.join(f' and {ref["label"]}\'s' for ref in refs) + ' summed by magnitude bin; panels in that figure\'s '
             'order and colours', leg3, note3, 'rate per year', 'magnitude', lines3)
 
 

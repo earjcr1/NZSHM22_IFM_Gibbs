@@ -24,10 +24,10 @@ first given.
 - **Flat prior.** Item 5 of section 2 is wrong for this problem. With σ = 1 and a uniform prior on
   [0, 1], posterior samples have χ² ≈ 10,270 (χ²_min = 67.65, N = 447), with predictions about 1.7×
   the data. Positivity makes the unconstrained directions a cone whose volume grows with the
-  prediction scale. The choice of target (prior or measure) is the open modelling decision. An optional linear prior
-  with each rate's top at its bin's target (`--prior linear`, October 2026) inflates the same way: bins a median 188%
+  prediction scale. The choice of target (prior or measure) is the open modelling decision. A linear prior
+  with each rate's top at its bin's target (`--prior linear`, October 2026; removed November 23rd, 2026) inflated the same way: bins a median 188%
   above their targets at 2e4 and 835% at 211,000 ruptures (REPORT.md, "Why not a linearly uniform prior"). A halfway
-  prior, each rate from a 50/50 mix of uniform and log-uniform (`--prior halfway`), lands on its log-uniform end: the
+  prior, each rate from a 50/50 mix of uniform and log-uniform (`--prior halfway`, removed with it), landed on its log-uniform end: the
   data give almost every value to the log-uniform part.
 - **Default model (since October 2026): spike-and-slab** (`--prior spikeslab`) under the plain likelihood: per
   magnitude bin, each rupture off (rate 0) or on, log-uniform from a slab floor at 1e-10 (also the diagnostic cutoff;
@@ -37,7 +37,7 @@ first given.
   command line: the same with an on rupture's rate uniform in √rate, density m^−1/2) was its cross-check until it was
   dropped at the end of October 2026; it fits as the default does, and at 211,000 ruptures it moved the subsections'
   event rates. θ = 1 (`binbox-theta:1:0`: per-bin log-uniform boxes n_j / (θ ln 10) decades deep, which reached the
-  same pressure-free answer by another route) was the alternative until October 2026 and is kept for comparison only:
+  same pressure-free answer by another route) was the alternative until October 2026 (removed on November 23rd, 2026, with the other box priors):
   from about 2e5 ruptures its boxes are too deep for its sampler to cross. Box priors with a common floor came first:
   the single box (1e-12 to 1e-2), then per-bin boxes down to 1e-12 (`binbox-floor:-12`). Their depth pushed the bin
   totals up and set the sparsity, which the data could not choose (the evidence kept rising as the floor dropped:
@@ -96,7 +96,7 @@ first given.
   trajectory make acceptance collapse at any useful step size. **Log-parametrized HMC**
   (`rhmc.py --param log`, now set aside from the code set) works and was the independent cross-check: it agrees with Gibbs on all
   18,356 posterior means (z-scores N(0,1)). NUTS (section 6) adds little beyond it.
-- **Log-uniform prior** (`--prior logbox:A:B:SE`, the single box, now retired; slice-sampled exactly in log m, with swap
+- **Log-uniform prior** (`--prior logbox:A:B:SE`, the single box, removed on November 23rd, 2026; slice-sampled exactly in log m, with swap
   moves between near-duplicate ruptures, as are the current priors). With χ² ≤ 447 it fits the data, and subsection totals barely depend on the floor
   (1e-8 vs 1e-12: median 1.5%). Per-rupture medians move about 0.46 decades per decade of floor. See REPORT.md.
 - **Transfer moves** (`build_transfers.py`, `gibbs.py --transfers`; set aside with the single box): exact draws along 26,925 near-null

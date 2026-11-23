@@ -6,7 +6,7 @@ configuration cell on 2026-11-17, at the user's request).
 
 derived_settings(g) reads the configuration cell's settings from g and returns: each data group's misfit mode for
 gibbs.py (SLIP_MISFIT, MFD_MISFIT, PALEO_MISFIT) and MISFIT, their common setting or 'mixed'; the fixed settings below
-(or the overrides tools/run_nb.py passes in g['_OVERRIDES'], for sensitivity tests); SD_MULTIPLIER_; the start time _T0;
+(or the overrides tools/run_nb.py passes in g['_OVERRIDES'], for sensitivity tests); the start time _T0;
 RUN_PLAN (None: the runs planned from RUN_MINUTES, tools/run_plan.py; or, through _OVERRIDES only, a fixed plan for tests);
 RUN_NAME and RUN_DIR.
 """
@@ -29,7 +29,7 @@ SLIP_SECTIONS = 'auto'                         # each run of subsections holding
                                                # or a file in DATA_DIR of 'original_row section' lines. Runs are named SLIP_SECTIONS... only when not 'auto'
 RUPTURE_SET = 'auto'                           # the OpenSHA rupture set: the one folder in DATA_DIR with a ruptures/ (a rupture set, NZSHM22_RuptureSet-...,
                                                # or an inversion solution, NZSHM22_InversionSolution-211k; its solution/rates.csv, if any, drawn for comparison);
-                                               # or that folder's name, or its ruptures/ folder, in DATA_DIR; None: none (only with the CFM off)
+                                               # or that folder's name, or its ruptures/ folder, in DATA_DIR (always needed: the CFM's slip rates map onto its subsections)
 CROSS_SECTIONS = 'all'                         # SLIP_SUM's and PLATE_RATE's strips of cross-sections perpendicular to the plate motion, each the mean
                                                # subsection trace length wide, over all of New Zealand (166 at 211,000 ruptures); 'between': only the 72
                                                # between the Alpine Fault's offshore end and the Needles-Wairarapa step-over (plate_rate.py)
@@ -38,7 +38,9 @@ CFM_SLIPRATES = True                           # the slip rates from the NZ Comm
                                                # each subsection's slip rate a split normal in mm/yr from its parent fault's line, mode
                                                # SLIP_RATE_FACTOR x SR_pref, SR_min and SR_max at 2 sd (each side's sd SLIP_RATE_FACTOR x half its
                                                # width; with CFM_TIMEFRAME the corrected distribution's mode, 2.5% and 97.5% points); the slip sums
-                                               # follow. False only for sensitivity tests (tools/run_nb.py CFM_SLIPRATES=False): the inputs' Gaussians
+                                               # follow. Always True since 2026-11-23 (the user's request: the slip-rate constraint is
+                                               # the CFM's, traced in REPORT.md, "The slip-rate constraint, step by step"; NZSHM22's
+                                               # own Gaussians, with their factors of 2, are no longer used); not overridable
 # CFM_RATE_LINKS = CFM_TEMPLATE_RHO is not None: the CFM's borrowed rates correlated with their sources whenever CFM_TEMPLATE_RHO is on
 # Fixed since 2026-11-17 (the user's request, moving them out of the notebook):
 DOWN_THE_MIDDLE = False                        # the balance term (gibbs.py --down-the-middle): each data type's relative shortfall s
@@ -56,7 +58,7 @@ DISPERSED_STARTS = True                        # every chain from its own prior 
                                                # every chain from the NNLS best fit, which cleaning then computes, for tests only
                                                # (tools/run_quick_checks.sh)
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
-FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
+FIXED = ('BLOCKS', 'SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
          'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
@@ -85,14 +87,13 @@ def derived_settings(g):
                  SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK, MFD_UNCERTAINTY=MFD_UNCERTAINTY)
     fixed['DISPERSED_STARTS'] = DISPERSED_STARTS
     fixed.update({k: v for k, v in ov.items() if k in FIXED})
+    if 'CFM_SLIPRATES' in ov and ov['CFM_SLIPRATES'] is not True:
+        raise ValueError('CFM_SLIPRATES is always True since 2026-11-23 (the slip rates from the CFM; the inputs\' own '
+                         'slip-rate Gaussians are no longer used)')
     if not (isinstance(fixed['DOWN_THE_MIDDLE'], bool) or fixed['DOWN_THE_MIDDLE'] == 'zero-model'):
         raise ValueError(f"DOWN_THE_MIDDLE = {fixed['DOWN_THE_MIDDLE']!r}: use True (the balance term), 'zero-model' (its "
                          'per-type weights) or False (the Gaussian misfit alone)')
     out.update(fixed)
-    out['SD_MULTIPLIER_'] = 1 if fixed['CFM_SLIPRATES'] else 2.5   # the slip-rate sds' multiplier, no longer a setting
-    # (since 2026-11-09, nor SR_pref's reading or the CFM's rounding): the CFM's slip rates (timeframe-corrected or not) with
-    # each sd as given, SR_pref the mode, no rounding; the inputs' Gaussians as NZSHM22 gives them (sd 2.5 x 0.8 x SD = 2 SD),
-    # scaled by SLIP_RATE_FACTOR
     out['RUN_PLAN'] = ov.get('RUN_PLAN')           # None: planned from RUN_MINUTES just before sampling (tools/run_plan.py)
     if out['RUN_PLAN'] is not None:
         if not (isinstance(out['RUN_PLAN'], dict) and set(PLAN_KEYS) <= set(out['RUN_PLAN'])):

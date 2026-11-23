@@ -13,10 +13,10 @@ normal in the slip rate itself (mm/yr, linear, as measured in the field):
   - its mode is f SR_pref (or, with --cfm-pref median, its median is, the mode moved accordingly; a fault whose mode
     would then fall at or below 0 keeps SR_pref as the mode), f the slip-rate factor, the assumed fraction of a fault's slip rate the ruptures take up
     (--slip-rate-factor; by default the inputs' own, 0.8, f = target x sigma / SlipRate, checked on every row);
-  - below the mode its sd is sigma_lo = FACTOR f (SR_pref - SR_min) / NSIG, above it sigma_hi = FACTOR f (SR_max - SR_pref) / NSIG:
+  - below the mode its sd is sigma_lo = f (SR_pref - SR_min) / NSIG, above it sigma_hi = f (SR_max - SR_pref) / NSIG:
     SR_min and SR_max read as NSIG sigma either side (default 2, the reading agreed with colleagues on 2026-11-05; the
-    inputs read them as 1) and the result multiplied by FACTOR (--slip-sd-multiplier, default 2, the inputs' doubling),
-    so by default each side's sd is f times its width (after the doubling, SR_min and SR_max at 1 sd). The factor f, the
+    inputs read them as 1), so each side's sd is f times half its width (no multiplier: --slip-sd-multiplier, 2 until
+    2026-11-09 and 1 since, was removed on 2026-11-23, the user's request). The factor f, the
     assumed fraction of a fault's slip rate the ruptures take up, scales the whole distribution, sds included, as a
     fixed factor on an uncertain rate must (the inputs scale only their targets, so their sigma is 1/f too wide);
   - a side of zero width takes the other side's; a fault with SR_min = SR_pref = SR_max, its sd = the mode itself
@@ -35,7 +35,7 @@ import re
 import numpy as np
 import scipy.sparse as sp
 
-NSIG_DEFAULT, FACTOR_DEFAULT = 2.0, 2.0       # SR_min and SR_max at 2 sd, doubled (the inputs read them at 1)
+NSIG_DEFAULT = 2.0                            # SR_min and SR_max at 2 sd (the inputs read them at 1)
 LINK_KM = 5.0                                 # --cfm-rate-links: identical triples on traces this close are one estimate
 
 
@@ -390,33 +390,6 @@ def inputs_slip(A, d, rupture_dir):
     return dict(sub=sub, ns=ns, Ar=Ar, sig_old=sig_old, f=f_ref, m=m_ref, sd0=sd0)
 
 
-def rescale_inputs(A, d, rupture_dir, srf=None, mult=None):
-    """Without --cfm-sliprates: the inputs' slip-rate Gaussians with the slip-rate factor on the whole distribution.
-    The inputs (NZSHM22) put their factor f (0.8) on the targets only, sigma = 2 SD in unscaled mm/yr; an implementation
-    error upstream, in the NZSHM22 code, as the user reads it (the uncertainty scaling postdating the slip-rate factor).
-    Here each becomes target srf x SlipRate, sigma mult x srf x SD (srf default f, mult default 2), and a row with an SD
-    of 0, whose sigma is the rate itself (f x SlipRate), sigma srf x SlipRate. The inputs' own convention is mult = 2.5
-    (2.5 x 0.8 = 2), which leaves them as they are. In units of sigma: coefficients / s, targets x (srf / f) / s, s each
-    row's sigma new over old. Returns (A, d, report lines)."""
-    I = inputs_slip(A, d, rupture_dir)
-    ns = I['ns']
-    f = float(round(I['f'], 9))                                         # 0.8, to rounding
-    srf_ = f if srf is None else float(srf)
-    mult_ = 2.0 if mult is None else float(mult)
-    s = np.where(I['sd0'], srf_ / f, mult_ * srf_ / I['m'])            # each row's sd in mm/yr, new / old
-    scale = np.ones(A.shape[0])
-    scale[:ns] = 1.0 / s
-    d2 = np.array(d, np.float64)
-    d2[:ns] = d[:ns] * (srf_ / f) / s
-    same = bool(np.all(s == 1.0) and srf_ == f)
-    L = [f'== slip-rate Gaussians with the slip-rate factor on the whole distribution: target {srf_:g} x SlipRate, sd '
-         f'{mult_:g} x {srf_:g} x SlipRateStdDev = {mult_ * srf_:g} x SD (the inputs: target {f:g} x SlipRate, sd {I["m"]:g} x SD, '
-         'the factor on the targets only)' + ('; the inputs unchanged' if same else
-         f'; each sd {np.median(s[~I["sd0"]]):g} times the inputs\' in mm/yr') + f'; the {int(I["sd0"].sum())} subsections with '
-         f'an SD of 0 keep sd = the target']
-    return sp.csc_matrix(sp.diags(scale) @ I['Ar']), d2, L
-
-
 def load_timeframe(path, shape='fit', nsig=NSIG_DEFAULT):
     """--cfm-timeframe: timeframe_sliprates.py's table, by fault name -> (centre, lower end, upper end) in mm/yr, which
     rebuild takes as SR_pref, SR_min and SR_max (the ends nsig sds from the centre). shape 'fit' (--cfm-timeframe-shape,
@@ -439,7 +412,7 @@ def load_timeframe(path, shape='fit', nsig=NSIG_DEFAULT):
     return _apply_fixes(out, path)                 # a fixed fault takes its source's corrected distribution too
 
 
-def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT, srf=None, pref_as='mode', rounding=False,
+def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, srf=None, pref_as='mode', rounding=False,
             timeframe=None, timeframe_shape='fit'):
     """The inputs' slip-rate rows (raw rows 0 .. subsections - 1) rebuilt from the CFM, each split normal scaled as a whole
     by srf (default: the inputs' own factor, 0.8). timeframe (--cfm-timeframe): timeframe_sliprates.py's table, whose
@@ -447,8 +420,8 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     (with factor 1, no rounding, the mode as the mode); with timeframe_shape 'fit' (the default), each fault's split
     normal fitted to the corrected distribution's 16%, 50% and 84% points instead (load_timeframe). Returns (A, d with those rows rebuilt, L2 and H2 per raw row: the
     split misfit's weights below and above each target, 1 on every other row, a per-subsection table, report lines)."""
-    if not (nsig > 0 and factor > 0):
-        raise ValueError('--cfm-sigmas and --slip-sd-multiplier must be positive')
+    if not nsig > 0:
+        raise ValueError('--cfm-sigmas must be positive')
     if srf is not None and not srf > 0:
         raise ValueError('--slip-rate-factor must be positive')
     I = inputs_slip(A, d, rupture_dir)
@@ -474,7 +447,7 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
         raise ValueError(f'{cfm_csv}: SR_min <= SR_pref <= SR_max (and SR_min >= 0) fails for ' + ', '.join(bad))
     f = np.full(ns, I['f'] if srf is None else float(srf))                # the slip-rate factor, on the whole distribution
     mode = f * pref * 1e-3                                               # m/yr
-    lo_w, hi_w = factor * f * (pref - smin) * 1e-3 / nsig, factor * f * (smax - pref) * 1e-3 / nsig   # f on everything
+    lo_w, hi_w = f * (pref - smin) * 1e-3 / nsig, f * (smax - pref) * 1e-3 / nsig   # f on everything
     both0, lo0, hi0 = (lo_w == 0) & (hi_w == 0), (lo_w == 0) & (hi_w > 0), (hi_w == 0) & (lo_w > 0)
     s_lo = np.where(lo0, hi_w, np.where(both0, mode, lo_w))
     s_hi = np.where(hi0, lo_w, np.where(both0, mode, hi_w))
@@ -486,7 +459,7 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
     if rounding:                      # --cfm-rounding: each number known to half its fault's step q (uniform, variance
         steps = load_cfm_steps(cfm_csv)   # q^2/12): the mode's, f^2 q^2/12, on both sides; each width's, a difference of two
         qstep = np.array([steps[p] for p in sub['parent']]) * 1e-3     # rounded numbers, c^2 2 q^2/12 (c each side's sd
-        cc = factor * f / nsig                                          # per unit of width); added in quadrature
+        cc = f / nsig                                                   # per unit of width); added in quadrature
         add = qstep ** 2 * (f ** 2 + 2.0 * cc ** 2) / 12.0
         w_lo, w_hi = np.sqrt(s_lo ** 2 + add), np.sqrt(s_hi ** 2 + add)
         widen = np.maximum(w_lo / s_lo, w_hi / s_hi)
@@ -518,12 +491,12 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, factor=FACTOR_DEFAULT
                fallback=fallback, rounding=rounding, widen=widen, qstep=qstep, timeframe=timeframe,
                timeframe_shape=timeframe_shape if timeframe else None)
     fx_ = {p: v for p, v in rate_fixes(cfm_csv).items() if p in set(sub['parent'])}
-    lines_ = report_lines(tab, nsig, factor, cfm_csv) + ([f'   rate fixes ({RATE_FIXES}): ' + '; '.join(
+    lines_ = report_lines(tab, nsig, cfm_csv) + ([f'   rate fixes ({RATE_FIXES}): ' + '; '.join(
         f'{p} takes {src_}\'s rate and range' for p, (src_, _) in sorted(fx_.items()))] if fx_ else [])
     return A2, d2, L2, H2, tab, lines_
 
 
-def report_lines(tab, nsig, factor, cfm_csv):
+def report_lines(tab, nsig, cfm_csv):
     par = tab['parent']
     first = np.unique(par, return_index=True)[1]                          # one line per parent fault
     pd_ = np.round(tab['pref'][first] - tab['rate_old'][first], 6)
@@ -547,8 +520,8 @@ def report_lines(tab, nsig, factor, cfm_csv):
          [f'== slip rates from the CFM ({os.path.basename(cfm_csv)}): {len(tab["parent"])} subsection rows of {len(first)} parent '
           f'faults, each a split normal in mm/yr, the CFM\'s scaled as a whole by the slip-rate factor {tab["f"][0]:g} (the '
           f'inputs\' {tab["f_in"]:g}): mode '
-          f'{tab["f"][0]:g} x SR_pref, sd below {factor:g} x {tab["f"][0]:g} x (SR_pref - SR_min) / {nsig:g}, above {factor:g} x '
-          f'{tab["f"][0]:g} x (SR_max - SR_pref) / {nsig:g} (SR_min and SR_max at {nsig:g} sigma, times {factor:g}); rows '
+          f'{tab["f"][0]:g} x SR_pref, sd below {tab["f"][0]:g} x (SR_pref - SR_min) / {nsig:g}, above '
+          f'{tab["f"][0]:g} x (SR_max - SR_pref) / {nsig:g} (SR_min and SR_max at {nsig:g} sigma); rows '
           f'rescaled to the mean of the two sides',
           f'   SR_pref against the rupture set\'s SlipRate: {int(np.sum(pd_ == 0))} faults the same, {int(np.sum(pd_ != 0))} '
           f'different (largest {np.abs(pd_).max():.3g} mm/yr)'])
@@ -585,7 +558,6 @@ def main():
     ap.add_argument('--A', default='cru_A.txt')
     ap.add_argument('--d', default='cru_D.txt')
     ap.add_argument('--cfm-sigmas', type=float, default=NSIG_DEFAULT)
-    ap.add_argument('--slip-sd-multiplier', type=float, default=FACTOR_DEFAULT)
     ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'])
     ap.add_argument('--cfm-rounding', action='store_true')
     ap.add_argument('--slip-rate-factor', type=float, default=None, help="default: the inputs' own (0.8)")
@@ -593,7 +565,7 @@ def main():
     from cru_common import find_rupture_set, load_colt_sparse, load_vector
     rd = find_rupture_set(a.ruptures)
     A, d = load_colt_sparse(a.A), load_vector(a.d)
-    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_sd_multiplier, a.slip_rate_factor, a.cfm_pref, a.cfm_rounding)
+    *_, L = rebuild(A, d, rd, a.cfm, a.cfm_sigmas, a.slip_rate_factor, a.cfm_pref, a.cfm_rounding)
     print('\n'.join(L))
 
 

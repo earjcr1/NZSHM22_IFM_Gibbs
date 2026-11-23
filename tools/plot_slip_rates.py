@@ -72,7 +72,7 @@ import numpy as np
 
 from cru_common import geo_parts, misfit_log_weight, misfit_parts, misfit_text, split_weights
 from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
-                        legend_above, legend_height, load_problem, neighbour_colours, reference_rates, run_predictions,
+                        legend_above, legend_height, load_problem, neighbour_colours, reference_list, run_predictions,
                         run_config, figure_settings, settings_lines, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
@@ -119,8 +119,9 @@ def main():
     ap.add_argument('--out', default=None, help='figure (default: fig_slip_rates.png next to the first rate vectors)')
     ap.add_argument('--slip-block', default='S', help='the slip-rate row group (default S)')
     ap.add_argument('--label', type=int, default=3, help='label this many sections furthest from their targets (default 3)')
-    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates to mark on every "
-                    "panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz)")
+    ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates to "
+                    "mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors "
+                    "(.npz); up to two (give it twice: the second a grey diamond)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
@@ -210,9 +211,8 @@ def main():
                          groups=list(np.argsort(-np.abs(sw(rs / us)), kind='stable')[:max(0, a.label)]), model=model))
         del Y
     mm = 'model' if all(D['model'] for D in data) else 'mean model'   # single models (a best fit): no mean
-    ref = None
-    if a.reference:                                      # another model's predictions, marked on every panel
-        ref = reference_rates(a.reference, P)
+    refs = reference_list(a.reference, P)                # other models' predictions, marked on every panel (up to two)
+    for ref in refs:
         yw = Gs @ ref['m']
         y = yw / sc
         ys = np.bincount(sec, weights=y, minlength=S) / ks
@@ -225,7 +225,7 @@ def main():
                     f'uncertainty of their targets, {100 * ref["in2"]:.0f}% within two; section mean / target: median '
                     f'{ref["q"][1]:.2f} (5-95%: {ref["q"][0]:.2f} to {ref["q"][2]:.2f})'
                     + (f'; {ref["note"]}' if ref['note'] else ''))
-    rc = f' {"reference":>10s}' if ref else ''            # the reference's column in the tables
+    rc = ''.join(f' {"reference" if len(refs) == 1 else f"ref {r_k + 1}":>10s}' for r_k in range(len(refs)))   # the references' columns
     settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
     # setting, whatever its value, so that every figure's table, and so its panels, have the same size
     if settings:
@@ -261,11 +261,11 @@ def main():
         for s in range(S):
             qs = ' '.join(f'{v:9.4g}' for v in D['q'][:, s]) if D['q'] is not None else ' '.join(f'{"-":>9s}' for _ in range(3))
             lines.append(f'{s:7d} {rows_span(s):>14s} {ks[s]:3d} {ts[s]:9.4g} {D["ys"][s]:16.4g} {qs} '
-                         f'{D["rs"][s]:+11.4g} {sw(D["rs"] / us)[s]:+7.2f} {D["ratio_s"][s]:7.3f}' + (f' {ref["ys"][s]:10.4g}' if ref else ''))
+                         f'{D["rs"][s]:+11.4g} {sw(D["rs"] / us)[s]:+7.2f} {D["ratio_s"][s]:7.3f}' + ''.join(f' {ref["ys"][s]:10.4g}' for ref in refs))
         lines.append(f'{"row":>7s} {"section":>14s} {"":>3s} {"target":>9s} {"mean prediction":>16s} {"difference":>11s} {"ratio":>7s}{rc}')
         for k in np.argsort(orig, kind='stable'):
             lines.append(f'{orig[k]:7d} {sec[k]:14d} {"":>3s} {t[k]:9.4g} {D["y"][k]:16.4g} {D["r"][k]:+11.3f} {D["ratio"][k]:7.3f}'
-                         + (f' {ref["y"][k]:10.4g}' if ref else ''))
+                         + ''.join(f' {ref["y"][k]:10.4g}' for ref in refs))
     text = '\n'.join(lines)
     print('\n'.join(l for l in lines if not l[:7].strip().isdigit() and not l.lstrip().startswith(('row ', 'section '))))
 
@@ -288,13 +288,13 @@ def main():
         lo_b, hi_b = axis_span(ts, ys_nn, log=True)
         hi_lin = 1.05 * axis_span(ts, ys_nn, log=False)[1] + (0.0 if phys else 1.0)
     else:                                          # cleaned without the best fit: the axes follow what is plotted
-        ally = np.concatenate([D['ys'] for D in data] + ([ref['ys']] if ref else []))
+        ally = np.concatenate([D['ys'] for D in data] + [ref['ys'] for ref in refs])
         pos = ally[ally >= 1e-3 * t.min()]
         lo_b, hi_b = min(t.min(), pos.min() if pos.size else t.min()), max(t.max(), ally.max())
         hi_lin = 1.05 * max(t.max(), ally.max()) + (0.0 if phys else 1.0)
     lo_log, hi_log = lo_b / 1.4, hi_b * 1.4
     edge, top, top_lin = lo_log * 1.12, hi_log / 1.12, hi_lin * 0.985   # where values beyond the axes sit
-    allv = [D['ys'] for D in data] + ([ref['ys']] if ref else [])
+    allv = [D['ys'] for D in data] + [ref['ys'] for ref in refs]
     clipped = any((v < edge).any() or (v > top).any() or (v > top_lin).any() for v in allv)
     axes_line = (f'axes: ' + ('fixed by the targets and the best fit (NNLS; its central 96% of section means)' if fixed else
                              'from the targets and the predictions shown (no best fit in the cleaning results)')
@@ -318,11 +318,11 @@ def main():
                'beyond them sit on the edges.' if fixed else ''))
     note = textwrap.fill(note, 180, break_on_hyphens=False)
     extra = 0.16 * max(2, note.count('\n'))           # room for the note: three lines at least, so that the panels keep their size
-    n_h = 3 + int(bars) + int(kx) + int(clipped) + int(ref is not None)   # the legend's entries (above): one row of up to four
+    n_h = 3 + int(bars) + int(kx) + int(clipped) + len(refs)   # the legend's entries (above): one row of up to four
     lc = n_h if n_h <= 4 else 3
     leg_pt = legend_height(7, 3) + 6                 # room for the fullest legend, whichever entries this one has, so
                                                          # that the panels keep their size
-    sub_pt = 25.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    sub_pt = 25.0 + 12.5 * max(0, len(refs) - 1)         # the subtitle's extra lines: each model's misfit on a line of its own (room for one reference's, with or without it; a line more for a second)
     tab = settings_lines(settings) if settings else None
     top_in, row_in, bot_in = 0.45 + (leg_pt + sub_pt) / 72, 5.6, 0.8 + extra   # figure layout, in inches
     if tab:                                              # the settings table takes a little more room than a label
@@ -365,10 +365,10 @@ def main():
                           alpha=0.16 if log else 0.32, zorder=2.1)   # faint: context for the points
             else:
                 ax.fill_between(xs, np.maximum(xs - 1.0, lim[0]), xs + 1.0, color=BAND, lw=0, zorder=0.5)
-            if ref is not None:                      # the reference's section means, in front of the posterior's
-                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18, marker='s', facecolors='none', edgecolors=REF,
-                              linewidths=0.5, zorder=3.4), dict(s=22, facecolors='none', edgecolors=REF, linewidths=0.5,
-                              zorder=3.4))
+            for ref in refs:                         # each reference's section means, in front of the posterior's
+                scatter_edges(ax, ts, ref['ys'], lo_e, hi_e, dict(s=18 if ref['k'] == 0 else 16, marker=ref['marker'],
+                              facecolors='none', edgecolors=ref['ink'], linewidths=0.5, zorder=3.4),
+                              dict(s=22, facecolors='none', edgecolors=ref['ink'], linewidths=0.5, zorder=3.4))
             if D['xs'] is not None:                  # each kept draw's section means, as x's, within the axes
                 kb = ts > 0 if log else np.ones(S, bool)
                 Xv = np.clip(D['xs'][:, kb], *lim)
@@ -394,7 +394,7 @@ def main():
                 ax.set_ylabel(f'{mm} prediction (mm/yr)' if phys else f'{mm} prediction (same units)', color=INK2, fontsize=9)
             ax.set_title('log scale' if log else 'linear scale', loc='left', color=INK, fontsize=10, pad=6)
         sub = (f'{D["label"] if len(data) > 1 else mm} over the {len(rows)} slip-rate rows{" (as weighted)" if weighted and not geo_b else ""}: {misfit_text(D["chi2"], fig=True)}\n'
-               + (f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' if ref is not None else '')
+               + ''.join(f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' for ref in refs)
                + f'{D["label"] if len(data) > 1 else mm}: {100 * D["in1"]:.0f}% of the {S} sections within one uncertainty of their targets, {100 * D["in2"]:.0f}% within two')
         above = 40 + sub_pt + (leg_pt if i == 0 else 0)          # the first row's settings sit above the legend
         if tab and i == 0:                               # the settings once, above the first row
@@ -416,9 +416,9 @@ def main():
     handles += [(Line2D([], [], color=INK, lw=1.0), 'prediction = target'),
                 (tuple(Line2D([], [], color=c, lw=0.9, alpha=0.5) for c in few), 'the target ± one sd (at the section mean)') if phys else
                 (Patch(facecolor=BAND, edgecolor='none'), 'within one uncertainty of the target')]
-    if ref is not None:
-        handles.append((Line2D([], [], ls='none', marker='s', ms=4.5, mfc='none', mec=REF, mew=0.5),
-                        f'{ref["label"]}: section mean'))
+    for ref in refs:
+        handles.append((Line2D([], [], ls='none', marker=ref['marker'], ms=4.5 if ref['k'] == 0 else 4.0, mfc='none',
+                               mec=ref['ink'], mew=0.5), f'{ref["label"]}: section mean'))
     if clipped:
         handles.append((Line2D([], [], ls='none', marker='v', ms=5, mfc=INK2, mec=INK2), 'beyond the axes (on their edges)'))
     h_in = fig.get_size_inches()[1]

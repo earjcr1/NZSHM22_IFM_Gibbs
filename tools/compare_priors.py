@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""compare_priors.py -- compare gibbs.py runs made under different priors (the per-bin and theta tables in REPORT.md).
+"""compare_priors.py -- compare spike-and-slab runs of gibbs.py made with different prior settings: the start (sparse or
+dense) and the slab floor (since November 23rd, 2026, when the other priors were removed, spike-and-slab only; the box
+priors' and theta's tables in REPORT.md came from its earlier versions).
 
-    python compare_priors.py gibbs_bb10 gibbs_bb12 gibbs_th2 gibbs_th1 gibbs_th0.5 [--problem cru_clean.npz]
+    python compare_priors.py gibbs_ss gibbs_ss_dense gibbs_ss8 gibbs_ss12 [--problem cru_clean.npz]
 
 For each run (<run>.npz and <run>_samples.npy, cleaned problem in cru_clean.npz): chi2, chi2 of the posterior-mean
 model, total rate, bin totals against their targets, ruptures above 1e-5 and 1e-4, ruptures carrying 90% of the rate,
 the largest rate relative to its bin's target, worst R-hat against its noise baseline, and effective draws. Then, for
-pairs of runs it recognizes, the change in subsection totals, exceedance probabilities and linear means, and per-bin
-totals against targets in units of each bin's uncertainty. Labels are defined for the run names used in REPORT.md;
-other names are labelled by their file stem.
+pairs of runs it recognizes (gibbs_ss against gibbs_ss_dense, gibbs_ss8 and gibbs_ss12), the change in subsection
+totals, exceedance probabilities and linear means; the top contact (draws with a rupture above 0.9 R_j and above R_j);
+and per-bin totals against targets in units of each bin's uncertainty. Other names are labelled by their file stem.
 """
-import argparse, os, sys
+import argparse, os
 import numpy as np
-from cru_common import load_problem, split_rhat, ess, ess_many, bin_targets
-ap = argparse.ArgumentParser(description='compare gibbs.py runs made under different priors (needs their stored draws)')
+from cru_common import load_problem, split_rhat, ess_many, bin_targets
+ap = argparse.ArgumentParser(description='compare spike-and-slab runs of gibbs.py with different prior settings (needs their stored draws)')
 ap.add_argument('runs', nargs='+', help='run names: <run>.npz and <run>_samples.npy')
 ap.add_argument('--problem', default='cru_clean.npz', help='the cleaned problem the runs were made on')
 ap.add_argument('--slip-block', default='S', help='block of slip-rate rows (subsection totals)')
@@ -54,12 +56,7 @@ runs = [r for r in args.runs if os.path.exists(r + '_samples.npy')]
 for r in args.runs:
     if r not in runs:
         print(f'skipping {r}: no stored draws ({r}_samples.npy); compare_priors.py needs them')
-labels = {'gibbs_lb12': 'old default: 1e-12 to 1e-2', 'gibbs_lb10': 'old box, floor 1e-10', 'gibbs_bb10': 'per-bin: R_j down 10 decades',
-          'gibbs_bb12': 'per-bin: R_j down 12 decades', 'gibbs_th1': 'per-bin depths, theta = 1',
-          'gibbs_th0.5': 'per-bin depths, theta = 0.5', 'gibbs_th2': 'per-bin depths, theta = 2',
-          'gibbs_th1s': 'theta = 1, soft top', 'gibbs_bb10s': 'per-bin 10 decades, soft top',
-          'gibbs_bb10h0': '10 decades, hard lower edge', 'gibbs_bbf12': 'common floor 1e-12',
-          'gibbs_ss': 'spike-and-slab, sparse start', 'gibbs_ss_dense': 'spike-and-slab, dense start',
+labels = {'gibbs_ss': 'spike-and-slab, sparse start', 'gibbs_ss_dense': 'spike-and-slab, dense start',
           'gibbs_ss8': 'spike-and-slab, slab floor 1e-8', 'gibbs_ss12': 'spike-and-slab, slab floor 1e-12'}
 St = {r: stats(r) for r in runs}
 g = np.random.default_rng(0)
@@ -83,13 +80,7 @@ def shift(a, b, lab):
           f'log10 P(>1e-5) {np.median(d5):+.2f} ({np.percentile(d5, 5):+.2f} to {np.percentile(d5, 95):+.2f}); '
           f'log10 P(>1e-4) {np.median(d4):+.2f}; linear means {np.median(dl):+.2f} decades')
 print()
-pairs_ = [('gibbs_lb12', 'gibbs_lb10', 'old box: floor 1e-12 -> 1e-10 (2 decades)'), ('gibbs_bb10', 'gibbs_bb12', 'per-bin box: 10 -> 12 decades deep'),
-          ('gibbs_lb12', 'gibbs_bb10', 'old default -> per-bin box, 10 decades'), ('gibbs_bb10', 'gibbs_th1', 'per-bin 10 decades -> theta = 1'),
-          ('gibbs_th1', 'gibbs_th2', 'theta 1 -> 2 (depths halved)'), ('gibbs_th1', 'gibbs_th0.5', 'theta 1 -> 0.5 (depths doubled)'),
-          ('gibbs_th1', 'gibbs_th1s', 'theta = 1: hard top -> soft top'), ('gibbs_bb10', 'gibbs_bb10s', '10 decades: hard top -> soft top'),
-          ('gibbs_bb10s', 'gibbs_bb10h0', '10 decades: soft lower edge -> hard'), ('gibbs_bb10h0', 'gibbs_bbf12', '10 decades below R_j -> floor 1e-12'),
-          ('gibbs_ss', 'gibbs_ss_dense', 'spike-and-slab: sparse start vs dense start'), ('gibbs_bbf12', 'gibbs_ss', 'binbox floor 1e-12 -> spike-and-slab'),
-          ('gibbs_th1s', 'gibbs_ss', 'theta = 1 -> spike-and-slab'),
+pairs_ = [('gibbs_ss', 'gibbs_ss_dense', 'spike-and-slab: sparse start vs dense start'),
           ('gibbs_ss', 'gibbs_ss8', 'spike-and-slab: slab floor 1e-10 -> 1e-8'), ('gibbs_ss', 'gibbs_ss12', 'spike-and-slab: slab floor 1e-10 -> 1e-12')]
 for a_, b_, lab in pairs_:
     if a_ in St and b_ in St:

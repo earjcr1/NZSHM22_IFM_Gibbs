@@ -68,7 +68,7 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predictions, legend_above, legend_height,
-                        load_problem, magnitude_bins, reference_rates, run_predictions, run_config, figure_settings, settings_lines,
+                        load_problem, magnitude_bins, reference_list, REF_OFFSETS, run_predictions, run_config, figure_settings, settings_lines,
                         gr_curves, gr_joint_misfit, gr_run_draws)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
@@ -130,8 +130,9 @@ def main():
                          'whose bin rows give the NZSHM22 bins\' uncertainties for the comparison line (later problems carry '
                          'them, mfd_in_rel)')
     ap.add_argument('--slip-block', default='S')
-    ap.add_argument('--reference', default=None, metavar='RATES[:LABEL]', help="another model's rates, whose bin totals "
-                    "to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors")
+    ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates, "
+                    "whose bin totals to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), "
+                    "or rate vectors; up to two (give it twice: the second a grey diamond)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
@@ -249,9 +250,8 @@ def main():
                          model=model))
     single = all(D['model'] for D in data)           # single models (a best fit): rates, not posterior means
     mean_ = '' if single else 'mean '
-    ref = None
-    if a.reference:                                  # another model's bin totals, marked on every panel
-        ref = reference_rates(a.reference, P)
+    refs = reference_list(a.reference, P)            # other models' bin totals, marked on every panel (up to two)
+    for ref in refs:
         ref['tot'] = np.bincount(bin_of, weights=ref['m'], minlength=B)
         ref['chi2'] = bins_fit(ref['m'])
     for D in data:                                   # MFD_GR_TAU: the bins' misfit as the run scored them, about the curve
@@ -259,7 +259,7 @@ def main():
             gq_ = D['gr']
             sj = lambda m_: float(gr_joint_misfit(P, rows, Gr[rows] @ m_, gq_['b_med'], gq_['l_med'], gq_['tau']))
             D['chi2'] = f'its misfit about the drawn G-R curves\' median (MFD_GR_TAU {gq_["tau"]:g}) {sj(D["m"]):.1f}'
-            if ref is not None:
+            for ref in refs:
                 ref['chi2'] = f'its misfit about the same curve {sj(ref["m"]):.1f}'
     settings = figure_settings(a.config, a.problem, ' / '.join(D['model'] or 'posterior mean' for D in data))   # every
     # setting, whatever its value, so that every figure's table, and so its panels, have the same size
@@ -272,7 +272,7 @@ def main():
     dlab = [f'<1e{floor:g}'] + [f'1e{e:g}' for e in dec[:-1]] + [f'>=1e{dec[-1]:g}']
     dw = max(6, max(len(s) for s in dlab)) + 1
     lines = list(head)
-    if ref is not None:
+    for ref in refs:
         lines += ['', f'reference: {ref["label"]} ({ref["path"]}): its misfit over the {B} magnitude-bin rows ({mmode}), '
                   f'{misfit_text(ref["chi2"])}; bin totals; total rate {ref["tot"].sum():.4g} '
                   f'against targets totalling {R.sum():.4g}' + (f'; {ref["note"]}' if ref['note'] else ''),
@@ -334,10 +334,11 @@ def main():
         r_lo, r_hi = min(1 - 3 * rel.max(), (nn_tot / R).min()), max(1 + 3 * rel.max(), (nn_tot / R).max())
     else:                                            # cleaned without the best fit: the axes follow what is plotted
         top = max(np.log10(max(D['m'].max(), D['tot'].max(), R.max())) for D in data)
-        if ref is not None and ref['tot'].max() > 0:
-            top = max(top, np.log10(ref['tot'].max()))
+        for ref in refs:
+            if ref['tot'].max() > 0:
+                top = max(top, np.log10(ref['tot'].max()))
         shown = np.concatenate([D['tot'] / R for D in data] + [D['q'][k, :B] / R for D in data if D['q'] is not None
-                                                               for k in (0, 2)] + ([ref['tot'] / R] if ref is not None else []))
+                                                               for k in (0, 2)] + [ref['tot'] / R for ref in refs])
         r_lo, r_hi = min(1 - 3 * rel.max(), shown.min()), max(1 + 3 * rel.max(), shown.max())
     top = np.ceil(2.0 * (top + 0.25)) / 2.0
     bottom = min(float(a.y_bottom), floor - 0.5)     # the rate axis from 1e-12, the slab floor drawn across it
@@ -366,12 +367,12 @@ def main():
                             if fixed else '')
                          + (f'{pens[0]:,} penalised ruptures (rate 0 by construction) are not shown.' if len(pens) == 1 else
                             'Penalised ruptures (rate 0 by construction) are not shown.'), int(15.5 * fig_w), break_on_hyphens=False)
-    n_h = 5 + int(bars) + int(kx) + int(ref is not None) + int(any_low) + int(any(D.get('gr') is not None for D in data))
+    n_h = 5 + int(bars) + int(kx) + len(refs) + int(any_low) + int(any(D.get('gr') is not None for D in data))
     lc = n_h if n_h <= 4 else 2 if k_panels == 1 else 3          # columns: two under a single panel
     more = 0.168 * max(1, foot.count('\n'))           # room for the footnote, two lines at least, in inches
     leg_pt = legend_height(9, 2 if k_panels == 1 else 3) + 6   # room for the fullest legend (9 with MFD_GR_TAU's curves), whichever entries this
                                                          # one has, so that the panels keep their size
-    sub_pt = 24.0                                        # the subtitle's extra lines: each model's misfit on a line of its own (room for the reference's, with or without it)
+    sub_pt = 24.0 + 12.0 * max(0, len(refs) - 1)         # the subtitle's extra lines: each model's misfit on a line of its own (room for one reference's, with or without it; a line more for a second)
     top_in, ratio_in, gap_in, main_in, bot_in = 0.9 + more_top + (leg_pt + sub_pt) / 72, 1.3, 0.22, 3.9, 0.78 + more   # in inches
     H = top_in + ratio_in + gap_in + main_in + bot_in
     fig, axs = plt.subplots(2, k_panels, figsize=(fig_w, H), sharex='col', sharey='row', squeeze=False,
@@ -420,10 +421,10 @@ def main():
                       lg(np.maximum(D['q'][2, :B], 10.0 ** bottom)), colors=ORANGE, alpha=0.5, lw=2.2, zorder=3.5)
         ok = D['tot'] > 0
         ax.scatter(lo[ok] + 0.5 * w, lg(D['tot'][ok]), s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4)
-        if ref is not None:                          # the reference's bin totals, beside the bin's own and in front
+        for ref in refs:                             # each reference's bin totals, beside the bin's own and in front
             okr = ref['tot'] > 0
-            ax.scatter(lo[okr] + 0.78 * w, lg(ref['tot'][okr]), s=26, marker='s', c=REF, edgecolors=SURFACE,
-                       linewidths=1.0, zorder=4.2)
+            ax.scatter(lo[okr] + REF_OFFSETS[ref['k']] * w, lg(ref['tot'][okr]), s=26 if ref['k'] == 0 else 24,
+                       marker=ref['marker'], c=ref['ink'], edgecolors=SURFACE, linewidths=1.0, zorder=4.2)
         ar.set_ylim(r_lo, r_hi)                      # the lower panel: the same, over each bin's target
         ar.bar(lo + 0.5 * w, 2 * rel, bottom=1 - rel, width=0.88 * w, color=BAND, lw=0, zorder=0.5)
         ar.hlines(np.ones(B), lo + 0.06 * w, lo + 0.94 * w, colors=INK, lw=1.0, zorder=3)
@@ -432,10 +433,11 @@ def main():
                       colors=ORANGE, alpha=0.5, lw=2.2, zorder=3.5)
         scatter_edges(ar, lo + 0.5 * w, D['tot'] / R, r_edge, r_top,
                       dict(s=30, c=ORANGE, edgecolors=SURFACE, linewidths=1.0, zorder=4), dict(s=30, c=ORANGE, zorder=4))
-        if ref is not None:
-            scatter_edges(ar, lo + 0.78 * w, ref['tot'] / R, r_edge, r_top,
-                          dict(s=26, marker='s', c=REF, edgecolors=SURFACE, linewidths=1.0, zorder=4.2),
-                          dict(s=26, c=REF, zorder=4.2))
+        for ref in refs:
+            scatter_edges(ar, lo + REF_OFFSETS[ref['k']] * w, ref['tot'] / R, r_edge, r_top,
+                          dict(s=26 if ref['k'] == 0 else 24, marker=ref['marker'], c=ref['ink'], edgecolors=SURFACE,
+                               linewidths=1.0, zorder=4.2),
+                          dict(s=26, c=ref['ink'], zorder=4.2))
         nb = int(D['below'].sum())
         nz = int((D['m'] == 0).sum())
         if tab and ax is axs[0][0]:                      # the settings once, above the first panel
@@ -443,7 +445,7 @@ def main():
         if not tab or k_panels > 1:                      # several panels: each one's title
             ax.set_title(D['label'], loc='left', color=INK, fontsize=11.5, fontweight='bold', pad=20 + sub_pt + leg_pt)
         ax.annotate(f'{"model" if single else "mean model"} over the {B} bins: {misfit_text(D["chi2"], fig=True)}\n'
-                    + (f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' if ref is not None else '')
+                    + ''.join(f'{ref["label"]}: {misfit_text(ref["chi2"], fig=True)}\n' for ref in refs)
                     + f'{n:,} ruptures; ' + (f'{nb:,} with a mean below 1e{floor:g}' + (f', {nz:,} of them exactly 0' if nz else '')
                     if nb else f'every mean above 1e{floor:g}'),
                     (0, 1), xycoords='axes fraction', xytext=(0, 5), textcoords='offset points', va='bottom',
@@ -467,9 +469,9 @@ def main():
                               label=f'bin total of each of the {n_k:,} kept draws'))
     if any(D.get('gr') is not None for D in data):
         handles.append(Line2D([], [], color=CURVE, lw=1.4, label='drawn G-R curve: median, and 16–84% band (MFD_GR_TAU)'))
-    if ref is not None:
-        handles.append(Line2D([], [], ls='none', marker='s', ms=6, mfc=REF, mec=SURFACE, mew=1.0,
-                              label=f'bin total of {ref["label"]}'))
+    for ref in refs:
+        handles.append(Line2D([], [], ls='none', marker=ref['marker'], ms=6 if ref['k'] == 0 else 5.5, mfc=ref['ink'],
+                              mec=SURFACE, mew=1.0, label=f'bin total of {ref["label"]}'))
     handles.append(Patch(facecolor=BAND, edgecolor='none', label='lower panel: within one uncertainty of the target'))
     handles.append(Line2D([], [], color=MUTED, lw=0.9, ls=(0, (4, 3)), label=f'slab floor (1e{floor:g})'))
     if any_low:

@@ -8,7 +8,7 @@ Workflow notebook: cru_workflow.ipynb (the configuration, then one call per step
 end and computes nothing itself; it finds them in tools/ beside it). Since 2026-11-17 (the user's request) the notebook
 keeps only its settings (one-line comments), the path setup and the scripts' calls, with a sentence or two of markdown per
 step; tools/notebook_steps.py holds the plumbing: setup(globals()) (run_config.derived_settings, every setting's check,
-SEED_USED/MFD_GR_SPEC/PLATE_LIMITS/SLIP_AS_GIVEN, DATA_DIR/RUN_DIR resolved, RUN_DIR made and entered, the log, RUPTURE_DIR,
+SEED_USED/MFD_GR_SPEC/PLATE_LIMITS, DATA_DIR/RUN_DIR resolved, RUN_DIR made and entered, the log, RUPTURE_DIR,
 CONFIG via record_config -> workflow_config.json), sh (SH_SECONDS), show, results_dir, rupture_dir, ref_args,
 cleaning_args/after_cleaning, gibbs_args/_terms/starts_args, plan_runs (calibration from the starts, run_plan.json,
 config), replicate_seed, runs_done, clear_solution, write_timings (timings.json). The old markdown and the settings'
@@ -19,7 +19,16 @@ cell or RUN_SELFTESTS; run_nb.py NOTEBOOK RUN_DIR DATA_DIR [NAME=VALUE ...]. The
 Since 2026-11-21 (the user's request): the notebook passes preliminaries.py --no-nnls (no best fit; DISPERSED_STARTS fixed True
 in run_config.py, False only for tests, which get the fit back) and, with MFD_GR and the CFM, --from-rupture-set RUPTURE_DIR
 (rupture_set_inputs.build_inputs: the inputs' rows from the solution folder's ruptures/; cru_A/cru_D not read; checked
-equivalent at 19k, 211k, 630k; REPORT "Inputs from the rupture set, and no best fit"). make_summary_pdf numbers its steps
+equivalent at 19k, 211k, 630k; REPORT "Inputs from the rupture set, and no best fit"). Since 2026-11-23 a bare rupture set
+(no inversion) also works: the missing modules are built (slip rates 0.8 x SlipRate from fault_sections.geojson, paleo sites
+from data/ mapped to the nearest subsection within 5.25 km as NZSHM22 does (paleo_misfit.paleo_data), the bins from
+mfd_gr.rupture_set_parts; preliminaries.py --nzshm22-n5 for NZSHM22's run N5, default 3.4), the subsections' shares of NZSHM22's gridded seismicity from their polygons
+(fault_polygons.py, a port of SectionPolygons/NZSHM22_FaultPolyMgr; data/Floor_AddoptiEEPAScomb-CRU_pdf.csv; within 0.15%
+of NZSHM22's partition, a Java Area quirk; the user chose pure Python), NZSHM22's run N5 3.4, b 0.959 (mfd_gr.NZSHM22_RUN);
+a solution's own files are read when present (exact). REPORT "The sub-seismogenic and off-fault shares from the rupture set".
+Since 2026-11-23 CFM_SLIPRATES is always True (not overridable; cfm_sliprates.rescale_inputs and --slip-sd-multiplier removed;
+the user: NZSHM22's own slip-rate setup, with its factors of 2, is not to be matched). REPORT "The slip-rate constraint, step by
+step" traces a row from the CFM to the likelihood; tools/trace_slip_rows.py checks any fault's rows by hand against cru_clean.npz. make_summary_pdf numbers its steps
 by the sections present (SN). The best-fit cells left the notebook.
 Code, all in tools/: preliminaries.py (clean, with soft zero-forcing rows forcing their ruptures to 0 like the penalty rows; diagnostics;
 NNLS, always computed (about 25 s at 211k; the chains start from it); the best fit's outputs go into RUN_DIR/nnls/: its rate vectors,
@@ -50,7 +59,7 @@ and effective draws in convergence.npz), make_tables.py (the posterior tables an
 replicates), block_fit.py (each row block's fit from a run's recorded predictions),
 compare_runs.py (rate-by-rate agreement of two runs, with a figure), summarize_runs.py (log-space summaries of
 replicates or priors, from the running summaries or stored draws; command line only since the notebook's summary
-figure was dropped at the end of October 2026), cru_common.py (shared I/O and diagnostics), compare_priors.py (tables comparing runs under different priors),
+figure was dropped at the end of October 2026), cru_common.py (shared I/O and diagnostics), compare_priors.py (tables comparing spike-and-slab runs: start, slab floor; trimmed 2026-11-23),
 select_draws.py (weighted representative draws for hazard), plot_rate_magnitude.py (each rupture's posterior mean
 rate against its magnitude bin, from the rate vectors, with each bin's ruptures counted by decade of mean rate, and
 below it each bin's total over its target with the total's posterior 16-84% range),
@@ -71,7 +80,9 @@ randomized_nnls.py (best fits to the data plus fresh draws of their
 stated noise, from the command line only since 2026-11-03, when the notebook's RANDOMIZED_NNLS was retired: their spread of
 slip-rate, MFD and paleo predictions in figures, in the --out folder; the best fit's sampling distribution, not a posterior).
 The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py, randomized_nnls.py) take --reference
-RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated; the notebook
+RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated (since 2026-11-23
+plot_slip_rates, plot_rate_magnitude, plot_paleo_rates and plot_slip_sections take it twice, cru_common.reference_list: the
+second a dark-grey diamond and a dashed outline, a line more of subtitle; with one, figures and tables as before); the notebook
 passes the model's own OpenSHA solution (ref_args(): solution/rates.csv beside the rupture set, looked for when each
 figure is drawn, so one finished during the run counts; the best fit's figures come right after cleaning since
 2026-11-05, the user's choice, to catch a data type far off before the runs) when DATA_DIR holds it.
@@ -98,11 +109,9 @@ fractions are redrawn every sweep). --slab sqrt (command line only; not in the n
 user dropped it at the end of October 2026 (the request behind it had been misphrased; do not propose it as a check):
 the same with an on rupture's rate uniform in sqrt(rate), density m^-1/2 instead of 1/m; it fitted as the default does,
 and at 211k it moved the subsection event rates (REPORT.md, "Fits and the prior's lower end").
---prior linear (command line only) is optional: each rupture's rate uniform from 0 to its bin's target rate R_j,
-drawn in linear space by the exact truncated-normal Gibbs updates; its prior pushes the bin totals far up (REPORT.md,
-"Why not a linearly uniform prior"). --prior halfway (command line only) is optional too: each rate from a 50/50 mix
-of a uniform and a log-uniform range, 1e-10 to R_j, every rupture always on; the data give almost every value to the
-log-uniform part, so it behaves like the per-bin log-uniform boxes, pushing the bin totals up.
+The linear prior (each rate uniform from 0 to R_j) and the halfway prior (a 50/50 mix of uniform and log-uniform) were
+removed on 2026-11-23 (the user's request), with their self-tests and the kernel's mixture constants (MIX, mA/mB); both
+pushed the bin totals up (REPORT.md, "Why not a linearly uniform prior"). gibbs.py --prior refuses them by name.
 --down-the-middle adds a balance term to the misfit, for any prior: each data type's relative shortfall s = sum of
 predictions / sum of targets - 1 (slip-rate sections, MFD bins, paleo rows, in units of each measurement's uncertainty)
 costs A s^2. DOWN_THE_MIDDLE = 'zero-model' (--down-the-middle zero-model; the notebook's default in late October
@@ -233,8 +242,9 @@ section-level correlation with cross-fault sections) slip sections never span tw
 parents=, from --rupture-set or find_rupture_set beside --A; recorded as sections_by_fault): 211k 507 -> 551 sections,
 2e4 68 -> 75; template weights applied per section by cfm_sliprates.section_factors (equal to the faults' weights when
 sections are single faults; template_scale saves the weights as applied). CFM_PREF, CFM_ROUNDING and SLIP_SD_MULTIPLIER are out of the notebook since 2026-11-09 (the user's request): SR_pref the
-mode (also without CFM_TIMEFRAME), no rounding, notebook SD_MULTIPLIER_ = 1 with CFM_SLIPRATES and 2.5 without (the inputs'
-convention; SLIP_AS_GIVEN = no CFM and factor 0.8); CONFIG still records cfm_pref, cfm_rounding, slip_sd_multiplier; not in
+mode (also without CFM_TIMEFRAME), no rounding, notebook SD_MULTIPLIER_ = 1 with CFM_SLIPRATES and, since
+2026-11-23, without it too (2.5 before, the 19k/211k inputs' doubling; SLIP_AS_GIVEN removed: the factor and sds always applied;
+the user: no factor 2 in the setup code); CONFIG still records cfm_pref, cfm_rounding, slip_sd_multiplier; not in
 FIGURE_SETTINGS (19, SETTINGS_PER_LINE 7); the summary PDF lists them only if an older run's differ; preliminaries.py keeps the
 options. CFM_SLIPRATES and CFM_FILE are out of the settings too (2026-11-09, the user's request): CFM_SLIPRATES = True below
 the settings (False only for sensitivity tests, run_nb.py CFM_SLIPRATES=False, as run_quick_checks pins it), the CSV in
@@ -251,8 +261,10 @@ median shift; recorded as the fifth entry of the problem's cfm_sliprates. --cfm-
 each split normal shifted, sds kept, so that its median is f x SR_pref (rebuild's pref_as; the shift from the side masses
 a = s_lo/(s_lo+s_hi): median - mode = s_hi Phi^-1(0.5 + (0.5-a)/(2(1-a))) for a < 0.5, -s_lo Phi^-1(1 - 1/(4a)) for
 a > 0.5); faults whose mode would fall at or below 0 keep the mode (18 at 211k), listed in the cleaning report; recorded
-as the fourth entry of the problem's cfm_sliprates. --slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
-1 by default since 2026-11-09 with CFM_TIMEFRAME (3 earlier that day, the mean widening of Coffey et al.; 2 before); the scripts' own default without the option stays 2; the notebook passes both, with --rupture-set, unless SLIP_AS_GIVEN: CFM off, 0.8 and 2.5; --slip-sd-
+as the fourth entry of the problem's cfm_sliprates. [Since 2026-11-23 --slip-sd-multiplier, rescale_inputs and the run without
+the CFM are gone: each side's sd is F x the fitted split normal's, K = 1 always; the rest of this paragraph is history.]
+--slip-rate-factor F and --slip-sd-multiplier K (SLIP_RATE_FACTOR 0.8 and SLIP_SD_MULTIPLIER
+1 by default since 2026-11-09 with CFM_TIMEFRAME (3 earlier that day, the mean widening of Coffey et al.; 2 before); the scripts' own default without the option is 1 since 2026-11-23 (2 before); the notebook always passes both, with --rupture-set; --slip-sd-
 multiplier replaced --cfm-factor): every slip-rate distribution with F on the whole of it, target F x rate and sd
 K x F x its uncertainty: the CFM's sides (rebuild's srf and factor) or, without --cfm-sliprates, the inputs' Gaussians
 (cfm_sliprates.rescale_inputs: sd K x F x SD; their own convention, checked, is target 0.8 x SlipRate, sd 2 x SD, the
@@ -358,14 +370,12 @@ unprojected target sums' decorrelation length between the edges, about the span 
 strip count only sets the integral's accuracy; the swap pairs' inner products include its rows, checked on a sample at
 start). Its bookkeeping test is in selftest_balance. plate_rate.py reports both (plate_rate.txt, a notebook cell for
 every run with a rupture set).
-Kept for comparison only, and no longer tested: binbox-theta:1:0 (theta = 1: per-bin log-uniform boxes below R_j,
-depths n_j / (theta ln 10); command line only; the alternative until October 2026, retired because it fitted no
-better and from about 2e5 ruptures its boxes are too deep for its sampler to cross), binbox-floor:-12 (per-bin boxes
-down to a common floor; the default until October 2026, when it failed the fit check by 26 sd; binbox:W for a bottom W
-decades below each R_j), and
-logbox:A:B:SE, logbox-centre:W:SE and logbox-mean:W:SE (the single box). --prior lognormal (the hierarchical prior) is
-retired: it never converged (see REPORT.md). Transfer moves (--transfers) exist for the log-boxcar only and are set
-aside with it.
+Removed on 2026-11-23 (the user's request): binbox-theta (per-bin boxes n_j / (theta ln 10) decades deep; the
+alternative until October 2026), binbox-floor and binbox (per-bin boxes; the default until October 2026, when it failed
+the fit check by 26 sd), and the single box (logbox, logbox-centre, logbox-mean; cru_common.resolve_logbox and
+logbox_mean, whose average_data_rate was undefined). The kernel's log-box machinery (Target(logbox=...), pkind 1) stays:
+spike-and-slab's slab runs on it. --prior lognormal (the hierarchical prior) is retired: it never converged (see
+REPORT.md). Transfer moves (--transfers) now run only under the flat and exponential priors and are set aside.
 
 ## Working agreements
 - Every gibbs.py run writes <out>_stream.npz (running summaries); --no-samples skips the large draws file, and the
@@ -469,8 +479,8 @@ aside with it.
   always with swap moves (--swap-cos 0.99), from the best fit and without stored draws. Sharing the fraction on by magnitude
   bin and tectonic domain or slip-rate section, pooled or not, was tried in October 2026 and changed no fit (REPORT.md).
   A spike-and-slab run counts as converged only when the number of ruptures on and every bin's fraction on have
-  R-hat < 1.01, as well as the rates. A linearly uniform prior is only an option (--prior linear): it pushes the bin totals far up and fails
-  the fit check by hundreds of sd at 2e4 and thousands at 211k; so is the halfway prior (--prior halfway). The prior, its floor,
+  R-hat < 1.01, as well as the rates. A linearly uniform prior (--prior linear, removed 2026-11-23) pushed the bin totals far up and failed
+  the fit check by hundreds of sd at 2e4 and thousands at 211k; so did the halfway prior (removed with it). The prior, its floor,
   edges and hyperpriors, the likelihood (the balance term and its weight among it), the band and its factor, sigma, bounds, how the slip-rate rows
   count and the MFD bins' uncertainty level are modelling decisions: ask the user before changing them. If all-zero rows are kept (--keep-empty-rows), the fit check
   includes their constant.

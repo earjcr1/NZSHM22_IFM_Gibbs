@@ -356,6 +356,10 @@ def main():
     ap.add_argument('--from-rupture-set', default=None, metavar='RUPTURE_DIR',
                     help='build G and d from the OpenSHA rupture set instead of reading --A and --d (rupture_set_inputs.py: '
                          'the inputs\' slip-rate, minimum-magnitude, magnitude-bin and paleo rows; the notebook with MFD_GR)')
+    ap.add_argument('--nzshm22-n5', type=float, default=None, metavar='N5',
+                    help='a rupture set without an inversion: NZSHM22\'s run N5 for the bins NZSHM22 would build (the inputs\' '
+                         'bins and the comparison with them; default mfd_gr.NZSHM22_RUN, 3.4; 3.92 for the 19k, 211k and first '
+                         '630k inputs)')
     ap.add_argument('--no-nnls', action='store_true',
                     help='skip the best nonnegative least-squares fit (and its nnls/ outputs; the notebook since 2026-11-21)')
     ap.add_argument('--huge', type=float, default=1e10, help='entries above this mark columns forced to zero')
@@ -415,12 +419,6 @@ def main():
                          'its average slip unchanged; plate_rate.slip_taper); needs --rupture-set')
     ap.add_argument('--cfm-sigmas', type=float, default=2.0,
                     help='--cfm-sliprates: how many sigma SR_min and SR_max lie from SR_pref (default 2; the inputs read them as 1)')
-    ap.add_argument('--slip-sd-multiplier', type=float, default=None,
-                    help='each slip-rate sd this many times its uncertainty, before the slip-rate factor (default 2, the '
-                         'inputs\' doubling; 1: the uncertainties as given): with --cfm-sliprates, each side this x the '
-                         'factor x its width to SR_min or SR_max (read at --cfm-sigmas); without it, sd = this x the factor x '
-                         'SlipRateStdDev (2.5 with 0.8: the inputs as given, sd = 2 SD); needs --rupture-set. Without this '
-                         'and --slip-rate-factor the inputs are left as given')
     ap.add_argument('--cfm-pref', default='mode', choices=['mode', 'median'],
                     help='--cfm-sliprates: SR_pref as each split normal\'s mode (default) or its median (the mode then moved, '
                          'each side\'s sd kept; a fault whose mode would fall at or below 0 keeps SR_pref as the mode)')
@@ -430,8 +428,7 @@ def main():
     ap.add_argument('--cfm-timeframe', default=None, metavar='CSV',
                     help='--cfm-sliprates: each fault\'s slip rate corrected for its timeframe (Coffey et al.; the table '
                          'timeframe_sliprates.py writes, data/cfm_timeframe_sliprates.csv): its mode, 2.5%% and 97.5%% points '
-                         'in place of SR_pref, SR_min and SR_max, with no multiplier (--slip-sd-multiplier 1, the default with '
-                         'it), no --cfm-rounding and the mode as the mode')
+                         'in place of SR_pref, SR_min and SR_max, with no --cfm-rounding and the mode as the mode')
     ap.add_argument('--cfm-timeframe-shape', default='fit', choices=['fit', 'ends'],
                     help='--cfm-timeframe: each fault\'s split normal fitted to its corrected distribution\'s 16%%, 50%% and 84%% '
                          'points (fit, the default since 2026-11-09: its median and body exactly, its mean closely), or its mode '
@@ -452,7 +449,7 @@ def main():
     ap.add_argument('--slip-rate-factor', type=float, default=None,
                     help='the assumed fraction of each fault\'s slip rate the ruptures take up, scaling each slip-rate '
                          'distribution as a whole, target and sd alike (default: the inputs\' own, 0.8 in NZSHM22; the '
-                         'inputs put it on their targets only); needs --rupture-set')
+                         'inputs put it on their targets only); with --cfm-sliprates only')
     ap.add_argument('--keep-empty-rows', action='store_true',
                     help='keep all-zero rows (same posterior; N and a constant chi^2 change)')
     args = ap.parse_args()
@@ -467,16 +464,22 @@ def main():
     d_nnls = os.path.join(os.path.dirname(stem), 'nnls')   # the best fit's outputs, in a folder of their own
     f_vec, f_csv = (os.path.join(d_nnls, os.path.basename(p)) for p in (old_vec, old_csv))
 
+    if args.nzshm22_n5 is not None:                    # NZSHM22's run, for a rupture set without an inversion
+        import mfd_gr
+        if not args.nzshm22_n5 > 0:
+            raise SystemExit('--nzshm22-n5 must be positive')
+        mfd_gr.NZSHM22_RUN['n5'] = float(args.nzshm22_n5)
     if args.from_rupture_set:                          # G and d from the rupture set, as the inputs give them
         from rupture_set_inputs import build_inputs
         t_rs = time.time()
         A, d_raw, rsi = build_inputs(args.from_rupture_set, args.lowest_bin, args.bin_width)
         args.rupture_set = args.rupture_set or args.from_rupture_set
         say(f'== inputs from the rupture set {args.from_rupture_set} (rupture_set_inputs.py; cru_A and cru_D not read; '
-            f'{time.time() - t_rs:.0f}s): {rsi["slip_rows"][1]} slip-rate rows (average slips over 2 x the SD of '
-            f'sect_slip_rates.csv), 1 penalty row ({rsi["n_penalised"]:,} ruptures below their sections\' minimum magnitude), '
-            f'{rsi["bin_rows"][1] - rsi["bin_rows"][0]} magnitude bins (targetOnFaultSupraSeisMFD_SansTVZ) and '
-            f'{rsi["paleo_rows"][1] - rsi["paleo_rows"][0]} paleo rows (the UCERF3 visibility over each site\'s sd)')
+            f'{time.time() - t_rs:.0f}s): {rsi["slip_rows"][1]} slip-rate rows (average slips over the SD; rates from '
+            f'{rsi["slip_source"]}), 1 penalty row ({rsi["n_penalised"]:,} ruptures below their sections\' minimum magnitude), '
+            f'{rsi["bin_rows"][1] - rsi["bin_rows"][0]} magnitude bins ({rsi["mfd_source"]}) and '
+            f'{rsi["paleo_rows"][1] - rsi["paleo_rows"][0]} paleo rows (the UCERF3 visibility over each site\'s sd; sites from '
+            f'{rsi["paleo_source"]})')
     else:
         A = load_colt_sparse(args.A)
         d_raw = load_vector(args.d)
@@ -485,30 +488,28 @@ def main():
     L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
     T_raw = None                                         # --cfm-template-rho: each raw slip row's template weight
     corr_t = None                                        # ... each raw slip row's fault and each fault's correlated faults
-    if args.cfm_sliprates or args.slip_rate_factor is not None or args.slip_sd_multiplier is not None:
-        from cfm_sliprates import rebuild, rescale_inputs
+    if not args.cfm_sliprates and args.slip_rate_factor is not None:
+        raise SystemExit('--slip-rate-factor acts on the CFM\'s slip rates (--cfm-sliprates); the inputs\' own slip-rate '
+                         'Gaussians are no longer rescaled (2026-11-23: the workflow always takes the CFM\'s)')
+    if args.cfm_sliprates:
+        from cfm_sliprates import rebuild
         from cru_common import find_rupture_set
-        what = ('--cfm-sliprates' if args.cfm_sliprates else '--slip-rate-factor' if args.slip_rate_factor is not None
-                else '--slip-sd-multiplier')
+        what = '--cfm-sliprates'
         rd_c = find_rupture_set(args.rupture_set) if args.rupture_set else None
         if rd_c is None:
             raise SystemExit(f'{what} needs --rupture-set (the OpenSHA rupture set: its fault_sections.geojson, '
                              'indices.csv and average_slips.csv)')
         if args.slip_rate_factor is not None and not args.slip_rate_factor > 0:
             raise SystemExit('--slip-rate-factor must be positive')
-        if args.slip_sd_multiplier is not None and not args.slip_sd_multiplier > 0:
-            raise SystemExit('--slip-sd-multiplier must be positive')
         if args.cfm_timeframe:
             if not args.cfm_sliprates:
                 raise SystemExit('--cfm-timeframe needs --cfm-sliprates (the CFM\'s faults, quality codes and templates)')
-            if args.slip_sd_multiplier not in (None, 1.0) or args.cfm_rounding or args.cfm_pref != 'mode':
-                raise SystemExit('--cfm-timeframe carries its own widths and centres: give it with --slip-sd-multiplier 1 '
-                                 '(or none), without --cfm-rounding and with --cfm-pref mode')
-            args.slip_sd_multiplier = 1.0
+            if args.cfm_rounding or args.cfm_pref != 'mode':
+                raise SystemExit('--cfm-timeframe carries its own widths and centres: give it without --cfm-rounding and '
+                                 'with --cfm-pref mode')
         try:
             if args.cfm_sliprates:
                 A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
-                                                               2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier,
                                                                args.slip_rate_factor, args.cfm_pref, args.cfm_rounding,
                                                                timeframe=args.cfm_timeframe,
                                                                timeframe_shape=args.cfm_timeframe_shape)
@@ -529,8 +530,6 @@ def main():
                     T_raw = np.ones(A.shape[0])
                     T_raw[:len(t_sub)] = t_sub
                     lines_c = lines_c + lines_t
-            else:
-                A, d_raw, lines_c = rescale_inputs(A, d_raw, rd_c, args.slip_rate_factor, args.slip_sd_multiplier)
         except ValueError as e:
             raise SystemExit(f'{what}: {e}')
         for ln in lines_c:
@@ -640,8 +639,9 @@ def main():
         G = sp.csc_matrix(G)
         for line in mfd_gr.report_lines(parts, GB, lo_b[0]):
             say(line)
-        say(f'   the inputs\' bins against the solution\'s stored target: ratio {np.min(R_in / st_b):.6f}-{np.max(R_in / st_b):.6f}'
-            + ('' if np.allclose(R_in, st_b, rtol=1e-9) else ' (not the same: cru_D was not built with this solution\'s MFDs)'))
+        say('   the inputs\' bins against ' + ('the solution\'s stored target' if parts.get('source') == 'solution' else
+            f'NZSHM22\'s bins at N5 {parts["n5_run"]:g}, b {parts["b_run"]:g}, built here') + f': ratio {np.min(R_in / st_b):.6f}-{np.max(R_in / st_b):.6f}'
+            + ('' if np.allclose(R_in, st_b, rtol=1e-9) else ' (not the same: cru_D was not built with these MFDs)'))
         say(f'   the {len(brows)} bin rows (original rows {orig_b[0]}-{orig_b[-1]}) replaced: targets (at b\'s mean, N(b), s = 1 and m\'s middle value) '
             f'{R_new.sum():.5g} per year in all (the inputs\' {R_in.sum():.5g}), sd / target {np.min(s_new / R_new):.3f}-'
             f'{np.max(s_new / R_new):.3f} (the inputs\' {rel_in.min():.3f}-{rel_in.max():.3f}); the sampler scores each bin by its '
@@ -858,11 +858,11 @@ def main():
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',
-                                                                    f'{2.0 if args.slip_sd_multiplier is None else args.slip_sd_multiplier:g}',
+                                                                    '1',   # the sd multiplier, always 1 (option removed 2026-11-23)
                                                                     args.cfm_pref, 'rounding' if args.cfm_rounding else '',
                                                                     os.path.basename(args.cfm_timeframe) if args.cfm_timeframe else '',
                                                                     args.cfm_timeframe_shape if args.cfm_timeframe else '']),
-                 slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=args.slip_sd_multiplier,
+                 slip_rate_factor=args.slip_rate_factor, slip_sd_multiplier=1.0 if args.cfm_sliprates else None,
                  template_scale=t_keep, cfm_template_rho=args.cfm_template_rho,
                  cfm_rate_links=True if args.cfm_rate_links else None,
                  sections_by_fault=True if par_s is not None else None,

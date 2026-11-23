@@ -9,7 +9,9 @@ The rows take the form cru_A and cru_D give them (the relations checked on the 2
 "cru input provenance"), so that cleaning (preliminaries.py) treats them exactly as it treats the inputs:
   - slip-rate rows 0 .. S-1, one per subsection (row = section index): coefficient each rupture's average slip
     (average_slips.csv) over sigma, target the rate over sigma, from sect_slip_rates.csv (the branch's slip-rate factor
-    already applied), sigma = 2 x its SD (the rate itself where the SD is 0), as the inputs double it;
+    already applied), sigma = its SD (the rate itself where the SD is 0), with no factor 2 (the user, 2026-11-23: the
+    19k and 211k inputs doubled every sigma, and the 630k inputs halved the SD-0 rows', both now obsolete; cleaning reads
+    each row's sigma, so the conventions clean to the same problem);
   - one penalty row (entries 1e20, target 0) on the ruptures below their sections' minimum magnitude, compared by
     magnitude bin as OpenSHA does: a rupture is removed if its 0.1 bin (from 6.8) lies below the bin of the minimum
     magnitude of any of its sections, each section's the larger of MIN_MAG (6.8) and the smallest magnitude among the
@@ -26,6 +28,15 @@ The rows take the form cru_A and cru_D give them (the relations checked on the 2
     the site sees the rupture over the site's one-sigma sd (paleoProbModel's table, bilinear in magnitude and in the
     site subsection's midpoint's distance along the rupture's sections, by trace length, folded to the nearer end;
     reproduced to 2e-13 at 630,000 ruptures), target bestEstimate over the sd.
+
+A rupture set made without an inversion (2026-11-23, the user's request; the 630k NZSHM22_RuptureSet-... folder) lacks
+three of those files, and each is then built as NZSHM22 builds it:
+  - sect_slip_rates.csv: rate = SLIP_RATE_FACTOR (0.8, NZSHM22_SlipRateFactors, or the rupture set's own when its
+    logic_tree_branch.json names one) x SlipRate, SD = SlipRateStdDev, from fault_sections.geojson (the relation held on
+    every subsection of the 211k and 630k solutions);
+  - inversion_target_mfds.json's supra-seismogenic target: NZSHM22's partitioning at its run (mfd_gr.rupture_set_parts:
+    N5 3.4, b 0.959, the subsections' shares from fault_polygons.py; within ~0.1% of NZSHM22's own);
+  - paleo_constraint_data.json: data/'s sites, each at its nearest subsection within 5.25 km (paleo_misfit.paleo_data).
 """
 import json
 import os
@@ -35,6 +46,7 @@ import scipy.sparse as sp
 
 PENALTY = 1e20                                           # above preliminaries.py's --huge (1e10)
 MIN_MAG = 6.8                                            # the smallest supra-seismogenic magnitude (NZSHM22's crustal 6.8)
+SLIP_RATE_FACTOR = 0.8                                   # NZSHM22_SlipRateFactors (sans- and TVZ), for a rupture set without one
 
 
 def _trace_km(coords):
@@ -72,6 +84,71 @@ def paleo_visibility(model, mag, frac):
             + T[i0 + 1, j0 + 1] * fx * fy)
 
 
+def _min_mags(par, rup, sec, mag, min_mag):
+    """Each section's minimum magnitude (NZSHM22_FaultSystemRupSetCalc.computeMinSeismoMagForSections): the larger of
+    min_mag and the smallest magnitude among the ruptures confined to its parent fault."""
+    n = len(mag)
+    pmin_, pmax_ = np.full(n, np.iinfo(np.int64).max), np.full(n, np.iinfo(np.int64).min)
+    np.minimum.at(pmin_, rup, par[sec]); np.maximum.at(pmax_, rup, par[sec])
+    small = {}
+    for r_ in np.flatnonzero(pmin_ == pmax_):            # ruptures within one parent fault
+        small[pmin_[r_]] = min(small.get(pmin_[r_], np.inf), mag[r_])
+    return np.array([max(min_mag, small.get(p_, -np.inf)) for p_ in par])
+
+
+def section_min_mags(rdir, min_mag=MIN_MAG):
+    """Each subsection's minimum supra-seismogenic magnitude by NZSHM22's rule, from the rupture set at rdir."""
+    mag = np.loadtxt(os.path.join(rdir, 'properties.csv'), delimiter=',', skiprows=1, usecols=1)
+    rup, sec, _, _ = read_sections(rdir)
+    feats = json.load(open(os.path.join(rdir, 'fault_sections.geojson')))['features']
+    return _min_mags(np.array([f['properties']['ParentID'] for f in feats]), rup, sec, mag, min_mag)
+
+
+def slip_rate_factor(rdir):
+    """The rupture set's slip-rate factor (logic_tree_branch.json's NZSHM22_SlipRateFactors, sans-TVZ), else 0.8."""
+    f = os.path.join(rdir, 'logic_tree_branch.json')
+    if os.path.exists(f):
+        tree = json.load(open(f))
+        for lv in (tree.get('values', []) if isinstance(tree, dict) else tree):
+            if 'SlipRateFactors' in str(lv.get('level', {}).get('name', '')):
+                v = lv.get('value', {}).get('adapterValue', {}).get('adapterData', {})
+                if 'sansFactor' in v:
+                    return float(v['sansFactor'])
+    return SLIP_RATE_FACTOR
+
+
+def slip_rates(rdir, n_sect):
+    """(rate, SD) per subsection in m/yr: sect_slip_rates.csv, or else built from fault_sections.geojson as NZSHM22 builds
+    it (rate = the slip-rate factor x SlipRate, SD = SlipRateStdDev). Also says which."""
+    f = os.path.join(rdir, 'sect_slip_rates.csv')
+    rate, sd = np.zeros(n_sect), np.zeros(n_sect)
+    if os.path.exists(f):
+        sr = np.loadtxt(f, delimiter=',', skiprows=1, ndmin=2)
+        rate[sr[:, 0].astype(int)], sd[sr[:, 0].astype(int)] = sr[:, 1], sr[:, 2]
+        return rate, sd, 'sect_slip_rates.csv'
+    feats = json.load(open(os.path.join(rdir, 'fault_sections.geojson')))['features']
+    fac = slip_rate_factor(rdir)
+    for k, g in enumerate(feats):
+        rate[int(g['properties']['FaultID'])] = fac * float(g['properties']['SlipRate']) * 1e-3
+        sd[int(g['properties']['FaultID'])] = float(g['properties']['SlipRateStdDev']) * 1e-3
+    return rate, sd, f'{fac:g} x SlipRate, SD SlipRateStdDev (fault_sections.geojson; no sect_slip_rates.csv)'
+
+
+def supra_target(rdir):
+    """The supra-seismogenic target per 0.1 bin, {bin centre (2 decimals): rate}: inversion_target_mfds.json's
+    targetOnFaultSupraSeisMFD_SansTVZ, or else NZSHM22's partitioning at its run (mfd_gr.rupture_set_parts). Also says which."""
+    f = os.path.join(rdir, 'inversion_target_mfds.json')
+    if os.path.exists(f):
+        tg = json.load(open(f))['constraints']
+        tg = next(c for c in tg if c['name'].endswith('targetOnFaultSupraSeisMFD_SansTVZ'))
+        return {round(x, 2): y for x, y in tg['values']}, 'targetOnFaultSupraSeisMFD_SansTVZ'
+    import mfd_gr
+    parts = mfd_gr.rupture_set_parts(rdir)
+    st = parts['stored']['supra']
+    return ({round(float(x), 2): float(y) for x, y in zip(mfd_gr.X, st) if y > 1e-19},
+            f'NZSHM22\'s partitioning at N5 {parts["n5_run"]:g}, b {parts["b_run"]:g} (mfd_gr.py; no inversion_target_mfds.json)')
+
+
 def build_inputs(rdir, lowest=6.8, width=0.1, min_mag=MIN_MAG):
     """G (CSR) and d as cru_A and cru_D give them, from the rupture set at rdir; info: the row ranges and counts."""
     mag = np.loadtxt(os.path.join(rdir, 'properties.csv'), delimiter=',', skiprows=1, usecols=1)
@@ -80,25 +157,15 @@ def build_inputs(rdir, lowest=6.8, width=0.1, min_mag=MIN_MAG):
     rup, sec, pos, cnt = read_sections(rdir)
     if len(cnt) != n or len(slip) != n:
         raise SystemExit(f'{rdir}: properties.csv, average_slips.csv and indices.csv disagree on the number of ruptures')
-    sr = np.loadtxt(os.path.join(rdir, 'sect_slip_rates.csv'), delimiter=',', skiprows=1)
-    S = int(sr[:, 0].max()) + 1
-    rate, sd = np.zeros(S), np.zeros(S)
-    rate[sr[:, 0].astype(int)], sd[sr[:, 0].astype(int)] = sr[:, 1], sr[:, 2]
-    sig_s = np.where(sd > 0, 2.0 * sd, rate)
+    S = len(json.load(open(os.path.join(rdir, 'fault_sections.geojson')))['features'])
+    rate, sd, slip_src = slip_rates(rdir, S)
+    sig_s = np.where(sd > 0, sd, rate)                  # no factor 2 (the 19k and 211k inputs: twice this)
     sig_s = np.where(sig_s > 0, sig_s, 1.0)              # a section with no rate and no sd: its row is a target of 0
     rows, cols, vals = [sec], [rup], [slip[rup] / sig_s[sec]]
     d = [rate / sig_s]
-    # the penalty row: ruptures below their sections' minimum magnitude, each section's the larger of MIN_MAG and the
-    # smallest magnitude among the ruptures confined to its parent fault
+    # the penalty row: ruptures below their sections' minimum magnitude
     feats = json.load(open(os.path.join(rdir, 'fault_sections.geojson')))['features']
-    par = np.array([f['properties']['ParentID'] for f in feats])
-    pmin_, pmax_ = np.full(n, np.iinfo(np.int64).max), np.full(n, np.iinfo(np.int64).min)
-    np.minimum.at(pmin_, rup, par[sec]); np.maximum.at(pmax_, rup, par[sec])
-    one = pmin_ == pmax_                                 # ruptures within one parent fault
-    small = {}
-    for r_ in np.flatnonzero(one):
-        small[pmin_[r_]] = min(small.get(pmin_[r_], np.inf), mag[r_])
-    secmin = np.array([max(min_mag, small.get(p_, -np.inf)) for p_ in par])
+    secmin = _min_mags(np.array([f['properties']['ParentID'] for f in feats]), rup, sec, mag, min_mag)
     rupmin = np.full(n, -np.inf)
     np.maximum.at(rupmin, rup, secmin[sec])
     binned = lambda m_: np.floor((m_ - lowest) / width + 1e-9)   # the 0.1 bins, from 6.8
@@ -106,9 +173,7 @@ def build_inputs(rdir, lowest=6.8, width=0.1, min_mag=MIN_MAG):
     r_pen = S
     rows.append(np.full(len(pen), r_pen)); cols.append(pen); vals.append(np.full(len(pen), PENALTY)); d.append([0.0])
     # the magnitude bins
-    tg = json.load(open(os.path.join(rdir, 'inversion_target_mfds.json')))['constraints']
-    tg = next(c for c in tg if c['name'].endswith('targetOnFaultSupraSeisMFD_SansTVZ'))
-    target = {round(x, 2): y for x, y in tg['values']}
+    target, mfd_src = supra_target(rdir)
     nb = int(np.ceil((mag.max() - lowest) / width - 1e-9))
     lo = lowest + width * np.arange(nb)
     R = np.array([target.get(round(l + width / 2, 2), 0.0) for l in lo])
@@ -125,7 +190,10 @@ def build_inputs(rdir, lowest=6.8, width=0.1, min_mag=MIN_MAG):
         r0 += 1
     n_bins = r0 - (S + 1)
     # the paleo rows
-    pd = json.load(open(os.path.join(rdir, 'paleo_constraint_data.json')))
+    from paleo_misfit import paleo_data, PALEO_JSON
+    pd = paleo_data(rdir, verbose=False)
+    paleo_src = ('paleo_constraint_data.json' if os.path.exists(os.path.join(rdir, 'paleo_constraint_data.json')) else
+                 f'{PALEO_JSON}\'s sites mapped onto the subsections (the rupture set has none)')
     L = np.array([_trace_km(f['geometry']['coordinates'] if f['geometry']['type'] == 'LineString'
                             else f['geometry']['coordinates'][0]) for f in feats])
     start = np.concatenate([[0], np.cumsum(cnt)[:-1]])   # each rupture's first membership
@@ -145,5 +213,6 @@ def build_inputs(rdir, lowest=6.8, width=0.1, min_mag=MIN_MAG):
     A = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(r0, n))
     A.sum_duplicates()
     info = dict(slip_rows=(0, S), penalty_row=r_pen, n_penalised=len(pen), bin_rows=(S + 1, S + 1 + n_bins),
-                paleo_rows=(r_paleo0, r0), lowest=lowest, width=width)
+                paleo_rows=(r_paleo0, r0), lowest=lowest, width=width, slip_source=slip_src, mfd_source=mfd_src,
+                paleo_source=paleo_src)
     return A, np.concatenate([np.asarray(x, float) for x in d]), info
