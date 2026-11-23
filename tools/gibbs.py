@@ -118,10 +118,37 @@ typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0
                  /* --slip-sum folded into the slip-rate rows (gibbs_run's U): the column's dot product with the summed slip
                     rates' residuals, sud, and its squared norm on those rows, snss (0 and 0 otherwise) */
                  double sud, snss; } lbctx;
+/* --slip-misfit exact (since 2026-11-23): the exact misfits' tables, NULL without them. A row whose L2 is negative reads
+   table t = -L2 - 1 (its H2 is not read): the cubic Hermite interpolant of the values SPT_F and slopes SPT_D from
+   SPT_OFF[t] to SPT_OFF[t + 1] - 1, on the grid SPT_E0[t] + k / SPT_IH[t] in the row's residual, continued linearly beyond
+   it. Each table is quasiconvex in the residual (falling, then rising: a unimodal density's -2 ln p, its slopes limited
+   so the interpolant is monotone on each side; cru_common.slip_pdf_tables checks it). Set by sp_tables before each
+   kernel call; read-only during it. */
+static const double *SPT_E0 = NULL, *SPT_IH = NULL, *SPT_F = NULL, *SPT_D = NULL;
+static const int64_t *SPT_OFF = NULL;
+void sp_tables(const double *e0, const double *ih, const int64_t *off, const double *F, const double *D) {
+    SPT_E0 = e0; SPT_IH = ih; SPT_OFF = off; SPT_F = F; SPT_D = D;
+}
+static double spt_f(int64_t t, double e) {
+    const int64_t o = SPT_OFF[t], ng = SPT_OFF[t + 1] - o;
+    const double *F = SPT_F + o, *D = SPT_D + o, ih = SPT_IH[t], h = 1.0 / ih, e0 = SPT_E0[t];
+    const double x = (e - e0) * ih;
+    if (!(x > 0.0)) return F[0] + D[0] * (e - e0);
+    if (x >= (double)(ng - 1)) return F[ng - 1] + D[ng - 1] * (e - (e0 + h * (double)(ng - 1)));
+    int64_t k = (int64_t)x;
+    if (k > ng - 2) k = ng - 2;
+    const double s = x - (double)k, s2 = s * s, s3 = s2 * s;
+    return (2.0 * s3 - 3.0 * s2 + 1.0) * F[k] + (s3 - 2.0 * s2 + s) * h * D[k] + (-2.0 * s3 + 3.0 * s2) * F[k + 1]
+           + (s3 - s2) * h * D[k + 1];
+}
 /* w(e) e^2 with w = l below 0 and h above, without a branch (the sign of a residual is unpredictable):
-   ((h + l) e^2 + (h - l) e |e|) / 2 */
-static inline double sp_w2(double e, double l, double h) { return 0.5 * ((h + l) * e * e + (h - l) * e * fabs(e)); }
-/* the split misfit's log likelihood at m (lbctx's sp fields): concave in m, a Gaussian on each side of each row's target */
+   ((h + l) e^2 + (h - l) e |e|) / 2; or, with l < 0 (--slip-misfit exact), the row's table at e */
+static inline double sp_w2(double e, double l, double h) {
+    if (l < 0.0) return spt_f((int64_t)(-l) - 1, e);
+    return 0.5 * ((h + l) * e * e + (h - l) * e * fabs(e));
+}
+/* the split misfit's log likelihood at m (lbctx's sp fields): concave in m, a Gaussian on each side of each row's target
+   (with --slip-misfit exact's tables, each row's term quasiconvex in m instead: lb_floor) */
 static double sp_lik(const lbctx *c, double m) {
     const double dm = m - c->sxi;
     double acc = 0.0;
@@ -155,6 +182,23 @@ static inline double lb_ld(const lbctx *c, double z) {
    rounding of lb_ld itself (about 1e-15 of it): wherever the bound exceeds y, so does every evaluation of lb_ld. */
 static double lb_floor(const lbctx *c, double za, double zb) {
     const double ma = fmax(exp(za) * (1.0 - 1e-12) - 1e-300, 0.0), mb = exp(zb) * (1.0 + 1e-12) + 1e-300;
+    if (c->sp && SPT_F) {   /* --slip-misfit exact: each row's term quasiconvex in m (a unimodal density's misfit, or the
+                               split normal's convex one, of an affine e(m)), so on [ma, mb] at most its larger end's; the
+                               folded summed slip rates' convex quadratic too: their sum is at most the sum of those */
+        const double da = ma - c->sxi, db = mb - c->sxi;
+        double acc = 0.0, sz = 0.0;
+        for (int64_t p = c->sp0; p < c->sp1; p++) {
+            const int32_t j = c->si[p];
+            const double wa = sp_w2(c->sr[j] + c->sg[p] * da, c->SL2[j], c->SH2[j]);
+            const double wb = sp_w2(c->sr[j] + c->sg[p] * db, c->SL2[j], c->SH2[j]);
+            acc += fmax(wa, wb); sz += fabs(wa) + fabs(wb);
+        }
+        const double fa = da * (2.0 * c->sud + da * c->snss), fb = db * (2.0 * c->sud + db * c->snss);
+        const double lmin = -(acc + fmax(fa, fb)) * c->sk;
+        const double size = (sz + fabs(fa) + fabs(fb)) * c->sk + fabs(c->sL0) + fabs(c->lp0)
+                            + fabs(c->gam) * fmax(fabs(za), fabs(zb));
+        return lmin - c->sL0 + fmin(c->gam * za, c->gam * zb) - c->lp0 - 1e-9 * (size + 1.0);
+    }
     if (c->sp) {                                      /* the split likelihood: concave in m, so at least its smaller end */
         const double la = sp_lik(c, ma), lb = sp_lik(c, mb);
         const double size = fabs(la) + fabs(lb) + fabs(c->sL0) + fabs(c->lp0) + fabs(c->gam) * fmax(fabs(za), fabs(zb));
@@ -1540,6 +1584,8 @@ def build_kernel():
                             + [P] * 4 + [P] + [P, P] + [P, P] + [P, P, I, I, P, P, P, P] + [P])
     L.gibbs_run.restype = None
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, P, P, P]
+    L.sp_tables.argtypes = [P] * 5
+    L.sp_tables.restype = None
     L.kernel_consts.restype = None
     L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3
     L.swap_run.restype = None
@@ -1748,15 +1794,32 @@ def _st_ptr(T, k0=0):
 
 
 def _sp_ptrs(T):
-    """--cfm slip rates: the split misfit's weights below and above each row's target (1 on rows without it), or NULLs."""
+    """--cfm slip rates: the split misfit's weights below and above each row's target (1 on rows without it), or NULLs;
+    and the kernel's tables set to T's (--slip-misfit exact: rows with L2 < 0 read them) or cleared, before every call."""
+    tab = None if getattr(T, 'split', None) is None else T.split.get('tab')
+    L = build_kernel()
+    if tab is None:
+        L.sp_tables(None, None, None, None, None)
+    else:
+        L.sp_tables(_ptr(tab['E0']), _ptr(tab['IH']), tab['OFF'].ctypes.data, _ptr(tab['F']), _ptr(tab['D']))
     if getattr(T, 'split', None) is None:
         return None, None
     return _ptr(T.split['L2']), _ptr(T.split['H2'])
 
 
-def _sp_w(T, rows, e):
-    """--cfm slip rates: each residual's weight, below or above its row's target."""
-    return np.where(e < 0, T.split['L2'][rows], T.split['H2'][rows])
+def _sp_terms(T, rows, e):
+    """--cfm slip rates: each residual's term, w e^2 with w its side's weight, or, on a row with a table (--slip-misfit
+    pdf, L2 < 0), the table's misfit at e (cru_common.hermite_eval, the kernel's spt_f)."""
+    rows = np.asarray(rows)
+    L2, H2 = T.split['L2'][rows], T.split['H2'][rows]
+    out = np.where(e < 0, L2, H2) * e * e
+    tab = T.split.get('tab')
+    if tab is None or not (L2 < 0).any():
+        return out
+    from cru_common import hermite_eval
+    on = np.broadcast_to(L2 < 0, np.shape(out))
+    t = np.broadcast_to(np.where(L2 < 0, -L2 - 1, 0).astype(np.int64), np.shape(out))
+    return np.where(on, hermite_eval(tab, t, np.broadcast_to(e, np.shape(out))), out)
 
 
 def _pm_f_np(pm, t, v):
@@ -2184,7 +2247,7 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
             rk = R[k, rows].copy()
             def splik(mm, rk=rk, xi=xi):
                 e = rk + vals * (mm - xi)
-                return -float(np.sum(_sp_w(T, rows, e) * e * e)) / (2.0 * s2)
+                return -float(np.sum(_sp_terms(T, rows, e))) / (2.0 * s2)
         if xi > 0:
             c['m0'] = xi
             if sp_:
@@ -2273,7 +2336,7 @@ def swaps_numpy(T, X, R, g, nacc, LOD=None):
                 np.add.at(dv_, np.searchsorted(rows_, ri), vi * dl)
                 np.add.at(dv_, np.searchsorted(rows_, rj), -vj * dl)
                 e0_ = R[k, rows_]; e1_ = e0_ + dv_
-                dchi = float(np.sum(_sp_w(T, rows_, e1_) * e1_ ** 2 - _sp_w(T, rows_, e0_) * e0_ ** 2))
+                dchi = float(np.sum(_sp_terms(T, rows_, e1_) - _sp_terms(T, rows_, e0_)))
             else:
                 dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
             dlp = -dl * (T.beta[i] - T.beta[j])
@@ -2560,6 +2623,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         tr['slip_geo_expect'] = np.array([SMr['E'], SMr['V']])
         tr['slip_geo_b'] = b_s
         sm_wk = np.asarray(SMr.get('wk', np.ones(len(SMr['rows']))), float)
+    if getattr(T, 'split', None) is not None and 'exact_moments' in T.split:   # --slip-misfit exact, for block_fit.py
+        tr['slip_exact_expect'] = np.array(T.split['exact_moments'][:2])
     if MFr is not None and MFr.get('pdf'):               # MFD_GR: each bin's curve and its misfit's moments, for block_fit.py
         for k_ in ('th', 'best', 'sd', 'E', 'V'):
             tr['mfd_pdf_' + k_] = np.asarray(MFr[k_])
@@ -2704,7 +2769,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             y[:, sr_] /= SMr.get('eps', 1.0 / np.sqrt(2.0))
             Rd = y - Dd
         if getattr(T, 'split', None) is not None:            # --cfm slip rates: chi2 as the likelihood counts it
-            C_ = _sp_w(T, np.arange(nd), Rd) * Rd ** 2
+            C_ = _sp_terms(T, np.arange(nd), Rd)
             if getattr(T, 'temper', None) is not None:       # DATATYPES_EQUAL: each group's misfit recorded unweighted
                 C_ = C_ / T.temper[:nd]
         else:
@@ -2724,7 +2789,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             tr.setdefault('balance', np.zeros((K, n_rec)))[:, rec] = np.sum(R[:, nd:nbal] ** 2, 1) / T.sigma ** 2
             tr.setdefault('balance_s', np.zeros((K, n_rec, nbal - nd)))[:, rec] = R[:, nd:nbal] / np.sqrt(T.balance['A'])
         if T.slip_sum is not None:                           # the summed slip rates' term, on its own
-            tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = (np.sum(R[:, nbal:T.n_fit] ** 2, 1) / T.sigma ** 2
+            R_ss = (_sp_terms(T, np.arange(nbal, T.n_fit), R[:, nbal:T.n_fit]) if getattr(T, 'split', None) is not None
+                    else R[:, nbal:T.n_fit] ** 2)           # --slip-misfit exact: each cross-section's table
+            tr.setdefault('slip_sum', np.zeros((K, n_rec)))[:, rec] = (np.sum(R_ss, 1) / T.sigma ** 2
                                                                        / float(getattr(T, 'temper_slip_sum', 1.0)))
         if T.mstep is not None and not T.mstep.get('joint'):   # --mfd-step-sd: the MFD steps' term, on its own
             tr.setdefault('mfd_step', np.zeros((K, n_rec)))[:, rec] = mstep_value(T.mstep, R)
@@ -3635,6 +3702,127 @@ def selftest_split(backends=('c', 'numpy')):
             chi_ = np.sum(np.where(e_ < 0, L2v, H2v) * e_ ** 2, 1) / sig ** 2
             ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
     print('SELFTEST (split misfit)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_exact(backends=('c', 'numpy')):
+    """--slip-misfit exact: two spike-and-slab rates and two rows scored by tabulated misfits (each row's likelihood a
+    lognormal density in its prediction, sd 0.7 and 0.3 in ln: quasiconvex, not log-concave; the cubic Hermite tables the
+    kernel reads, continued linearly), with swap moves, against a grid integral of the same interpolant: P(on) and
+    E[log10 m | on] of each rate, and the recorded chi2 (the tables' misfit). The slice step's floor is the quasiconvex one."""
+    from scipy.special import betaln
+    from cru_common import hermite_eval, quasiconvex_table
+    print('exact slip misfit (--slip-misfit exact): tabulated lognormal densities, spike-and-slab with swaps vs a grid integral')
+    ok = True
+    G2 = np.array([[1.0, 0.6], [0.4, 1.0]])
+    d2, sig = np.array([0.05, 0.04]), 0.02
+    E0, IH, OFF, F, D = [], [], [0], [], []
+    for j, sl in enumerate((0.7, 0.3)):                 # the row's likelihood: lognormal in y, median d_j, times a constant
+        y = np.linspace(d2[j] * np.exp(-3.7 * sl), d2[j] * np.exp(3.7 * sl), 1501)
+        lp = -np.log(y) - 0.5 * (np.log(y / d2[j]) / sl) ** 2
+        dlp = -1.0 / y - np.log(y / d2[j]) / (sl * sl * y)
+        g, gp = -2.0 * (lp - lp.max()), -2.0 * dlp
+        Fj = sig ** 2 * g                               # misfit / (2 sig^2) = -ln p + const
+        Dj = quasiconvex_table(Fj, sig ** 2 * gp, y[1] - y[0], f'row {j}')
+        E0.append(y[0] - d2[j]); IH.append(1.0 / (y[1] - y[0])); F.append(Fj); D.append(Dj); OFF.append(OFF[-1] + len(Fj))
+    tab = dict(E0=np.array(E0), IH=np.array(IH), OFF=np.array(OFF, np.int64), F=np.concatenate(F), D=np.concatenate(D))
+    lo10, su, a_, b_ = np.array([-4.0, -4.0]), np.array([0.1, 0.1]), 1.0, 1.0
+    u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
+    gw = []
+    for ui, sv in zip(u, su):
+        ww = np.full(len(ui), ui[1] - ui[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(ui > 0, np.exp(-ui ** 2 / (2 * sv ** 2)), 1.0) * ww
+        gw.append(f / f.sum())
+    pg = [np.exp(betaln(a_ + k, b_ + 2 - k) - betaln(a_, b_)) for k in range(3)]
+    M1, M2 = np.meshgrid(10 ** u[0], 10 ** u[1], indexing='ij')
+
+    def mis(m1, m2):
+        m1, m2 = np.broadcast_arrays(np.asarray(m1, float), np.asarray(m2, float))
+        out = np.zeros(m1.shape)
+        for j in range(2):
+            e = G2[j, 0] * m1 + G2[j, 1] * m2 - d2[j]
+            out += hermite_eval(tab, np.full(e.shape, j), e)
+        return out
+    Lb = lambda m1, m2: np.exp(-mis(m1, m2) / (2 * sig ** 2))
+    L1, L2_, L12 = Lb(10 ** u[0], 0.0), Lb(0.0, 10 ** u[1]), Lb(M1, M2) * gw[0][:, None] * gw[1][None, :]
+    w00 = pg[0] * Lb(0.0, 0.0)
+    w10, w01, w11 = pg[1] * (gw[0] @ L1), pg[1] * (gw[1] @ L2_), pg[2] * L12.sum()
+    W_ = w00 + w10 + w01 + w11
+    p_on = [(w10 + w11) / W_, (w01 + w11) / W_]
+    e_u = [(pg[1] * (gw[0] * u[0]) @ L1 + pg[2] * (L12.sum(1) @ u[0])) / (w10 + w11),
+           (pg[1] * (gw[1] * u[1]) @ L2_ + pg[2] * (L12.sum(0) @ u[1])) / (w01 + w11)]
+    for be in backends:
+        T = Target(sp.csc_matrix(G2), d2, sig, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                   pairs=(np.array([0]), np.array([1]), np.array([G2[:, 0] @ G2[:, 1]])))
+        T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+        T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
+        T.pkind = 3
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.split = dict(L2=np.ascontiguousarray([-1.0, -2.0]), H2=np.ascontiguousarray([-1.0, -2.0]),
+                       tab={k_: np.ascontiguousarray(v_) for k_, v_ in tab.items()})
+        K, sw = (8, 40000) if be == 'c' else (4, 4000)
+        tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 31, monitor=(0, 1), verbose=False,
+                    keep_samples=False, swaps=True)
+        Mo = tr['mon'][:, sw // 10:, :]
+        for i in range(2):
+            on = (Mo[:, :, i] > 0).astype(float)
+            pr = on.mean()
+            if on.std() == 0:
+                zp = 0.0 if on.size * min(p_on[i], 1 - p_on[i]) < 5 else np.inf
+            else:
+                zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / ess(on))
+            uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+            zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+            ok &= abs(zp) < 4 and abs(zu) < 4
+            print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+        m_ = Mo.reshape(-1, 2)                              # chi2 recorded as the tables count it
+        chi_ = mis(m_[:, 0], m_[:, 1]) / sig ** 2
+        ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
+    _sp_ptrs(Target(sp.csc_matrix(G2), d2, sig, 0.0, 10.0))   # the kernel's tables cleared
+    print('SELFTEST (exact slip misfit)', 'PASSED' if ok else 'FAILED')
+    return ok
+
+
+def selftest_sum_pdf():
+    """slip_sum_pdf_tables: with every parent's density a Gaussian (a wide one, convolved by FFT, and a narrow one, taken
+    as a Gaussian), each cross-section's table must be its Gaussian term, e^2, exactly as the summed slip rates have it
+    without --slip-misfit exact, up to the tables' grid; with one lopsided parent, its mean against a direct sum."""
+    from cru_common import slip_sum_pdf_tables, hermite_eval
+    print('summed slip rates\' densities (slip_sum_pdf_tables): Gaussian parents against the Gaussian term')
+    ok = True
+    sd = np.array([1.0, 0.002, 0.5])                    # the parents' sds (scaled, mm/yr) and modes
+    mu = np.array([10.0, 0.3, 4.0])
+    f = 0.8
+    g_list, y0, h, off = [], [], [], [0]
+    for m_, s_ in zip(mu / f, sd / f):                  # the densities unscaled (the tables' units), from -8 to +8 sd
+        y = np.linspace(m_ - 8 * s_, m_ + 8 * s_, 4001)
+        g_list.append(((y - m_) / s_) ** 2)
+        y0.append(y[0]); h.append(y[1] - y[0]); off.append(off[-1] + len(y))
+    P = dict(slip_pdf_key=np.array([0, 0, 1, 2], np.int32), slip_pdf_f=f, slip_pdf_off=np.array(off),
+             slip_pdf_y0=np.array(y0), slip_pdf_h=np.array(h), slip_pdf_g=np.concatenate(g_list))
+    proj = np.array([1.0, 0.7, -0.5, 0.9])               # 4 subsections: two of parent 0, one each of parents 1 and 2
+    W = np.array([[1.0, 0.5, 1.0, 0.0], [0.0, 0.5, 0.0, 1.0]])
+    par = np.array([0, 0, 1, 2])
+    tgt = mu[par]
+    Wc = W * proj[None, :]
+    A = np.zeros((2, 3))
+    np.add.at(A.T, par, Wc.T)
+    sig_k = np.sqrt((A ** 2) @ (sd ** 2))
+    info = dict(W=W, proj=proj, parent=par, target=Wc @ tgt, sigma=sig_k)
+    c_eff = np.array([0.7, 1.3])
+    tb = slip_sum_pdf_tables(P, info, np.arange(4), c_eff)
+    for k in range(2):
+        e = c_eff[k] * sig_k[k] * np.linspace(-3, 3, 61)
+        got = hermite_eval(tb, np.full(len(e), k), e)
+        got -= hermite_eval(tb, np.array([k]), np.array([0.0]))[0]
+        err = float(np.max(np.abs(got - e ** 2)))
+        ok &= err < 1e-3 * 9 * (c_eff[k] * sig_k[k]) ** 2
+        print(f'   cross-section {k}: the table against e^2 over +-3 sd: largest difference {err:.2e} (of {9 * (c_eff[k] * sig_k[k]) ** 2:.2f}); '
+              f'expected term {tb["E"][k]:.4f} (the Gaussian\'s {c_eff[k] ** 2 * sig_k[k] ** 2:.4f})')
+        ok &= abs(tb['E'][k] / (c_eff[k] * sig_k[k]) ** 2 - 1.0) < 2e-3
+    print('SELFTEST (summed slip rates\' densities)', 'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -4649,9 +4837,12 @@ def main():
                          'spike-and-slab, and keeps each paleo prediction above zero); \'log\': the '
                          'same curve\'s density in log rate, its mode at bestEstimate; \'gaussian+years\' (the notebook\'s '
                          'MISFIT \'half\'): half the Gaussian in rate plus half the years curve, the geometric mean of the two')
-    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10'],
-                    help="the slip-rate rows' misfit: 'split' (default), the Gaussian (a split normal with the CFM's slip "
-                         "rates); 'split+log10', half of it plus half a Gaussian in log10(prediction / target) with the same "
+    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10', 'exact'],
+                    help="the slip-rate rows' misfit: 'exact' (since 2026-11-23, the user's request), each row scored by "
+                         "its fault's exact timeframe-corrected density (cleaning's slip_pdf_*, from timeframe_sliprates.py), "
+                         "-2 ln p, tabulated, weighted as the split normal would be (cru_common.slip_pdf_tables), and with "
+                         "--slip-sum each cross-section's sum by the convolution of its sections' densities; 'split' (the "
+                         "default), the Gaussian (a split normal with the CFM's slip rates); 'split+log10', half of it plus half a Gaussian in log10(prediction / target) with the same "
                          "sd, s = log10(1 + sd / target) on each side (sd the side's effective sd, the template weights' "
                          "included, as --mfd-misfit log10 has the bins'), the geometric mean of the two densities, so a "
                          'prediction an order of magnitude off is unlikely and two orders far more so (each section still one '
@@ -4760,6 +4951,8 @@ def main():
         ok &= selftest_band()
         ok &= selftest_fold(backends=('c',))
         ok &= selftest_crossswap(backends=('c',))
+        ok &= selftest_exact(backends=('c',))
+        ok &= selftest_sum_pdf()
         sys.exit(0 if ok else 1)
     if a.selftest:
         ok = selftest()
@@ -4773,6 +4966,8 @@ def main():
         ok &= selftest_paleo()
         ok &= selftest_paleo(b=0.5)
         ok &= selftest_split()
+        ok &= selftest_exact()
+        ok &= selftest_sum_pdf()
         ok &= selftest_groupweights()
         ok &= selftest_crossswap()
         ok &= selftest_mfdlog()
@@ -5010,7 +5205,7 @@ def main():
             d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
         G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
     sm_rows = None                                 # --slip-misfit split+log10, log10: the slip rows' Gaussian halved (scaled by
-    if a.slip_misfit != 'split':                   # 1/sqrt 2), or scaled out of it
+    if a.slip_misfit not in ('split', 'exact'):    # 1/sqrt 2), or scaled out of it
         if not spike_mode or a.transfers:
             raise SystemExit(f'--slip-misfit {a.slip_misfit} needs spike-and-slab, without --transfers')
         if a.slip_block not in P['block_names']:
@@ -5023,7 +5218,7 @@ def main():
         if pm_rows is None and mf_rows is None:
             d_data = np.array(np.asarray(P['d'], float)[:P['G'].shape[0]])
         G_fit, d_fit = sp_csc(sp.diags(rs_) @ sp.csr_matrix(G_fit)), d_fit * rs_
-    if a.slip_band is None and a.slip_misfit != 'split':
+    if a.slip_band is None and a.slip_misfit not in ('split', 'exact'):
         a.slip_band = 'positive'                   # its log10 half is infinite at 0: each slip-rate prediction above zero
     fprelim = a.prelim or prelim_path(a.problem)
     pairs = None
@@ -5106,7 +5301,8 @@ def main():
     if ss_info is not None:
         T.slip_sum = dict(expect=ss_info['weight'] * len(ss_info['k']))
     B_ss = None                                    # the summed slip rates' rows as B times the slip-rate rows (column_passes):
-    if ss_info is not None:                        # each strip's c_k w_ki c_i over the slip-rate row's coefficient per mm/yr
+    if ss_info is not None and a.slip_misfit != 'exact':   # each strip's c_k w_ki c_i over the slip-rate row's coefficient
+                                                   # per mm/yr (--slip-misfit exact: not folded, each row its own table)
         rows_s = np.asarray(cs['rows'])            # of slip (sigma_i / row scale, and the row's own rescaling, lin_sc)
         rs_s = lin_sc(b_s) if sm_rows is not None else 1.0
         vals = (ss_info['scale'][:, None] * ss_info['W'] * ss_info['proj'][None, :]
@@ -5138,6 +5334,58 @@ def main():
             T.temper[:nd_] = GW['row']
             L2_, H2_ = L2_ * T.temper, H2_ * T.temper
         T.split = dict(L2=np.ascontiguousarray(L2_), H2=np.ascontiguousarray(H2_))
+        if a.slip_misfit == 'exact':               # each slip-rate row's exact density, tabulated in its residual
+            from cru_common import slip_pdf_tables
+            if P.get('slip_pdf_key') is None:
+                raise SystemExit('--slip-misfit exact: the problem has no exact densities (slip_pdf_*): clean it again with '
+                                 '--cfm-timeframe (timeframe_sliprates.py\'s _pdfs.npz beside its table)')
+            try:
+                tab_, mism_ = slip_pdf_tables(P, L2_, H2_)
+            except ValueError as e:
+                raise SystemExit(f'--slip-misfit exact: {e}')
+            if mism_ > 1e-6:
+                raise SystemExit(f'--slip-misfit exact: the rows\' two sides imply weights {mism_:.1e} apart (a bookkeeping error)')
+            r_ = tab_['rows']
+            T.split['L2'], T.split['H2'] = T.split['L2'].copy(), T.split['H2'].copy()
+            T.split['L2'][r_] = T.split['H2'][r_] = -1.0 - tab_['t'][r_]
+            T.split['tab'] = {k_: np.ascontiguousarray(v_) for k_, v_ in tab_.items()}
+            # the fit check: each section's misfit, its rows' weights (unweighted by DATATYPES_EQUAL, as chi2 is recorded)
+            # times the fault's density's own mean and variance of -2 ln p - min, in place of the Gaussian's 1 and 2
+            kap_u = tab_['kappa'] / (T.temper[r_] if getattr(T, 'temper', None) is not None else 1.0)
+            sec_ = np.asarray(P['section'])[r_]
+            key_ = np.where(sec_ >= 0, sec_, -1 - r_)
+            kf_ = np.asarray(P['slip_pdf_key'])[r_]
+            _, inv_ = np.unique(key_, return_inverse=True)
+            Sk_ = np.bincount(inv_, kap_u)
+            kf_s = np.zeros(len(Sk_), np.int64)
+            kf_s[inv_] = kf_
+            Ef_, Vf_ = np.asarray(P['slip_pdf_E'], float)[kf_s], np.asarray(P['slip_pdf_V'], float)[kf_s]
+            T.split['exact_moments'] = (float(Sk_ @ Ef_), float(Sk_ ** 2 @ Vf_), float(Sk_.sum()), float(Sk_ @ Sk_))
+            if ss_info is not None:                # --slip-sum: each cross-section's sum by its parents' densities convolved
+                from cru_common import slip_sum_pdf_tables
+                n_ss = T.n_fit - n_bal
+                c_eff = np.asarray(ss_info['scale'], float) * np.sqrt(gw('slip'))
+                try:
+                    st_ = slip_sum_pdf_tables(P, ss_info, np.asarray(cs['rows']), c_eff)
+                except ValueError as e:
+                    raise SystemExit(f'--slip-misfit exact, --slip-sum: {e}')
+                if len(st_['E0']) != n_ss:
+                    raise SystemExit('--slip-misfit exact, --slip-sum: the cross-sections\' tables do not match their rows')
+                n0, f0 = len(T.split['tab']['E0']), len(T.split['tab']['F'])
+                tb = T.split['tab']
+                for k_ in ('E0', 'IH', 'F', 'D', 'E', 'V'):
+                    tb[k_] = np.ascontiguousarray(np.r_[tb[k_], st_[k_]])
+                tb['OFF'] = np.ascontiguousarray(np.r_[tb['OFF'], st_['OFF'][1:] + f0].astype(np.int64))
+                rr_ = np.arange(n_bal, T.n_fit)
+                T.split['L2'][rr_] = T.split['H2'][rr_] = -1.0 - (n0 + np.arange(n_ss))
+                T.slip_sum['expect'] = float(np.sum(st_['E'])) / gw('slip')   # recorded unweighted, as chi2
+                print(f'summed slip rates (exact): each of the {n_ss} cross-sections scored by -2 ln of the density of its '
+                      f'parents\' slip rates added up (their exact densities convolved, by FFT), weighted as the Gaussian '
+                      f'about the summed targets would be; its expected term {T.slip_sum["expect"]:.1f} (the Gaussian\'s '
+                      f'{ss_info["weight"] * n_ss:.1f}); not folded into the slip-rate rows')
+            print(f'slip misfit (exact): the {len(r_)} slip-rate rows each scored by -2 ln of its fault\'s exact corrected '
+                  f'density ({len(tab_["E0"])} tables, {len(tab_["F"]):,} points; cubic Hermite, quasiconvex), weighted as its '
+                  'split normal would be; evaluated exactly in every update and swap')
         sk_ = np.log10(np.sqrt(L2_[sk_] / H2_[sk_]))            # log10 (sigma_hi / sigma_lo)
         c_ = P.get('cfm_sliprates') or ['?', '?', '?']
         if len(sk_) and P.get('split_lo2') is not None:
@@ -5476,6 +5724,11 @@ def main():
             m_ += SM_['E'] - SM_['t2']
             v_ += SM_['V'] - 2.0 * SM_['t4']
         parts_ = []
+        if getattr(T, 'split', None) is not None and 'exact_moments' in T.split:   # --slip-misfit exact: each section's own
+            Ee_, Ve_, t2_, t4_ = T.split['exact_moments']                            # mean and variance, for t^2 and 2 t^4
+            m_ += Ee_ - t2_
+            v_ += Ve_ - 2.0 * t4_
+            parts_.append(f'the slip sections\' {Ee_:.1f} +- {np.sqrt(Ve_):.1f} in place of {t2_:.1f} +- {np.sqrt(2 * t4_):.1f}')
         if mf_rows is not None and a.mfd_misfit == 'pdf':   # MFD_GR: each bin's misfit's own mean and variance under its PDF
             MF_ = T.lw['MF']
             m_ += float(np.sum(MF_['E'])) - len(mf_rows)

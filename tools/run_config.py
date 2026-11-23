@@ -15,9 +15,9 @@ import time
 
 from mfd_gr import MAGUNCERT                     # RECONSIDER_MAGUNCERT = True: the magnitude-uncertainty factor's default values
 
-MISFIT_CHOICES = {'slip': ('linear', 'log10', 'half'), 'mfd': ('linear', 'log10', 'half'),
+MISFIT_CHOICES = {'slip': ('linear', 'log10', 'half', 'exact'), 'mfd': ('linear', 'log10', 'half'),
                   'paleo': ('rate', 'years', 'half')}
-MISFIT_GROUP_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'},   # as cru_common.GROUP_MISFIT_MODES:
+MISFIT_GROUP_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10', 'exact': 'exact'},   # as GROUP_MISFIT_MODES:
                       'mfd': {'linear': 'gaussian', 'log10': 'log10', 'half': 'gaussian+log10'},   # each setting's mode
                       'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}  # for gibbs.py
 

@@ -496,6 +496,43 @@ def rebuild(A, d, rupture_dir, cfm_csv, nsig=NSIG_DEFAULT, srf=None, pref_as='mo
     return A2, d2, L2, H2, tab, lines_
 
 
+def slip_pdfs(tab, timeframe, cfm_csv, n_rows):
+    """--cfm-timeframe: each raw slip row's exact corrected density, for gibbs.py --slip-misfit exact (since 2026-11-23, the
+    user's request): the fault's table from timeframe_sliprates.py (its CSV's _pdfs.npz: g = -2 ln p - min on a uniform grid
+    in the unscaled slip rate, mm/yr, with slopes), a fault taking another's rate (rate_fixes) taking its density too, and
+    the row's split normal as rebuild made it (mode, s_lo, s_hi in m/yr, the slip-rate factor in them), which fixes the map
+    from the row's residual to the slip rate and the table's weight (cru_common.slip_pdf_tables). Returns (dict(key, mode,
+    slo, shi per raw row, -1 / NaN off the slip rows; tables: names, y0, h, off, g, gp, E, V, f), a report line)."""
+    path = os.path.splitext(timeframe)[0] + '_pdfs.npz'
+    if not os.path.exists(path):
+        raise ValueError(f'{path} is missing: rerun timeframe_sliprates.py (or with --pdfs-only)')
+    z = np.load(path)
+    names = [str(x) for x in z['names']]
+    fx = rate_fixes(cfm_csv)
+    parent = list(tab['parent'])
+    want = [fx[p][0] if p in fx else p for p in parent]
+    miss = sorted({w for w in want if w not in names})
+    if miss:
+        raise ValueError(f'{path}: no density for ' + ', '.join(miss[:10]))
+    used = sorted(set(want))
+    ix = {nm: k for k, nm in enumerate(used)}
+    src = np.array([names.index(nm) for nm in used])
+    ns = len(parent)
+    key = np.full(n_rows, -1, np.int32)
+    key[:ns] = [ix[w] for w in want]
+    mode, slo, shi = (np.full(n_rows, np.nan) for _ in range(3))
+    mode[:ns], slo[:ns], shi[:ns] = tab['mode'], tab['s_lo'], tab['s_hi']
+    off = z['off']
+    seg = [np.arange(off[k], off[k + 1]) for k in src]
+    tables = dict(names=np.array(used), y0=z['y0'][src], h=z['h'][src], off=np.r_[0, np.cumsum([len(s_) for s_ in seg])],
+                  g=np.concatenate([z['g'][s_] for s_ in seg]).astype(np.float64),
+                  gp=np.concatenate([z['gp'][s_] for s_ in seg]).astype(np.float64),
+                  E=z['E'][src], V=z['V'][src], f=np.asarray(tab['f'], float)[0] if len(tab['f']) else 1.0)
+    return (dict(key=key, mode=mode, slo=slo, shi=shi, tables=tables),
+            f'   exact densities (for --slip-misfit exact): {len(used)} faults\' from {os.path.basename(path)}, '
+            f'{int(z["per"])} points per 16-84% width, from their {float(z["p_end"]):g} to {1 - float(z["p_end"]):g} quantiles')
+
+
 def report_lines(tab, nsig, cfm_csv):
     par = tab['parent']
     first = np.unique(par, return_index=True)[1]                          # one line per parent fault

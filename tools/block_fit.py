@@ -33,7 +33,8 @@ import tempfile
 
 import numpy as np
 
-from cru_common import block_labels, block_measurements, ess, gr_joint_misfit, load_problem, slip_geo_rows, split_rhat, split_weights, report_to
+from cru_common import (block_labels, block_measurements, ess, gr_joint_misfit, load_problem, slip_geo_rows, slip_pdf_tables,
+                        split_rhat, split_terms, split_weights, report_to)
 
 
 def run_file(r):
@@ -59,6 +60,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
             lg = np.sum((np.log10(np.maximum(yy, 0.0) / d[rows]) / sl) ** 2, axis=-1)
         return lg if B_M >= 1 else (1.0 - B_M) * np.sum((yy - d[rows]) ** 2, axis=-1) / sig2 + B_M * lg
 
+    EXA = EXE = None                                                  # --slip-misfit exact: the tables, the expectation
     for r in runs:
         z = np.load(run_file(r))
         if 'y' not in z.files:
@@ -91,6 +93,9 @@ def block_stats(P, runs, first=('S', 'MFD')):
             for j_, r_ in enumerate(z['mfd_pdf_rows'].tolist()):
                 PAL[int(r_)] = (z['mfd_pdf_th'][j_], float(z['mfd_pdf_best'][j_]), float(z['mfd_pdf_sd'][j_]), 'log',
                                 float(z['mfd_pdf_E'][j_]), float(z['mfd_pdf_V'][j_]), 1.0)
+        if 'slip_exact_expect' in z.files and EXA is None:             # --slip-misfit exact: each slip row's exact density
+            EXA = slip_pdf_tables(P, P['split_lo2'], P['split_hi2'])[0]   # (unweighted, as chi2 is recorded)
+            EXE = (float(z['slip_exact_expect'][0]), float(z['slip_exact_expect'][1]))
         if 'slip_geo_expect' in z.files:                              # the run scored the slip rows in log10 too
             GEO = (float(z['slip_geo_b']) if 'slip_geo_b' in z.files else 0.5, float(z['slip_geo_expect'][0]),
                    float(z['slip_geo_expect'][1]))
@@ -108,7 +113,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
                 c[m['name']] = mfd_rows_misfit(m['rows'], y[:, :, m['rows']].astype(np.float64))
                 continue
             res = y[:, :, m['rows']].astype(np.float64) - d[m['rows']]
-            c[m['name']] = np.sum(split_weights(P, m['rows'], res) * res ** 2, axis=2) / sig2   # chains x draws (--cfm-sliprates:
+            c[m['name']] = np.sum(split_terms(P, m['rows'], res, EXA), axis=2) / sig2   # chains x draws (--cfm-sliprates:
                                                                                                  # each side's weight)
         per_run.append(c)
         for k in range(y.shape[0]):                                   # pooled mean and variance of every prediction
@@ -147,7 +152,7 @@ def block_stats(P, runs, first=('S', 'MFD')):
             out.update(mean_model=mm, spread=float(allx.mean()) - mm)
         elif rows is not None:
             e = ybar[rows] - d[rows]
-            mm = float(np.sum(split_weights(P, rows, e) * e ** 2) / sig2)
+            mm = float(np.sum(split_terms(P, rows, e, EXA)) / sig2)
             # the spread: the draws' variance about the mean model; with split normals (--cfm-sliprates) the rest of the
             # mean chi2, as the weights make the split inexact
             out.update(mean_model=mm, spread=float(np.sum(var[rows]) / sig2) if P.get('split_lo2') is None
@@ -158,6 +163,8 @@ def block_stats(P, runs, first=('S', 'MFD')):
     for m in meas:
         if GEO and m['name'] == first[0]:                             # each slip section's share, from its own curve
             m['expect'], m['sd'] = GEO[1], float(np.sqrt(GEO[2]))
+        if EXE and m['name'] == first[0]:                             # --slip-misfit exact: each section's density's own
+            m['expect'], m['sd'] = EXE[0], float(np.sqrt(EXE[1]))     # mean and variance
         if LOG and MEX and all(int(i) in LOG for i in m['rows']):     # the bins half and half: their own curves' moments
             m['expect'], m['sd'] = MEX[0], float(np.sqrt(MEX[1]))
         if PAL and all(int(i) in PAL for i in m['rows']):             # each site's share of the fit check, as fitted

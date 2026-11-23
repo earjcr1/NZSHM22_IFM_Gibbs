@@ -96,7 +96,237 @@ def load_problem(path):
                 mfd_gr_bgrid=z['mfd_gr_bgrid'].astype(np.float64) if 'mfd_gr_bgrid' in z.files else None,
                 mfd_gr_shape=z['mfd_gr_shape'].astype(np.float64) if 'mfd_gr_shape' in z.files else None,
                 mfd_in_rel=z['mfd_in_rel'].astype(np.float64) if 'mfd_in_rel' in z.files else None,
-                mfd_in_R=z['mfd_in_R'].astype(np.float64) if 'mfd_in_R' in z.files else None)
+                mfd_in_R=z['mfd_in_R'].astype(np.float64) if 'mfd_in_R' in z.files else None,
+                **{k_: (z[k_] if k_ == 'slip_pdf_names' else z[k_].astype(np.int32 if k_ in ('slip_pdf_key',) else np.float64))
+                   if k_ in z.files else None
+                   for k_ in ('slip_pdf_key', 'slip_pdf_mode', 'slip_pdf_slo', 'slip_pdf_shi', 'slip_pdf_names', 'slip_pdf_y0',
+                              'slip_pdf_h', 'slip_pdf_off', 'slip_pdf_g', 'slip_pdf_gp', 'slip_pdf_E', 'slip_pdf_V', 'slip_pdf_f')})
+
+
+def hermite_eval(tab, t, e):
+    """The tabulated misfits (slip_pdf_tables' or slip_sum_pdf's tables) at residuals e: table t[i] at e[i], the cubic Hermite
+    interpolant of its values F and slopes D on its uniform grid E0 + k / IH, continued linearly beyond it (the C kernel's
+    spt_f, in NumPy)."""
+    t = np.asarray(t, np.int64)
+    e = np.asarray(e, np.float64)
+    e0, ih, off = tab['E0'][t], tab['IH'][t], tab['OFF'][t]
+    n = tab['OFF'][t + 1] - off
+    x = (e - e0) * ih
+    k = np.clip(np.floor(x).astype(np.int64), 0, n - 2)
+    s = x - k
+    F0, F1, D0, D1 = tab['F'][off + k], tab['F'][off + k + 1], tab['D'][off + k], tab['D'][off + k + 1]
+    h = 1.0 / ih
+    s2, s3 = s * s, s * s * s
+    v = (2 * s3 - 3 * s2 + 1) * F0 + (s3 - 2 * s2 + s) * h * D0 + (-2 * s3 + 3 * s2) * F1 + (s3 - s2) * h * D1
+    lo, hi = x <= 0, x >= n - 1
+    Fl, Dl = tab['F'][off], tab['D'][off]
+    Fh, Dh = tab['F'][off + n - 1], tab['D'][off + n - 1]
+    v = np.where(lo, Fl + Dl * (e - e0), v)
+    return np.where(hi, Fh + Dh * (e - (e0 + (n - 1) * h)), v)
+
+
+def quasiconvex_table(F, D, h, name=''):
+    """A table's slopes D made safe for the sampler's floor (gibbs.py lb_floor): its cubic Hermite interpolant falling to
+    its smallest value and rising after it (quasiconvex), so its largest value on any interval is at an end. On each side
+    of the smallest point, a slope of the wrong sign is set to 0 and the pair on each step limited to alpha^2 + beta^2 <= 9
+    (Fritsch and Carlson, 1980: the step's cubic then monotone); the values themselves must fall and then rise. Checked
+    on 16 points a step. Returns D (a copy), or raises ValueError."""
+    F, D = np.asarray(F, float), np.array(D, float)
+    k0 = int(np.argmin(F))
+    dF = np.diff(F)
+    if (dF[:k0] > 0).any() or (dF[k0:] < 0).any():
+        raise ValueError(f'{name}: the table does not fall and then rise (its density is not unimodal)')
+    D[:k0] = np.minimum(D[:k0], 0.0)                   # falling side: slopes <= 0
+    D[k0 + 1:] = np.maximum(D[k0 + 1:], 0.0)           # rising side: >= 0
+    for k in list(range(k0)) + list(range(k0, len(F) - 1)):
+        if k == k0 and k0 < len(F) - 1 and D[k0] < 0 < D[k0 + 1]:
+            continue                                    # the step holding the minimum: checked below
+        delta = dF[k] / h
+        if delta == 0.0:
+            D[k] = D[k + 1] = 0.0
+            continue
+        a_, b_ = D[k] / delta, D[k + 1] / delta
+        r2 = a_ * a_ + b_ * b_
+        if r2 > 9.0:
+            tau = 3.0 / np.sqrt(r2)
+            D[k], D[k + 1] = tau * a_ * delta, tau * b_ * delta
+    s = (np.arange(16) + 0.5) / 16                      # the check: the interpolant on 16 points a step
+    s2, s3 = s * s, s * s * s
+    V = ((2 * s3 - 3 * s2 + 1)[None, :] * F[:-1, None] + (s3 - 2 * s2 + s)[None, :] * h * D[:-1, None]
+         + (-2 * s3 + 3 * s2)[None, :] * F[1:, None] + (s3 - s2)[None, :] * h * D[1:, None])
+    v = np.r_[np.c_[F[:-1], V].ravel(), F[-1]]
+    j0 = int(np.argmin(v))
+    tol = 1e-12 * (np.abs(v).max() + 1.0)
+    if (np.diff(v[:j0 + 1]) > tol).any() or (np.diff(v[j0:]) < -tol).any():
+        raise ValueError(f'{name}: the table\'s interpolant is not quasiconvex after limiting its slopes')
+    return D
+
+
+def slip_pdf_tables(P, L2, H2, rows=None):
+    """gibbs.py --slip-misfit exact (since 2026-11-23, the user's request): each slip-rate row scored by its fault's exact
+    timeframe-corrected density instead of its split normal. Row j's residual e = alpha_j (Y - c_j) (Y the slip rate as
+    the row has it, c_j its split normal's mode, alpha_j = d_j / c_j: the row is linear in Y through 0), and its misfit,
+    in the split misfit's units, kappa_j g(Y), g = -2 ln p - min (the fault's table from cleaning, slip_pdf_*), with
+    kappa_j = L2_j alpha_j^2 s_lo_j^2 (= H2_j alpha_j^2 s_hi_j^2): exactly L2_j e^2 / H2_j e^2 were p the row's split
+    normal. L2, H2: the rows' split weights as the sampler has them (DATATYPES_EQUAL's weight in them). Tables shared by
+    rows with the same fault, alpha and kappa (a section's rows). rows: the rows to tabulate (default: every row with a
+    density). Returns (dict(E0, IH, OFF, F, D: the tables in residual units, as hermite_eval and the kernel read them;
+    t: each tabulated row's table, -1 elsewhere; rows; E, V: each table's mean and variance of its misfit under p; kappa),
+    the largest relative mismatch of the two sides' kappa), or (None, 0) without densities."""
+    if P.get('slip_pdf_key') is None:
+        return None, 0.0
+    key = np.asarray(P['slip_pdf_key'])
+    d = np.asarray(P['d'], float)[:len(key)]
+    rows = np.flatnonzero(key >= 0) if rows is None else np.asarray(rows)
+    f = float(P['slip_pdf_f'])
+    c = np.asarray(P['slip_pdf_mode'], float)[rows] * 1e3 / f          # the row's mode, mm/yr unscaled (the tables' units)
+    slo = np.asarray(P['slip_pdf_slo'], float)[rows] * 1e3 / f
+    shi = np.asarray(P['slip_pdf_shi'], float)[rows] * 1e3 / f
+    alpha = d[rows] / c                                                 # residual per mm/yr
+    kap = np.asarray(L2, float)[rows] * alpha ** 2 * slo ** 2
+    kap_h = np.asarray(H2, float)[rows] * alpha ** 2 * shi ** 2
+    mism = float(np.max(np.abs(kap_h / kap - 1.0))) if len(rows) else 0.0
+    off_k = np.asarray(P['slip_pdf_off'], np.int64)
+    y0_k, h_k = np.asarray(P['slip_pdf_y0'], float), np.asarray(P['slip_pdf_h'], float)
+    g_all, gp_all = np.asarray(P['slip_pdf_g'], float), np.asarray(P['slip_pdf_gp'], float)
+    ident = np.round(np.c_[key[rows], np.log(np.abs(alpha)), np.log(kap), np.log(c)] * [1, 1e9, 1e9, 1e9])
+    _, first, inv = np.unique(ident, axis=0, return_index=True, return_inverse=True)
+    E0, IH, OFF, F, D, E, V = [], [], [0], [], [], [], []
+    for i in first:
+        k = key[rows[i]]
+        g, gp = g_all[off_k[k]:off_k[k + 1]], gp_all[off_k[k]:off_k[k + 1]]
+        a_, kp_ = alpha[i], kap[i]
+        E0.append(a_ * (y0_k[k] - c[i]))
+        IH.append(1.0 / (a_ * h_k[k]))
+        F.append(kp_ * g)
+        D.append(quasiconvex_table(kp_ * g, kp_ * gp / a_, a_ * h_k[k], str(P['slip_pdf_names'][k])))
+        OFF.append(OFF[-1] + len(g))
+        E.append(kp_ * float(P['slip_pdf_E'][k]))
+        V.append(kp_ ** 2 * float(P['slip_pdf_V'][k]))
+    t = np.full(len(key), -1, np.int64)
+    t[rows] = np.asarray(inv).ravel()
+    return (dict(E0=np.array(E0), IH=np.array(IH), OFF=np.array(OFF, np.int64), F=np.concatenate(F), D=np.concatenate(D),
+                 t=t, rows=rows, E=np.array(E), V=np.array(V), kappa=kap), mism)
+
+
+def slip_sum_pdf_tables(P, info, rows_s, c_eff, per_sd=400):
+    """gibbs.py --slip-misfit exact with --slip-sum (since 2026-11-23, the user's request): each cross-section's summed
+    slip rate scored by the density of the sum of its parent faults' slip rates, the convolution of their exact densities,
+    instead of a Gaussian about the summed targets. Strip k's target sum is W_k = sum_p a_kp Y_p, Y_p each parent's slip
+    rate as the rows have it (mm/yr, the slip-rate factor in it; cleaning's density, slip_pdf_*), a_kp the parent's
+    subsections' w_ki c_i added up (one rate per parent, the parents independent, as the Gaussian's sigma_k has them);
+    the strip's row (plate_rate.slip_sum_rows, scaled by c_eff) has residual e = c_eff (S - T_k), S the model's sum and T_k
+    the targets'. Its misfit, kappa_k g_k(S), g_k = -2 ln p_k - min, kappa_k = c_eff^2 sigma_k^2: exactly e^2 were the
+    density the Gaussian of sd sigma_k. The density by FFT on a grid of sigma_k / per_sd (a parent narrower than 20 steps
+    as a Gaussian of its own mean and variance), tabulated from its 1e-4 to its 1 - 1e-4 quantile (quasiconvex_table).
+    info: slip_sum_rows' info; rows_s: each of its subsections' cleaned row; c_eff: each strip row's scale. Returns dict(E0,
+    IH, OFF, F, D, E, V: per strip, as slip_pdf_tables' tables)."""
+    key = np.asarray(P['slip_pdf_key'])[rows_s]
+    if (key < 0).any():
+        raise ValueError('a subsection of the summed slip rates has no exact density')
+    f = float(P['slip_pdf_f'])
+    off_k = np.asarray(P['slip_pdf_off'], np.int64)
+    y0_k, h_k = np.asarray(P['slip_pdf_y0'], float), np.asarray(P['slip_pdf_h'], float)
+    g_all = np.asarray(P['slip_pdf_g'], float)
+    par = np.asarray(info['parent'])
+    Wc = np.asarray(info['W']) * np.asarray(info['proj'])[None, :]
+    npar = int(par.max()) + 1
+    pkey = np.full(npar, -1)
+    pkey[par] = key                                          # each parent's density (its subsections share it)
+    A = np.zeros((Wc.shape[0], npar))
+    np.add.at(A.T, par, Wc.T)                                # a_kp
+    mom = {}                                                 # each density's mean, variance and support (scaled, mm/yr)
+
+    def dens(k):
+        g = g_all[off_k[k]:off_k[k + 1]]
+        y = (y0_k[k] + h_k[k] * np.arange(len(g))) * f
+        p = np.exp(-0.5 * g)
+        p /= p.sum() * h_k[k] * f
+        if k not in mom:
+            w = p / p.sum()
+            mu = float(w @ y)
+            mom[k] = (mu, float(w @ (y - mu) ** 2))
+        return y, p
+    E0, IH, OFF, F, D, E, V = [], [], [0], [], [], [], []
+    T_k, sig_k = np.asarray(info['target'], float), np.asarray(info['sigma'], float)
+    for k in range(Wc.shape[0]):
+        ps = np.flatnonzero(A[k] != 0.0)
+        h = sig_k[k] / per_sd
+        lo_s, hi_s, mu_n, var_n, wide = 0.0, 0.0, 0.0, 0.0, []
+        for p_ in ps:
+            y, pd = dens(pkey[p_])
+            a = A[k, p_]
+            w_lo, w_hi = sorted((a * y[0], a * y[-1]))
+            if (w_hi - w_lo) < 20 * h:                       # narrow: a Gaussian
+                mu, var = mom[pkey[p_]]
+                mu_n += a * mu
+                var_n += a * a * var
+            else:
+                wide.append((a, y, pd, w_lo, w_hi))
+                lo_s += w_lo
+                hi_s += w_hi
+        pad = 12.0 * np.sqrt(var_n) + 4 * h
+        n = int(np.ceil((hi_s - lo_s + 2 * pad) / h)) + 2
+        nf = 1 << int(np.ceil(np.log2(2 * n)))
+        om = 2 * np.pi * np.fft.rfftfreq(nf, d=h)
+        Phi = np.exp(-0.5 * var_n * om ** 2).astype(complex)  # the narrow parents (their means in start)
+        for a, y, pd, w_lo, w_hi in wide:                    # each wide parent's density of a Y, from w_lo, on the grid
+            wg = w_lo + h * np.arange(int(np.ceil((w_hi - w_lo) / h)) + 1)
+            q = np.interp(wg / a, y, pd, left=0.0, right=0.0) / abs(a)
+            q /= q.sum()
+            Phi *= np.fft.rfft(q, nf)
+        pk = np.fft.irfft(Phi, nf)                           # the sum's density, mass per step: the wide parents' from
+        if var_n > 0:                                        # lo_s; the Gaussians centred at 0, so wrapped below it:
+            m_ = int(round(pad / h))                         # rolled up by pad
+            pk, s0 = np.roll(pk, m_)[:n], lo_s + mu_n - m_ * h
+        else:
+            pk, s0 = pk[:n], lo_s
+        pk = np.maximum(pk, 0.0)
+        s_grid = s0 + h * np.arange(n)
+        pk /= pk.sum() * h
+        cdf = np.cumsum(pk) * h
+        i0, i1 = int(np.searchsorted(cdf, 1e-4)), int(np.searchsorted(cdf, 1.0 - 1e-4))
+        i0, i1 = max(i0, 1), min(i1, n - 2)
+        sel = slice(i0, i1 + 1)
+        with np.errstate(divide='ignore'):
+            g = -2.0 * np.log(pk)
+        gp = np.gradient(g, h)
+        gs, gps = g[sel], gp[sel]
+        gmin = float(gs.min())
+        gs = gs - gmin
+        ce, kap = float(c_eff[k]), float((c_eff[k] * sig_k[k]) ** 2)
+        Fk = kap * gs
+        Dk = quasiconvex_table(Fk, kap * gps / ce, ce * h, f'cross-section {k}')
+        E0.append(ce * (s_grid[i0] - T_k[k]))
+        IH.append(1.0 / (ce * h))
+        F.append(Fk)
+        D.append(Dk)
+        OFF.append(OFF[-1] + len(Fk))
+        pos = pk > 1e-300 * pk.max()                         # the moments over the whole grid, not the table's range
+        Ff = kap * (-2.0 * np.log(pk[pos]) - gmin)
+        w = pk[pos] / pk[pos].sum()
+        E.append(float(w @ Ff))
+        V.append(float(w @ (Ff - E[-1]) ** 2))
+    return dict(E0=np.array(E0), IH=np.array(IH), OFF=np.array(OFF, np.int64), F=np.concatenate(F), D=np.concatenate(D),
+                E=np.array(E), V=np.array(V))
+
+
+def split_terms(P, rows, res, tabs=None):
+    """Each residual's term in the misfit (on chi2's scale times sigma^2): the split normal's weight x res^2
+    (split_weights), or, with tabs (slip_pdf_tables' tables, --slip-misfit exact), the row's tabulated exact misfit. rows:
+    row indices; res: residuals of those rows, any leading shape."""
+    out = split_weights(P, rows, res) * res * res
+    if tabs is None:
+        return out
+    rows = np.asarray(rows)
+    tt = tabs['t'][rows] if rows.max(initial=-1) < len(tabs['t']) else np.where(rows < len(tabs['t']),
+                                                                                 tabs['t'][np.minimum(rows, len(tabs['t']) - 1)], -1)
+    on = tt >= 0
+    if not on.any():
+        return out
+    res_b = np.broadcast_to(res, np.broadcast_shapes(np.shape(res), rows.shape))
+    v = hermite_eval(tabs, np.broadcast_to(np.where(on, tt, 0), res_b.shape), res_b)
+    return np.where(np.broadcast_to(on, res_b.shape), v, out)
 
 
 def split_weights(P, rows, res):
@@ -118,12 +348,13 @@ def misfit_log_weight(mode):
     """A data group's misfit mode -> b, the weight of its log half: each row scored (1 - b) x its linear misfit + b x its
     log misfit. 0: linear ('split', 'gaussian'); 1/2: half and half ('split+log10', 'gaussian+log10', 'gaussian+years',
     the geometric mean of the two densities); 1: log ('log10'; the paleo curves 'years', 'log'; MFD_GR's bin curves 'pdf')."""
-    if mode in (None, 'split', 'gaussian'):
+    if mode in (None, 'split', 'gaussian', 'exact'):      # 'exact': the slip rates' exact densities, on the split path
         return 0.0
     return 0.5 if '+' in str(mode) else 1.0
 
 
-GROUP_MISFIT_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'},      # the notebook's MISFIT_SLIP,
+GROUP_MISFIT_MODES = {'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10',      # the notebook's MISFIT_SLIP,
+                               'exact': 'exact'},
                       'mfd': {'linear': 'gaussian', 'log10': 'log10', 'half': 'gaussian+log10'},   # MISFIT_MFD, MISFIT_PALEO ->
                       'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}  # each group's mode (gibbs.py)
 
@@ -143,8 +374,8 @@ def misfit_settings(cfg):
         v = cfg.get('misfit_' + g)
         if v is None and (cfg.get(g + '_misfit') is not None or cfg.get('misfit') in MISFIT_MODES):
             mode = cfg.get(g + '_misfit') or ('split' if g == 'slip' else 'gaussian')
-            v = {0.0: 'rate' if g == 'paleo' else 'linear', 0.5: 'half',
-                 1.0: 'years' if g == 'paleo' else 'log10'}[misfit_log_weight(mode)]
+            v = 'exact' if mode == 'exact' else {0.0: 'rate' if g == 'paleo' else 'linear', 0.5: 'half',
+                                                 1.0: 'years' if g == 'paleo' else 'log10'}[misfit_log_weight(mode)]
         out[g] = v
     return out
 

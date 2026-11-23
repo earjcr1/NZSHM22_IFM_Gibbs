@@ -390,7 +390,7 @@ def slip_sum_rows(rupture_dir, P, region='all', slip_block='S', pole=POLE, ends=
                 width_km=span_km / N, L0_km=L0_km, span_km=span_km,
                 mean_length_km=float(cs['length'].mean()),
                 region=cs['region'], ends=cs['ends'], pole=cs['pole'], lon=lon, lat=lat, subsections=W.sum(1),
-                sig_i=sig_i, tgt_i=tgt_i, proj=cs['proj'], n_parents=len(upar))
+                sig_i=sig_i, tgt_i=tgt_i, proj=cs['proj'], n_parents=len(upar), parent=pinv)
     return A, c * T, info
 
 

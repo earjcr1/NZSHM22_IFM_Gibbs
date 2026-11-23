@@ -90,7 +90,7 @@ def log_factor(periodic, t, scheme='sim'):
     the tables' ends, 500 and 100,000 years). 'sim' (the default): through the tables' 7 quantiles exactly (interpolated
     in log t between their rows), and between and beyond them the shape of styron_factor.py's simulated factor (its
     quantiles interpolated linearly in log t between its timeframes), shifted at each table quantile to meet it, the shift
-    linear in the normal score between them and held beyond: the tables are the paper's own draws, which S4 came from (the
+    a monotone cubic in the normal score between them, flat beyond (smooth, so each fault's density has no kinks): the tables are the paper's own draws, which S4 came from (the
     simulation alone, with S4's 97.5% points fitted, puts the aperiodic faults' medians a median 1.9% and up to 14% above
     S4's, against 0.1% and 1.3% with the tables), and the simulation is the paper's setup without the tables' sampling noise. 'linear' / 'pchip' (before 2026-11-23): the tables' 7
     quantiles interpolated in log t between their rows, then across probability against the normal score, linearly
@@ -107,7 +107,9 @@ def log_factor(periodic, t, scheme='sim'):
         w = (lt - lts[k]) / (lts[k + 1] - lts[k])
         ls = (1.0 - w) * Ls[k] + w * Ls[k + 1]                   # the simulated quantile function at t
         c = lq - np.interp(TQ, U, ls)                            # through the tables' points exactly: the shift at each,
-        out = ls + np.interp(Z, ZQ, c)                           # linear in the normal score between them, held beyond
+        zk = np.r_[-8.0, ZQ, 8.0]                                # a monotone cubic in the normal score between them (smooth,
+        ck = np.r_[c[0], c, c[-1]]                               # so the density has no kinks), flat to +-8 and held beyond
+        out = ls + PchipInterpolator(zk, ck)(np.clip(Z, -8.0, 8.0))
         return np.maximum.accumulate(out)
     if scheme == 'pchip':
         return PchipInterpolator(ZQ, lq, extrapolate=True)(Z)
@@ -292,6 +294,128 @@ def fit_t(pref, smin, smax, target, scheme):
     return float(np.exp(0.5 * (lo + hi))), 'S4'
 
 
+PDF_STEP = 120                                                   # each fault's table: points per (84% - 16%) width, its
+PDF_P = 1e-4                                                     # range in probability, and the most points it may have
+PDF_MAX = 20000
+
+
+def pdf_table(pref, smin, smax, t, scheme='sim', per=PDF_STEP, p_end=PDF_P):
+    """A fault's corrected density for the likelihood (since 2026-11-23, the user's request: each slip rate scored by its
+    exact density, not a fitted split normal): g(y) = -2 ln p(y) - its minimum, and g'(y), on points uniform in y from
+    its p_end to its 1 - p_end quantile, per of them across its 16-84% width (at most PDF_MAX) (beyond them the sampler continues g linearly), p the density of the continuous
+    part (the Gaussian's draws below 0, at most 2.5%, are left out: the rows are kept above 0). Exact: p and p' by
+    quadrature over the factor (Corrected), or, for a CFM range of zero width (Y = mu F), from F's quantile function.
+    Also E and V, the mean and variance of g(Y) under p (each section's share of the fit check). Returns dict(y0, h, g, gp,
+    mode, E, V)."""
+    c = Corrected(pref, smin, smax, t, scheme)
+    if c.sd > 0:
+        lo, hi = c.quantile(p_end), c.quantile(1.0 - p_end)
+        ng = int(min(PDF_MAX, max(257, np.ceil(per * (hi - lo) / (c.quantile(0.84) - c.quantile(0.16))) + 1)))
+        y = np.linspace(lo, hi, ng)
+        # the factor on a fine grid in its normal score (to +-7, steps of 0.002): its tails, a few of the U points apart,
+        # would otherwise leave a narrow Gaussian's density a comb of separate bumps there
+        lf = np.log(c.q)
+        zq = np.arange(-7.0, 7.0 + 1e-9, 0.002)
+        lfz = np.interp(zq, Z, lf)
+        lo_z, hi_z = zq < Z[0], zq > Z[-1]
+        m_ = max(NU // 200, 2)
+        lfz[lo_z] = lf[0] + (zq[lo_z] - Z[0]) * (lf[m_] - lf[0]) / (Z[m_] - Z[0])
+        lfz[hi_z] = lf[-1] + (zq[hi_z] - Z[-1]) * (lf[-1] - lf[-1 - m_]) / (Z[-1] - Z[-1 - m_])
+        wq = norm.pdf(zq)
+        wq /= wq.sum()
+        qz = np.exp(lfz)
+
+        def dens(yy, deriv=False):
+            out_p, out_d = np.zeros(len(yy)), np.zeros(len(yy))
+            for c0 in range(0, len(yy), 256):
+                zz = (yy[c0:c0 + 256, None] / qz[None, :] - c.mu) / c.sd
+                ph = norm.pdf(zz) / (c.sd * qz[None, :])
+                out_p[c0:c0 + 256] = ph @ wq
+                if deriv:
+                    out_d[c0:c0 + 256] = (ph * (-zz) / (c.sd * qz[None, :])) @ wq
+            return out_p, out_d
+        p, dp = dens(y, True)
+        # the moments, over the whole continuous part: a log-spaced grid from its 1e-8 to its 1 - 1e-8 quantile
+        yf = np.exp(np.linspace(np.log(max(c.quantile(1e-8), 1e-9 * hi)), np.log(c.quantile(1.0 - 1e-8)), 6000))
+        pf = dens(yf)[0]
+    else:                                                        # Y = mu F: F's density from its quantile function
+        yq = c.mu * c.q
+        dq = np.gradient(yq, U)
+        lo, hi = float(np.quantile(yq, p_end)), float(np.quantile(yq, 1.0 - p_end))
+        ng = int(min(PDF_MAX, max(257, np.ceil(per * (hi - lo) / float(np.quantile(yq, 0.84) - np.quantile(yq, 0.16))) + 1)))
+        y = np.linspace(lo, hi, ng)
+        lp_q = -np.log(np.maximum(dq, 1e-300))
+        lpy = np.interp(y, yq, lp_q)
+        p = np.exp(lpy)
+        dp = p * np.gradient(lpy, y)
+        yf = np.exp(np.linspace(np.log(yq[0]), np.log(yq[-1]), 6000))
+        pf = np.exp(np.interp(yf, yq, lp_q))
+    g = -2.0 * np.log(p)
+    gp = -2.0 * dp / p
+    k = int(np.argmin(g))
+    gu = unimodal(g, k)                                          # falling, then rising: the sampling noise's ripples flattened
+    moved = np.abs(gu - g) > 1e-12 * (1.0 + np.abs(g))
+    if moved.any():                                              # slopes where it moved g: from the new values
+        gp = np.where(moved, np.gradient(gu, y), gp)
+    g = gu
+    gmin = float(g[k])
+    if 0 < k < ng - 1:                                           # the minimum between grid points, by a parabola
+        a_, b_, c_ = g[k - 1], g[k], g[k + 1]
+        den = a_ - 2 * b_ + c_
+        if den > 0:
+            gmin = float(b_ - (a_ - c_) ** 2 / (8 * den))
+    gf = -2.0 * np.log(np.maximum(pf, 1e-300)) - gmin
+    w = pf * np.gradient(yf)                                     # mass per point (the grid is not uniform)
+    w /= w.sum()
+    E = float(w @ gf)
+    V = float(w @ (gf - E) ** 2)
+    return dict(y0=float(y[0]), h=float(y[1] - y[0]), g=g - gmin, gp=gp, mode=float(y[k]), E=E, V=V,
+                flattened=float(np.max(np.abs(gu - (-2.0 * np.log(p))))) if moved.any() else 0.0)
+
+
+def unimodal(g, k0):
+    """g made to fall to its index k0 and rise after it, each side the closest such sequence in least squares (pool
+    adjacent violators): the corrected density's -2 ln p, whose ripples are the simulated factor's sampling noise (its
+    quantile function is sample quantiles; a narrow CFM range or none leaves the factor's density as it is)."""
+    def pava(y):                                         # nondecreasing fit to y
+        v, w, n = list(y[:1]), [1.0], [1]
+        for x in y[1:]:
+            v.append(x); w.append(1.0); n.append(1)
+            while len(v) > 1 and v[-2] > v[-1]:
+                tot = w[-2] + w[-1]
+                v[-2] = (v[-2] * w[-2] + v[-1] * w[-1]) / tot
+                w[-2] = tot; n[-2] += n[-1]
+                v.pop(); w.pop(); n.pop()
+        return np.repeat(v, n)
+    g = np.asarray(g, float)
+    left = pava(g[:k0 + 1][::-1])[::-1]                  # nonincreasing up to k0
+    right = pava(g[k0:])                                 # nondecreasing from k0
+    out = np.concatenate([left[:-1], [min(left[-1], right[0])], right[1:]])
+    return out
+
+
+def write_pdfs(rows, path):
+    """Each fault's pdf_table (the faults with a positive range or rate), as an npz: names, y0, h, off (each fault's points
+    are g[off[k]:off[k + 1]]), g, gp, mode, E, V."""
+    names, T = [], []
+    for r in rows:
+        if r['smax'] <= 0 or r['mode'] <= 0:
+            continue
+        names.append(r['name'])
+        T.append(pdf_table(r['pref'], r['smin'], r['smax'], r['t'][SCHEMES[0]], SCHEMES[0]))
+    fl = sorted(((t_['flattened'], nm) for t_, nm in zip(T, names) if t_['flattened'] > 0), reverse=True)
+    print(f'   densities made unimodal (their -2 ln p falling, then rising; the simulated factor\'s sampling noise): {len(fl)} '
+          f'of {len(T)} faults touched, the largest change in -2 ln p ' + ', '.join(f'{nm} {v:.3g}' for v, nm in fl[:8])
+          + (f'; {sum(v < 0.01 for v, _ in fl)} of them by under 0.01' if fl else ''))
+    off = np.r_[0, np.cumsum([len(t_['g']) for t_ in T])]
+    np.savez_compressed(path, names=np.array(names), y0=np.array([t_['y0'] for t_ in T]), h=np.array([t_['h'] for t_ in T]),
+                        off=off, g=np.concatenate([t_['g'] for t_ in T]).astype(np.float32),
+                        gp=np.concatenate([t_['gp'] for t_ in T]).astype(np.float32),
+                        mode=np.array([t_['mode'] for t_ in T]), E=np.array([t_['E'] for t_ in T]),
+                        V=np.array([t_['V'] for t_ in T]), per=PDF_STEP, p_end=PDF_P)
+    return len(names)
+
+
 def load_cfm(path):
     with open(path, encoding='utf-8-sig', newline='') as f:
         return {r['Name'].strip(): (float(r['SR_pref']), float(r['SR_min']), float(r['SR_max']), r.get('QualCode', ''))
@@ -353,13 +477,21 @@ def figure(rows, mult, out_png):
 def main():
     ap = argparse.ArgumentParser(description='Slip rates corrected for their timeframe, rebuilt from Coffey et al.\'s S4.')
     ap.add_argument('--cfm', default=CFM_CSV, help='the CFM as CSV (default: data/NZ_CFM_v1_0.csv, cru_common.CFM_CSV)')
-    ap.add_argument('--s4', required=True, help='the paper\'s Table S4 (SuppTS4_IFM_SR_updated_Jul2026.csv)')
+    ap.add_argument('--s4', default=None, help='the paper\'s Table S4 (SuppTS4_IFM_SR_updated_Jul2026.csv)')
     ap.add_argument('--rupture-set', default=None, help='an OpenSHA rupture set, to report how many of its parent faults S4 covers')
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data',
                                                   'cfm_timeframe_sliprates.csv'))
     ap.add_argument('--multiplier', type=float, default=3.0, help='the current uniform multiplier, for the comparison (3)')
+    ap.add_argument('--pdfs-only', action='store_true', help='only (re)write OUT\'s _pdfs.npz, from OUT as it is (each fault\'s '
+                    't_eff), without refitting')
     a = ap.parse_args()
     out = os.path.abspath(a.out)
+    if a.pdfs_only:
+        with open(out, newline='') as f:
+            rows = [dict(name=r['Name'], pref=float(r['SR_pref']), smin=float(r['SR_min']), smax=float(r['SR_max']),
+                         mode=float(r['mode']), t={SCHEMES[0]: float(r['t_eff'])}) for r in csv.DictReader(f)]
+        print(f'wrote {os.path.splitext(out)[0]}_pdfs.npz: {write_pdfs(rows, os.path.splitext(out)[0] + "_pdfs.npz")} faults')
+        return
     os.makedirs(os.path.dirname(out), exist_ok=True)
     stem = os.path.splitext(out)[0]
     report_to(stem + '_report.txt')
@@ -413,6 +545,7 @@ def main():
                        + [r['fit'] or '', int(r['periodic']), r['pref'], r['smin'], r['smax']]
                        + [f'{r["mode_sc"][sc]:.6g}' for sc in SCHEMES] + [f'{v:.6g}' for v in r['sn']] + [r['sn_fit']])
     figure(rows, a.multiplier, stem + '.png')
+    n_pdf = write_pdfs(rows, stem + '_pdfs.npz')
     # report
     fits = np.array([c[0] for c in chk]); med_r = np.array([c[1] for c in chk]); hi_r = np.array([c[2] for c in chk])
     lo_r = np.array([c[3] for c in chk])
@@ -469,7 +602,7 @@ def main():
               f'{pct(lo_ / c_)}, upper / lower {pct(hi_ / lo_)}; the split normal\'s median / the corrected median {pct(med_ / q50_)}, '
               f'its mean / the corrected mean {pct(sn_mean(c_, lo_, hi_) / mean_)} (the mode with the 2.5%/97.5% points at 2 sd, '
               f'as before: {pct(old_mean)}); 2 sd below the centre under 0: {int(np.sum(c_ - 2 * lo_ < 0))}')
-    print(f'   wrote {out}, {stem}.png and {stem}_report.txt')
+    print(f'   wrote {out}, {stem}.png, {stem}_report.txt and {stem}_pdfs.npz ({n_pdf} faults\' densities for the likelihood)')
 
 
 if __name__ == '__main__':

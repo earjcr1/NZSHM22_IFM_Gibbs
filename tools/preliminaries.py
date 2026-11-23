@@ -469,6 +469,7 @@ def main():
     say(f'== raw: G {A.shape[0]} x {A.shape[1]}, nnz {A.nnz}; d {d_raw.shape}; min entry {A.data.min():.4g}, max {A.data.max():.4g}')
     assert A.shape[0] == len(d_raw), 'rows of G must match length of d'
     L2_raw = H2_raw = None                               # --cfm-sliprates: the split misfit's weights, per raw row
+    PDF = None                                           # --cfm-timeframe: each raw slip row's exact density (slip_pdf_*)
     T_raw = None                                         # --cfm-template-rho: each raw slip row's template weight
     corr_t = None                                        # ... each raw slip row's fault and each fault's correlated faults
     if not args.cfm_sliprates and args.slip_rate_factor is not None:
@@ -492,10 +493,14 @@ def main():
                                  'with --cfm-pref mode')
         try:
             if args.cfm_sliprates:
-                A, d_raw, L2_raw, H2_raw, _, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
-                                                               args.slip_rate_factor, args.cfm_pref, args.cfm_rounding,
-                                                               timeframe=args.cfm_timeframe,
-                                                               timeframe_shape=args.cfm_timeframe_shape)
+                A, d_raw, L2_raw, H2_raw, tab_c, lines_c = rebuild(A, d_raw, rd_c, args.cfm_sliprates, args.cfm_sigmas,
+                                                                   args.slip_rate_factor, args.cfm_pref, args.cfm_rounding,
+                                                                   timeframe=args.cfm_timeframe,
+                                                                   timeframe_shape=args.cfm_timeframe_shape)
+                if args.cfm_timeframe:                   # each slip row's exact corrected density (gibbs --slip-misfit exact)
+                    from cfm_sliprates import slip_pdfs
+                    PDF, line_p = slip_pdfs(tab_c, args.cfm_timeframe, args.cfm_sliprates, A.shape[0])
+                    lines_c = lines_c + [line_p]
                 if args.cfm_template_rho is not None:
                     from cfm_sliprates import template_factors
                     from cfm_sliprates import load_rate_sources
@@ -839,6 +844,9 @@ def main():
                  mfd_in_rel=None if mfd_gr_info is None else mfd_gr_info[6],
                  mfd_in_R=None if mfd_gr_info is None else mfd_gr_info[7],
                  split_lo2=None if L2_raw is None else L2_raw[keep_r], split_hi2=None if H2_raw is None else H2_raw[keep_r],
+                 **({} if PDF is None else dict(slip_pdf_key=PDF['key'][keep_r], slip_pdf_mode=PDF['mode'][keep_r],
+                                                slip_pdf_slo=PDF['slo'][keep_r], slip_pdf_shi=PDF['shi'][keep_r],
+                                                **{'slip_pdf_' + k_: v_ for k_, v_ in PDF['tables'].items()})),
                  cfm_sliprates=None if L2_raw is None else np.array([os.path.basename(args.cfm_sliprates),
                                                                     f'{args.cfm_sigmas:g}',
                                                                     '1',   # the sd multiplier, always 1 (option removed 2026-11-23)

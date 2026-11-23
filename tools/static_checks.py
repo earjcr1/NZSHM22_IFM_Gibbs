@@ -273,13 +273,13 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       and {'misfit', 'misfit_slip', 'misfit_mfd', 'misfit_paleo', 'paleo_misfit', 'mfd_misfit', 'slip_misfit'} <= set(_cfg_keys)
       and "'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}" in src['run_config.py']
       and "'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}" in src['cru_common.py']
-      and "'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'}" in src['run_config.py']
-      and "'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'}" in src['cru_common.py']
+      and "'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10', 'exact': 'exact'}" in src['run_config.py']
+      and "'slip': {'linear': 'split', 'log10': 'log10', 'half': 'split+log10'," in src['cru_common.py']
       and "('half',) * 3: 'half'}.get((g['MISFIT_SLIP'], g['MISFIT_MFD'], g['MISFIT_PALEO']), 'mixed')" in src['run_config.py']
       and '\ndef misfit_settings(' in src['cru_common.py']
       and all(f"a += ['--{g_}-misfit', g['{g_.upper()}_MISFIT']]" in ''.join(c for c in [NBALL]) for g_ in ('paleo', 'mfd', 'slip'))
       and "choices=['gaussian', 'years', 'gaussian+years']" in src['gibbs.py']
-      and "choices=['gaussian', 'log10', 'gaussian+log10', 'pdf']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10']" in src['gibbs.py']
+      and "choices=['gaussian', 'log10', 'gaussian+log10', 'pdf']" in src['gibbs.py'] and "choices=['split', 'split+log10', 'log10', 'exact']" in src['gibbs.py']
       and "'half': ('split+log10', 'gaussian+log10', 'gaussian+years')" in src['cru_common.py']
       and all(src['gibbs.py'].count(t_) == 1 for t_ in ('ok &= selftest_paleo()', 'ok &= selftest_paleo(b=0.5)', 'ok &= selftest_mfdlog()',
                                                          'ok &= selftest_mfdlog(b=0.5)', 'ok &= selftest_slipgeo()', 'ok &= selftest_slipgeo(b=1.0)'))
@@ -290,6 +290,17 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       "out in; slip and MFD 'linear', 'log10', 'half', paleo 'rate', 'years', 'half'), recorded with their common setting or 'mixed' and each group's mode (cru_common.MISFIT_MODES, misfit_settings) and passed to gibbs.py --slip-misfit, "
       '--mfd-misfit and --paleo-misfit, with exact tests of each group\'s log and half modes in the full self-test set and '
       'block_fit.py scoring each group as the run did')
+check('void sp_tables(' in src['gibbs.py'] and 'static double spt_f(' in src['gibbs.py'] and 'if (c->sp && SPT_F)' in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_exact(') == 2 and src['gibbs.py'].count('ok &= selftest_sum_pdf()') == 2
+      and '\ndef slip_pdf_tables(' in src['cru_common.py'] and '\ndef slip_sum_pdf_tables(' in src['cru_common.py']
+      and '\ndef quasiconvex_table(' in src['cru_common.py'] and '\ndef slip_pdfs(' in src['cfm_sliprates.py']
+      and '\ndef pdf_table(' in src['timeframe_sliprates.py'] and "'exact': 'exact'" in src['run_config.py']
+      and os.path.exists(f'{ROOT}/data/cfm_timeframe_sliprates_pdfs.npz') and "'slip_exact_expect' in z.files" in src['block_fit.py'],
+      "MISFIT_SLIP 'exact' (2026-11-23, the user's request): each slip-rate row scored by its fault's exact timeframe-corrected "
+      "density, -2 ln p tabulated (data/cfm_timeframe_sliprates_pdfs.npz via cleaning's slip_pdf_*), weighted as its split normal "
+      "would be, and with SLIP_SUM each cross-section by its parents' densities convolved; the kernel reads tables for rows with "
+      "L2 < 0, its slice floor quasiconvex; self-tests selftest_exact and selftest_sum_pdf in both lists; block_fit scores the same")
+
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and not re.findall(r'^CFM_SLIPRATES = ', cells[0][1], re.M)
       and not re.findall(r'^CFM_FILE = ', cells[0][1], re.M) and "cfm_file=g['CFM_CSV']" in ''.join(c for c in [NBALL])
@@ -316,7 +327,7 @@ check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['Tru
       and "CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None" in src['run_config.py'] and 'cfm_rate_links' in _cfg_keys
       and "'--cfm-rate-links', action='store_true'" in src['preliminaries.py'] and '\ndef rate_links(' in src['cfm_sliprates.py']
       and src['gibbs.py'].count('ok &= selftest_split()') == 1 and 'static double sp_lik(' in src['gibbs.py']
-      and "P.get('split_lo2') is not None" in src['gibbs.py'] and 'split_weights(' in src['block_fit.py'],
+      and "P.get('split_lo2') is not None" in src['gibbs.py'] and 'split_terms(' in src['block_fit.py'],
       'notebook CFM_SLIPRATES = True (by default since 2026-11-05, not a setting since 2026-11-09, always True and not '
       'overridable since 2026-11-23, the inputs\' own slip-rate Gaussians no longer rescaled or used; each slip rate a split normal from the CFM, data/NZ_CFM_v1_0.csv '
       '(cru_common.CFM_CSV, no CFM_FILE); False: the inputs\', cfm_sliprates.py), CFM_TIMEFRAME\'s split normals fitted to each corrected distribution\'s 16/50/84% points (--cfm-timeframe-shape fit, since 2026-11-09), SLIP_RATE_FACTOR = 0.8; no CFM_PREF, CFM_ROUNDING or SLIP_SD_MULTIPLIER since 2026-11-09 (SR_pref the '

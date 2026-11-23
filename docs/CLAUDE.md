@@ -217,6 +217,14 @@ changes); main builds B from slip_sum_rows' info (scale x W x proj x sig_i / (ro
 whole columns. Bit-identical in fixed-seed tests at 211k (192 and 1,600 sweeps), 20-25% less time per sweep; selftest_fold
 (C skip, C fold, NumPy) in both sets. Self-tests: selftest_paleo(b=0.5), selftest_mfdlog(b=0.5), selftest_slipgeo(b=1.0)
 in the full set. run_quick_checks pins MISFIT_SLIP, MISFIT_MFD = 'linear', MISFIT_PALEO = 'rate' (positivity always) (TESTING.md's values predate positivity).
+MISFIT_SLIP 'exact' (2026-11-23, the user's request; gibbs --slip-misfit exact; REPORT "Step 3b"): each slip row scored by its
+fault's exact corrected density (timeframe_sliprates.pdf_table -> data/cfm_timeframe_sliprates_pdfs.npz -> cleaning's slip_pdf_*
+-> cru_common.slip_pdf_tables), kappa g(Y) with kappa = L2 alpha^2 s_lo^2 (the split normal's identity); SLIP_SUM rows by the
+parents' densities convolved (slip_sum_pdf_tables), unfolded. Kernel: rows with L2 < 0 read table -L2-1 (sp_w2 -> spt_f; tables
+set by sp_tables from _sp_ptrs before every call); lb_floor with tables uses per-row quasiconvexity (not concavity). Tables
+checked quasiconvex (quasiconvex_table, Fritsch-Carlson); each fault's -2 ln p made unimodal first (timeframe_sliprates.unimodal,
+PAVA each side: the simulated factor's sampling-noise ripples, up to 0.55 for the zero-width faults). best_fit_as_fitted polishes 'exact' as 'split'. Self-tests
+selftest_exact, selftest_sum_pdf.
 MISFIT_SLIP, MISFIT_MFD, MISFIT_PALEO (the user's request after run _1794201333): MISFIT split into one setting per group,
 slip and MFD 'linear' | 'log10' | 'half' (default), paleo 'rate' | 'years' | 'half' (the user's names), each group's mode
 from cru_common.GROUP_MISFIT_MODES (the notebook's copy _MISFIT_GROUP_MODES); MISFIT kept as their common setting as one

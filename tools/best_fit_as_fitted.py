@@ -313,7 +313,7 @@ def main():
                     help="the MFD bins' misfit, as gibbs.py --mfd-misfit (default gaussian; pdf: MFD_GR, each bin by its own "
                          "PDF, the curves saved with the problem)")
     ap.add_argument('--bins-block', default='MFD', help='the magnitude-bin rows (default MFD)')
-    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10'],
+    ap.add_argument('--slip-misfit', default='split', choices=['split', 'split+log10', 'log10', 'exact'],
                     help="the slip-rate rows' misfit, as gibbs.py --slip-misfit (default split)")
     ap.add_argument('--slip-block', default='S', help='the slip-rate rows (default S)')
     ap.add_argument('--floor', type=float, default=1e-10, help='the slab floor (default 1e-10, the notebook\'s FLOOR): the start '
@@ -366,6 +366,8 @@ def main():
         if a.slip_block not in P['block_names']:
             raise SystemExit(f'--slip-misfit {a.slip_misfit}: no row block named {a.slip_block!r}')
         geo = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
+    if a.slip_misfit == 'exact':                   # the exact densities: the starts are polished for feasibility under
+        a.slip_misfit = 'split'                    # their split normals (gibbs.py scores the tables)
     b_s, b_m, b_p = (misfit_log_weight(a.slip_misfit), misfit_log_weight(a.mfd_misfit), misfit_log_weight(a.paleo_misfit))
     fun_data, by_block_data = make_objective(P, G, pal, mlog, a.paleo_misfit, geo, b_s, b_m, b_p)
     extra, cons = sampler_terms(P, a)                 # the sampler's other terms (Gaussian rows) and constraints, if given
