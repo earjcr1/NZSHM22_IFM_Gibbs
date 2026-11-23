@@ -42,7 +42,7 @@ posterior 16-84% bar of each section mean, when the runs are found (a bar reachi
 the log scale possibly to 0); values beyond the axes (on the log scale, including 0) on their edges as triangles; the
 1:1 line; the +-1 band; and the original rows of the --label sections furthest from their targets (default 3). Each
 section's dot and bar share a colour, cycling along the targets through the six colours
-(ColorBrewer's RdYlBu, 6 classes, its red and blue ends alternating: cru_common.RDYLBU6_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
+(ColorBrewer's Blues, its darkest 6 of 9 classes, light and dark alternating: cru_common.BLUES6_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring sections
 never share one; the colours only tell neighbours apart,
 and a section keeps its colour in every model's figure. Sections that share a target (the inputs' slip rates are often
 round numbers: at 211k, 403 of 507 sections share theirs) stay stacked at it, one bar over another. Writes FIGURE
@@ -71,7 +71,7 @@ import textwrap
 import numpy as np
 
 from cru_common import geo_parts, misfit_log_weight, misfit_parts, misfit_text, split_weights
-from cru_common import (RDYLBU6, RDYLBU6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+from cru_common import (BLUES6, BLUES6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_list, run_predictions,
                         run_config, figure_settings, settings_lines, slip_sections)
 
@@ -121,7 +121,7 @@ def main():
     ap.add_argument('--label', type=int, default=3, help='label this many sections furthest from their targets (default 3)')
     ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates to "
                     "mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors "
-                    "(.npz); up to two (give it twice: the second a grey diamond)")
+                    "(.npz); up to two (give it twice: the second a red diamond)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
@@ -173,7 +173,7 @@ def main():
     rw = lambda e: np.sqrt(split_weights(P, rows, e)) * e  # each residual in the sd of its own side (--cfm-sliprates)
     avg = np.zeros((len(rows), S))                       # the rows' predictions -> their section means
     avg[np.arange(len(rows)), sec] = 1.0 / ks[sec]
-    col = neighbour_colours(ts, RDYLBU6_CYCLE)                          # each section's colour, unlike its neighbours'
+    col = neighbour_colours(ts, BLUES6_CYCLE)                          # each section's colour, unlike its neighbours'
     mem = [np.flatnonzero(sec == s) for s in range(S)]
     n_distinct = len(np.unique(np.round(ts, 9)))
     how = ('one measurement per section (each section\'s rows divided by sqrt(k) in the likelihood)' if weighted else
@@ -404,7 +404,7 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = RDYLBU6[0], RDYLBU6[5], RDYLBU6[1]            # the legend shows a few of the colours
+    few = BLUES6[0], BLUES6[3], BLUES6[5]            # the legend shows a few of the colours
     handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.8, mfc=c, mec=MUTED, mew=0.4) for c in few), 'section mean')]
     if bars:
         handles.append((tuple(Line2D([], [], color=c, lw=1.0, path_effects=outline) for c in few),

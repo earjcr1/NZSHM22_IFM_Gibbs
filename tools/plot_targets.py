@@ -31,7 +31,7 @@ import os
 
 import numpy as np
 
-from cru_common import (RDYLBU6_CYCLE, find_rupture_set, load_problem, neighbour_colours, run_config, slip_sections)
+from cru_common import (BLUES6_CYCLE, find_rupture_set, load_problem, neighbour_colours, run_config, slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 OLD = '#b9b8b1'                       # the inputs' Gaussians: grey, wide
@@ -120,7 +120,7 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     o_s = np.where(sd > 0, old_k * sd, f_in * rate)      # --old-sd K: K SD in its place (1: SlipRateStdDev itself as 1 sd)
     ts, sl, sh, om, os_ = (mean_s(v) for v in (t, s_lo, s_hi, o_m, o_s))
     n16, n84 = sn_quantile(ts, sl, sh, 0.158655), sn_quantile(ts, sl, sh, 0.841345)
-    col = neighbour_colours(ts, RDYLBU6_CYCLE)
+    col = neighbour_colours(ts, BLUES6_CYCLE)
     cfm = bool(cfg.get('cfm_sliprates', True))
     tf = bool(cfg.get('cfm_timeframe'))
     what = (('CFM split normal' + (', timeframe-corrected' if tf else '')) if cfm else 'the inputs’ Gaussian, rescaled')
@@ -153,7 +153,7 @@ def paleo_figure(P, rd, cfg, outdir, slip_block='S', bins_block='MFD'):
     best = np.array([s_['best'] for s_ in sites])
     sd = np.array([s_['sd'] for s_ in sites])
     q = np.array([s_['q'] for s_ in sites])              # 2.275, 15.866, 84.134, 97.725% rates
-    col = neighbour_colours(best, RDYLBU6_CYCLE)
+    col = neighbour_colours(best, BLUES6_CYCLE)
     pm = cfg.get('misfit_paleo') or {'years': 'years', 'gaussian': 'rate'}.get(cfg.get('paleo_misfit'), '?')
     med = lambda v: float(np.median(v))
     sub_txt = (f'{len(sites)} paleo sites (paleo_constraint_data.json). Grey: the Gaussian in rate the inputs give, bestEstimate '

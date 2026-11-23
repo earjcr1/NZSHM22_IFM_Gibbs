@@ -238,7 +238,7 @@ def main():
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
     ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates to "
                     "mark, such as the model's OpenSHA solution (its solution/rates.csv), or rate vectors (.npz); up to two "
-                    "(give it twice: the second a grey diamond, and a dashed outline)")
+                    "(give it twice: the second a red diamond, and a dashed outline)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the result set's label (default: the one next to --problem, if any; 'none': the label)")
     a = ap.parse_args()
@@ -651,7 +651,7 @@ def main():
         note2 += (f' Each x counts the ruptures on in one of the {nK:,} kept draws, by their rates in it (a draw\'s bins with '
                   'none are not drawn); faint, so that where the draws gather shows darkest.')
     if refs:
-        note2 += (' The black outline counts the same ruptures by ' + ' and the dashed grey one by '.join(
+        note2 += (' The black outline counts the same ruptures by ' + ' and the dashed red one by '.join(
                   f'{ref["label"]}\'s rates' for ref in refs) + '. ' + ('That is a single model, which compares'
                   if len(refs) == 1 else 'Each is a single model, which compares') + ' with a single draw more than with '
                   'the means: averaging over the draws puts rate on more ruptures, at lower rates, than one model does.')
@@ -762,7 +762,7 @@ def main():
              f'{mw:g} wide: the posterior mean of its rate of events of that size (a rupture\'s magnitude is known only to '
              f'its bin row; the rows are counted up from {mlo[0]:.1f}). Unlike the counts by rate, these totals compare '
              'directly with a single model\'s. Rates on a log scale; bins more than six decades below a panel\'s largest '
-             'are not drawn.' + (' The black outline is the same for ' + ' and the dashed grey one for '.join(
+             'are not drawn.' + (' The black outline is the same for ' + ' and the dashed red one for '.join(
                  f'{ref["label"]}\'s rates' for ref in refs) + '.' if refs else ''))
     if ons is not None:                                  # each kept draw's totals by bin, and how often a bin has none
         note3 = (f'Each x is one of the {nK:,} kept draws: the total rate of the {unit}\'s ruptures in one magnitude bin, '
@@ -770,7 +770,7 @@ def main():
                  f'{mlo[0]:.1f}), faint, so that where the draws gather shows darkest; the circle is their posterior mean. '
                  'The strip marked 0 shows, by its opacity, the share of draws in which none of the bin\'s ruptures is on. '
                  'Rates on a log scale, down to the lowest draws\' (at most seven decades below the largest).'
-                 + (' The black outline is the same for ' + ' and the dashed grey one for '.join(
+                 + (' The black outline is the same for ' + ' and the dashed red one for '.join(
                     f'{ref["label"]}\'s rates' for ref in refs) + (', a single model, which compares with a single draw.'
                     if len(refs) == 1 else '; each is a single model, which compares with a single draw.') if refs else ''))
         nsl = len(edges) - 1

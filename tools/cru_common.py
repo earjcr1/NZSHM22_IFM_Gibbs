@@ -919,7 +919,7 @@ def reference_rates(spec, P):
 
 
 REF_MARKERS = ('s', 'D')                                 # the fit figures' references: the first a square, the second a
-REF_INKS = ('#0b0b0b', '#52514e')                        # diamond in dark grey (2026-11-23: two NZSHM22 solutions at once)
+REF_INKS = ('#0b0b0b', '#b2182b')                        # diamond in red (ColorBrewer RdBu's; 2026-11-23: two NZSHM22 solutions at once)
 REF_OFFSETS = (0.78, 0.22)                              # where in a bin (fraction of its width) plot_rate_magnitude puts each
 
 
@@ -1197,10 +1197,11 @@ CATEGORICAL = ('#006ba4', '#ff8000', '#5f9ed1', '#ffbc79', '#898989', '#cfcfcf',
                '#ababab')
 
 
-# ColorBrewer's RdYlBu, 6 classes (red to blue), for the slip-rate and paleo fit figures
-RDYLBU6 = ('#d73027', '#fc8d59', '#fee090', '#e0f3f8', '#91bfdb', '#4575b4')
-# ... in an order that alternates its red and blue ends, so that neighbours along the targets always contrast
-RDYLBU6_CYCLE = tuple(RDYLBU6[i] for i in (0, 3, 1, 5, 2, 4))
+# ColorBrewer's Blues, the darkest 6 of its 9 classes (light to dark), for the slip-rate, paleo and target figures (the
+# user's choice, 2026-11-23; ColorBrewer's RdYlBu, 6 classes, before)
+BLUES6 = ('#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b')
+# ... in an order alternating light and dark, so that neighbours along the targets differ by at least two shades
+BLUES6_CYCLE = tuple(BLUES6[i] for i in (0, 3, 1, 4, 2, 5))
 
 
 def neighbour_colours(x, palette=None):

@@ -72,7 +72,8 @@ from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predic
                         gr_curves, gr_joint_misfit, gr_run_draws)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-BLUE, ORANGE = '#2a78d6', '#eb6834'          # categorical slots 1 and 2 of the reference palette, validated as a pair
+BLUE, ORANGE = '#2a78d6', '#e69f00'          # the ruptures' blue; the bin totals amber (Okabe-Ito's orange, colour-blind safe;
+                                             # since 2026-11-23, apart from the second reference's red diamonds; '#eb6834' before)
 REF = INK                                    # the reference model's marks: black, apart from every series colour
 CURVE = '#2f9e78'                            # MFD_GR_TAU: the drawn G-R curves (median line, 16-84% band)
 MINUS = '−'
@@ -132,7 +133,7 @@ def main():
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--reference', action='append', default=None, metavar='RATES[:LABEL]', help="another model's rates, "
                     "whose bin totals to mark on every panel, such as the model's OpenSHA solution (its solution/rates.csv), "
-                    "or rate vectors; up to two (give it twice: the second a grey diamond)")
+                    "or rate vectors; up to two (give it twice: the second a red diamond)")
     ap.add_argument('--config', default=None, help="the run's workflow_config.json, whose settings (SLIP_SECTIONS to "
                     "FLOOR) replace the label of a single result set (default: the one next to --problem, if any; "
                     "'none': the label)")
