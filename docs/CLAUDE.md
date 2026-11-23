@@ -103,8 +103,7 @@ burn=400, thin=8, replicates=1)" through _OVERRIDES, ...), run_quick_checks.sh
 DATA_DIR RUNS_DIR (the smoke test of docs/TESTING.md at the old quick lengths, RUN_PLAN fixed; one notebook run at a time, resumable),
 static_checks.py (inventory, parsing, leftovers, defaults, options and imports of the code set: update it whenever a
 default, a setting or the file list changes), compare_mfd.py (two result sets compared on fit, bins, total rate, MFD
-slope, population and products, with replicate noise for scale), fig_mfd_levels.py (bin totals against targets under
-two MFD uncertainty levels) and psis.py (Pareto-smoothed importance sampling, PSIS-LOO, as used for the paleo rows'
+slope, population and products, with replicate noise for scale) and psis.py (Pareto-smoothed importance sampling, PSIS-LOO, as used for the paleo rows'
 leave-one-out checks).
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform
 from the slab floor 1e-10 up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty; the
