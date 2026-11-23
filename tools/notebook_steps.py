@@ -118,7 +118,10 @@ def setup(g):
         raise FileNotFoundError(f'{need[0]} needs the model\'s OpenSHA rupture set (RUPTURE_SET), for the faults\' geometry or '
                                 'the paleo data; none found')
     print('rupture set:', g['RUPTURE_DIR'] or 'none (RUPTURE_SET): no rates are written for OpenSHA')
-    print('reference solution (looked for again when each fit figure is drawn):', (ref_args() or [None, 'none yet'])[1])
+    refs_, extra_ = reference_solutions()
+    print('reference solutions for the fit figures (looked for again when each figure is drawn):',
+          '; '.join(f + (f' ({l})' if l else '') for f, l in refs_) or 'none yet',
+          f'(left out beyond {MAX_REFERENCES}: ' + ', '.join(os.path.basename(e) for e in extra_) + ')' if extra_ else '')
     record_config()
 
 
@@ -142,7 +145,8 @@ def record_config(**more):
             cfm_template_rho=g['CFM_TEMPLATE_RHO'], cfm_rate_links=g['CFM_RATE_LINKS'] and g['CFM_TEMPLATE_RHO'] is not None,
             slip_rate_factor=g['SLIP_RATE_FACTOR'], slip_sd_multiplier=1, cross_sections=g['CROSS_SECTIONS'],
             slip_sum=g['SLIP_SUM'], slip_sum_l0=g['SLIP_SUM_L0'], rupture_set=g['RUPTURE_SET'], rupture_dir=g['RUPTURE_DIR'],
-            reference=(ref_args() or [None, None])[1], slip_block=g['SLIP_BLOCK'], bin_block=g['BIN_BLOCK'],
+            reference=(reference_solutions()[0] or [(None, None)])[0][0],
+            references=[f for f, _ in reference_solutions()[0]], slip_block=g['SLIP_BLOCK'], bin_block=g['BIN_BLOCK'],
             threads=g['THREADS'], log_file=g['LOG_FILE'], started=time.strftime('%Y-%m-%d %H:%M'))
     g['CONFIG'].update(more)
     json.dump(g['CONFIG'], open('workflow_config.json', 'w'), indent=1)
@@ -204,19 +208,78 @@ def rupture_dir():
         return None
 
 
-def ref_args():
-    """--reference for a fit figure: the model's own OpenSHA solution's rates (its solution/rates.csv), looked for when
-    the figure is drawn: beside the rupture set, or, with RUPTURE_SET 'auto' and none found at the start, in the one
-    solution folder in DATA_DIR that has them."""
+MAX_REFERENCES = 2                                     # the fit figures draw at most two (cru_common.reference_list)
+
+
+def _n_rows(path):
+    """Lines after the header of a CSV (rates.csv, properties.csv), or None."""
+    try:
+        with open(path) as f:
+            return sum(1 for _ in f) - 1
+    except OSError:
+        return None
+
+
+def _solution_traits(sol):
+    """A solution's run, from its ruptures/regional_inversion_target_mfds.json: dict(n5, scalar), or {}."""
+    try:
+        R = json.load(open(os.path.join(sol, 'ruptures', 'regional_inversion_target_mfds.json')))['sansTVZ']
+        return dict(n5=float(R['totalRateM5']), scalar=float(R['uncertaintyScalar']))
+    except (OSError, KeyError, ValueError, TypeError):
+        return {}
+
+
+def reference_solutions():
+    """The OpenSHA inversion solutions the fit figures draw (2026-11-23, the user's request): up to two, each a folder
+    with solution/rates.csv on the model's rupture set (the same number of ruptures): the rupture set's own solution
+    first (the folder above RUPTURE_DIR, if it is one), then every other solution folder in DATA_DIR, by name. Returns
+    [(rates.csv, label or None), ...] and the ones left out beyond two. With two, each is labelled by what tells them
+    apart in their regional_inversion_target_mfds.json (the MFD uncertainty scalar, N5), else by its folder's name; one
+    keeps the figures' default label."""
     g = _G['g']
     if g['RUPTURE_SET'] is None:
-        return []
+        return [], []
+    sols = []
     if g['RUPTURE_DIR']:
-        found = [os.path.join(os.path.dirname(g['RUPTURE_DIR']), 'solution', 'rates.csv')]
-    else:
-        found = [os.path.join(g['DATA_DIR'], d, 'solution', 'rates.csv') for d in sorted(os.listdir(g['DATA_DIR']))]
-    found = [f for f in found if os.path.isfile(f)]
-    return ['--reference', found[0]] if len(found) == 1 else []
+        sols.append(os.path.dirname(g['RUPTURE_DIR']))
+    D = g['DATA_DIR']
+    if os.path.isdir(D):
+        sols += [os.path.join(D, d) for d in sorted(os.listdir(D))]
+    seen, found = set(), []
+    n_rup = _n_rows(os.path.join(g['RUPTURE_DIR'], 'properties.csv')) if g['RUPTURE_DIR'] else None
+    for s_ in sols:
+        f_ = os.path.join(s_, 'solution', 'rates.csv')
+        k_ = os.path.realpath(s_)
+        if k_ in seen or not os.path.isfile(f_):
+            continue
+        seen.add(k_)
+        if n_rup is not None and _n_rows(f_) != n_rup:   # another rupture set's solution: left out
+            continue
+        found.append(s_)
+    use, extra = found[:MAX_REFERENCES], found[MAX_REFERENCES:]
+    labels = [None] * len(use)
+    if len(use) == 2:
+        t0, t1 = (_solution_traits(s_) for s_ in use)
+        parts = [[], []]
+        if t0.get('scalar') is not None and t1.get('scalar') is not None and t0['scalar'] != t1['scalar']:
+            for k_, t_ in enumerate((t0, t1)):
+                parts[k_].append(f"MFD \u03c3 \u00d7{t_['scalar']:g}")
+        if t0.get('n5') is not None and t1.get('n5') is not None and t0['n5'] != t1['n5']:
+            for k_, t_ in enumerate((t0, t1)):
+                parts[k_].append(f"N5 {t_['n5']:g}")
+        labels = (['NZSHM22, ' + ', '.join(p_) for p_ in parts] if parts[0] else
+                  [os.path.basename(s_.rstrip('/')) for s_ in use])
+    return [(os.path.join(s_, 'solution', 'rates.csv'), l_) for s_, l_ in zip(use, labels)], extra
+
+
+def ref_args():
+    """--reference for a fit figure, once per solution reference_solutions finds (looked for when each figure is drawn,
+    so a solution finished during the run counts): none, one (the figures as before) or two."""
+    refs, _ = reference_solutions()
+    a = []
+    for f_, l_ in refs:
+        a += ['--reference', f_ if l_ is None else f'{f_}:{l_}']
+    return a
 
 
 # ----------------------------------------------------------------------------------------------- cleaning (section 2)

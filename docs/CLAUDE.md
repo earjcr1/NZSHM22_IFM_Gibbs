@@ -83,8 +83,11 @@ The fit figures (plot_slip_rates.py, plot_rate_magnitude.py, plot_paleo_rates.py
 RATES[:LABEL] (cru_common.reference_rates): another model's rates, marked on every panel and tabulated (since 2026-11-23
 plot_slip_rates, plot_rate_magnitude, plot_paleo_rates and plot_slip_sections take it twice, cru_common.reference_list: the
 second a dark-grey diamond and a dashed outline, a line more of subtitle; with one, figures and tables as before); the notebook
-passes the model's own OpenSHA solution (ref_args(): solution/rates.csv beside the rupture set, looked for when each
-figure is drawn, so one finished during the run counts; the best fit's figures come right after cleaning since
+passes up to two OpenSHA solutions (ref_args(), notebook_steps.reference_solutions, since 2026-11-23, the user's request: the
+rupture set's own solution first, then every other folder in DATA_DIR with solution/rates.csv on the same rupture set, by
+name; beyond two, left out and named at setup; two are labelled by what tells them apart in regional_inversion_target_mfds.json,
+e.g. "NZSHM22, MFD σ ×0.1" / "×1"; one keeps the default label; none, no reference), looked for when each
+figure is drawn, so one finished during the run counts; CONFIG records reference (the first) and references (all); the best fit's figures come right after cleaning since
 2026-11-05, the user's choice, to catch a data type far off before the runs) when DATA_DIR holds it.
 Their axes are fixed per problem by the targets and the best fit (cru_common.axis_span and best_fit_rates: all of the
 targets and the central 96% of the best fit's predictions, from prelim_results.npz), so every model's figures for one

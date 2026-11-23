@@ -328,10 +328,12 @@ check('\ndef paleo_data(' in src['paleo_misfit.py'] and '\ndef map_sites(' in sr
       'data/paleo_constraint_data.json\'s sites mapped onto its subsections as NZSHM22 maps them (nearest trace within '
       '5.25 km; paleo_misfit.paleo_data; reproduces the 19k, 211k and 630k solutions\' files exactly)')
 check(sum(c.count('*ref_args()') for c in [NBALL]) == 4 and '\ndef reference_rates(' in src['cru_common.py']
+      and '\ndef reference_solutions(' in STEPS and 'MAX_REFERENCES = 2' in STEPS and '\ndef reference_list(' in src['cru_common.py']
       and all("'--reference'" in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_rate_magnitude.py',
                                                     'randomized_nnls.py')),
-      'the fit figures take --reference (cru_common.reference_rates), and the notebook passes the model\'s OpenSHA '
-      'solution to all of them (the posterior\'s; no best fit since 2026-11-21)')
+      'the fit figures take --reference (cru_common.reference_rates, up to twice: reference_list), and the notebook passes '
+      'up to two OpenSHA solutions found in DATA_DIR to all of them (notebook_steps.reference_solutions, 2026-11-23; the '
+      'posterior\'s; no best fit since 2026-11-21)')
 check(all('axis_span(' in src[sc] for sc in ('plot_slip_rates.py', 'plot_paleo_rates.py', 'randomized_nnls.py'))
       and 'best_fit_rates(' in src['plot_rate_magnitude.py'] and '\ndef axis_span(' in src['cru_common.py'],
       'the fit figures take fixed axes from the targets and the best fit (cru_common.axis_span, best_fit_rates)')
