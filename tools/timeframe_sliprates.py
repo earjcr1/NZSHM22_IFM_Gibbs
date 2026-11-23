@@ -37,7 +37,7 @@ median 7% and 4% above the corrected distribution's (up to about 2x); 'ends' rem
 
 Writes OUT (one row per fault of the CFM: Name, mode, q025, q16, q50, q84, q975 in mm/yr, t_eff in
 years (the schemes' geometric mean), fit: 'S4' (t solved), 'S4 long' (S4's 97.5% at or inside the tables' longest
-timeframe's, t held there), or 'assigned'; periodic; SR_pref, SR_min, SR_max; mode_linear, mode_pchip; sn_centre,
+timeframe's, t held there), or 'assigned'; periodic; SR_pref, SR_min, SR_max; mode_sim (mode_linear, mode_pchip before 2026-11-23); sn_centre,
 sn_sd_lo, sn_sd_hi, the fitted split normal's mode and sds in mm/yr, and sn_fit, which fit gave it), OUT's
 _report.txt and a figure (OUT's .png) comparing each fault's new uncertainty with the CFM's times --multiplier (3, the
 notebook's SLIP_SD_MULTIPLIER before CFM_TIMEFRAME). preliminaries.py --cfm-timeframe OUT uses the fitted split normals
@@ -80,17 +80,35 @@ ZQ = norm.ppf(TQ)
 NU = 4000                                                        # quadrature points in the factor's probability
 U = (np.arange(NU) + 0.5) / NU
 Z = norm.ppf(U)
-SCHEMES = ('linear', 'pchip')                                    # the factor's quantile function between the tables' points
+SCHEMES = ('sim',)                                               # the factor: styron_factor.py's simulated table (since
+                                                                 # 2026-11-23; before, the tables' 7 quantiles interpolated
+                                                                 # two ways, 'linear' and 'pchip', still available here)
 
 
-def log_factor(periodic, t, scheme):
-    """log of the timeframe factor (true / measured slip rate) at the quadrature points U, at scaled timeframe t: the tables'
-    7 quantiles interpolated in log t between their rows (held at their ends), then across probability against the normal
-    score, linearly ('linear', continued beyond the 2.5% and 97.5% points with the end segments' slopes) or by a monotone
-    cubic ('pchip', extrapolated by its end pieces)."""
+def log_factor(periodic, t, scheme='sim'):
+    """log of the timeframe factor (true / measured slip rate) at the quadrature points U, at scaled timeframe t (held at
+    the tables' ends, 500 and 100,000 years). 'sim' (the default): through the tables' 7 quantiles exactly (interpolated
+    in log t between their rows), and between and beyond them the shape of styron_factor.py's simulated factor (its
+    quantiles interpolated linearly in log t between its timeframes), shifted at each table quantile to meet it, the shift
+    linear in the normal score between them and held beyond: the tables are the paper's own draws, which S4 came from (the
+    simulation alone, with S4's 97.5% points fitted, puts the aperiodic faults' medians a median 1.9% and up to 14% above
+    S4's, against 0.1% and 1.3% with the tables), and the simulation is the paper's setup without the tables' sampling noise. 'linear' / 'pchip' (before 2026-11-23): the tables' 7
+    quantiles interpolated in log t between their rows, then across probability against the normal score, linearly
+    (continued beyond the 2.5% and 97.5% points with the end segments' slopes) or by a monotone cubic."""
     lt = np.log(np.clip(t, TT[0], TT[-1]))
     L = np.log(TAB[bool(periodic)])
-    lq = np.array([np.interp(lt, np.log(TT), L[:, k]) for k in range(len(TQ))])
+    lq = np.array([np.interp(lt, np.log(TT), L[:, k]) for k in range(len(TQ))])   # the tables' 7 quantiles at t
+    if scheme == 'sim':
+        import styron_factor
+        Ts, LNF = styron_factor.load()
+        Ls = LNF[int(bool(periodic))]
+        lts = np.log(Ts)
+        k = int(np.clip(np.searchsorted(lts, lt) - 1, 0, len(lts) - 2))
+        w = (lt - lts[k]) / (lts[k + 1] - lts[k])
+        ls = (1.0 - w) * Ls[k] + w * Ls[k + 1]                   # the simulated quantile function at t
+        c = lq - np.interp(TQ, U, ls)                            # through the tables' points exactly: the shift at each,
+        out = ls + np.interp(Z, ZQ, c)                           # linear in the normal score between them, held beyond
+        return np.maximum.accumulate(out)
     if scheme == 'pchip':
         return PchipInterpolator(ZQ, lq, extrapolate=True)(Z)
     out = np.interp(Z, ZQ, lq)
@@ -420,12 +438,6 @@ def main():
           'faults with lopsided bounds move most: ' + ', '.join(f'{pos[i]["name"]} {pref[i]:g} -> {mode[i]:.3g}'
                                                               for i in np.argsort(-np.abs(np.log(mode / pref)))[:5]))
     print(f'   mass at 0 (the Gaussian below 0): in {sum(r["p0"] > 1e-12 for r in pos)} faults, at most {max(r["p0"] for r in pos):.1%}')
-    dm = np.array([abs(r['mode_sc']['pchip'] / r['mode_sc']['linear'] - 1) for r in pos if r['mode_sc']['linear'] > 0])
-    big = sorted(((abs(r['mode_sc']['pchip'] / r['mode_sc']['linear'] - 1), r['name']) for r in pos if r['mode_sc']['linear'] > 0),
-                 reverse=True)
-    print(f'   the mode under the two interpolations of the factor (linear and monotone cubic against the normal score): they '
-          f'differ by a median {np.median(dm):.2%} (95th percentile {np.percentile(dm, 95):.2%}); the table\'s mode and quantiles '
-          f'are their geometric mean; over 2% apart: ' + (', '.join(f'{n} ({d:.1%})' for d, n in big if d > 0.02) or 'none'))
     w95n = np.array([r['q975'] - r['q025'] for r in pos]); w95c = np.array([r['smax'] - r['smin'] for r in pos])
     ok = w95c > 0
     print(f'   95% width / the CFM\'s: median {np.median(w95n[ok] / w95c[ok]):.2f}, mean {np.mean(w95n[ok] / w95c[ok]):.2f} (the '

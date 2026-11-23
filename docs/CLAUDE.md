@@ -309,6 +309,11 @@ to 0.986-1.013, unpinned 2.5% points 1.000 (5-95% 0.97-1.39); the mode (the dens
 rate after the correction) and the quantiles the two schemes' geometric means (their modes differ by a median 0.12%; over 2%
 for Wairau 9.3%, Wellington: Pahiatua, Otaheke North, Clarence: Northeast, Jordan, Awatere: Southwest; both kept as
 mode_linear, mode_pchip). A kernel-density mode from draws, tried first, was off by up to 25% (smoothing a skewed density).
+Since 2026-11-23 (the user's request) the factor is log_factor 'sim': tools/styron_factor.py simulates the paper's setup
+(data/styron_factor.npz; windows uniform in time, measured between their bounding earthquakes, the rule that reproduces
+Tables 1-2: rms log 0.04 / 0.11), pinned to the tables' 7 quantiles exactly (S4 is the paper's own draws: the simulation
+alone matched S4's medians only to a median 1.019, 95th pct 1.126) with the simulation's shape between and beyond them.
+One scheme; 191 faults held at 100,000 yr (74 before); S4 medians 0.986-1.010. Numbers above are from before.
 The paleo sites' recurrence intervals reproduce S4 for the faults where the paper
 used them (Alpine, Hope: Conway, Awatere) but not for a third of the 42, so t is fitted, not taken from them. The paper's
 2.9 (abstract) is the mean of S4's 95% width / the CFM's over SR_pref < 1 mm/yr (2.86 here); the median is 1.6.

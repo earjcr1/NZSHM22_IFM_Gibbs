@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
+SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
