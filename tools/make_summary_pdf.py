@@ -519,8 +519,7 @@ def main():
     # the figures that exist, numbered in the order they appear
     FIGS = ['prelim.png', 'nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
             'nnls/fig_paleo_rates_nnls.png', 'fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png'] + [f'{a.prior}/{f}' for f in (
-                'fig_k_curve.png', 'fig_k_curve_coarser.png', 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
-                'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
+                'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png',
                 'along_strike/Alpine_Jacksons_to_Kaniere.png')]
     present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))
@@ -533,7 +532,7 @@ def main():
                      'fig_slip_sections_ruptures_2.png', 'fig_slip_sections_ruptures_by_magnitude_1.png',
                      'fig_slip_sections_ruptures_by_magnitude_2.png'))
     SN = {k: i + 1 for i, k in enumerate(['inputs', 'cleaning'] + (['bestfit'] if has_nnls else []) + [   # the steps,
-        'model', 'sampling', 'convergence', 'fit', 'tables', 'posterior'] + (['faults'] if has_faults else [])   # numbered
+        'model', 'sampling', 'convergence', 'fit', 'posterior'] + (['faults'] if has_faults else [])   # numbered
         + ['opensha', 'points'])}                                                                              # as present
     def fref(*fs):                                       # 'Figure 3', 'Figures 3\u20135' (a run), 'Figures 3, 5'
         k = sorted(num[f] for f in fs if f in num)
@@ -630,7 +629,7 @@ def main():
          + (f' (here <i>G</i> has rank {fmt(rank)} for {fmt(n_cols)} unknowns)' if rank and n_cols else '') + '. Each '
          'annealing run lands on a different model depending on its seed (Gerstenberger et al., 2022), but a branch keeps '
          'one. Here the whole set is sampled as a Bayesian posterior: every rate and derived quantity gets a mean and a '
-         'spread, and weighted representative models (' f'step {SN["tables"]}' ') carry it into hazard.'
+         'spread, and weighted representative models carry it into hazard.'
          '<br/>• <b>Freedom from the annealing’s settings, weighting and nuances.</b> Combining slip rates, the MFD and paleo '
          'rates into one objective needs a weight on each, set subjectively for the subduction interfaces and, for the '
          'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
@@ -1366,42 +1365,7 @@ def main():
                    f'{plate_top.group(7)} in the fault model), reaches {float(plate_top.group(5)):.3f} at the kept '
                    'draws\u2019 97.5%' if plate_top else '') + '.' if plate_in else ''))
 
-    head(f'{SN["tables"]}. Posterior tables, rate vectors and representative models')
-    rel = None if post_tot is None or t_tot is None else 100 * (post_tot / t_tot - 1)
-    para(f'{tt("make_tables.py")} pools the replicates into per-rupture, per-subsection and per-bin tables and into rate '
-         f'vectors ({tt("rate_vectors.csv")}): for each of the {fmt(raw_cols)} ruptures its posterior mean, median, mode '
-         'and 2.3%, 15.9%, 84.1% and 97.7% points. Most ruptures are off in most draws, so their medians and modes are '
-         'zero; sums such as fault or bin rates must be built from the means. '
-         f'The posterior-mean total rate is {fmt(post_tot, "{:.4f}")} per year, {fmt(rel, "{:+.1f}")}% against the bin '
-         'targets' + (f' ({refname}: {ref_tot:.4f})' if ref_tot else '') + '; the bin totals sit a median '
-         f'{fmt(bt_med and 100 * (bt_med - 1), "{:+.1f}")}% from their targets ({fmt(bt_lo and 100 * (bt_lo - 1), "{:+.1f}")}% '
-         f'to {fmt(bt_hi and 100 * (bt_hi - 1), "{:+.1f}")}%)'
-         + (f', against the best fit\u2019s {fmt(bt_nn and 100 * (bt_nn - 1), "{:+.1f}")}%' if has_nnls else '') + '. '
-         f'About {fmt(undet)}% of each subsection\u2019s posterior rate (the '
-         'median) is carried by ruptures whose rates are individually below what the data can detect. '
-         + (f'{tt("select_draws.py")} then picks {reps} weighted representative models from the {fmt(n_kept)} kept draws, '
-            'clustering them by their rates per subsection and magnitude bin, for use in hazard calculations. With '
-            f'{reps}, the weighted mean total rate is off the exact mean by {s_tot}, the worst bin by {s_bin}, and '
-            f'{s_sub} of subsection means are within 10% (the tolerance asks for 90%)'
-            + ('; the selection misses some tolerances, so the posterior-mean rate vector remains the exact input for '
-               'mean hazard.' if s_verdict[1] and 'miss' in s_verdict[1] else '.') if reps and sel else ''))
-    kc, kc2 = f'{a.prior}/fig_k_curve.png', f'{a.prior}/fig_k_curve_coarser.png'
-    if kc in num or kc2 in num:                         # K curves, when drawn for the run (not a notebook step)
-        para('How many representatives the tolerances need: '
-             + (f'{fref(kc)} repeats {tt("select_draws.py")}\u2019s selection and checks for K from 2 up, beside the same '
-                'number of kept draws picked at random with equal weights' if kc in num else '')
-             + ('; ' if kc in num and kc2 in num else '')
-             + (f'{fref(kc2)} judges random draws by coarser criteria: each subsection weighted by its rate, the parent '
-                'sections by magnitude range, and the mean within 0.2 posterior sd' if kc2 in num else '') + '.')
-        figure(kc, 'Representative draws against K: the share of subsections whose weighted mean is within 10% of the exact '
-               'mean and whose 50% and 16% points are within 15% of the posterior\u2019s (left; the tolerance asks for 90%), '
-               'and the worst bin total and the total rate (right; within 2%); solid, k-means representatives with '
-               'calibrated weights, dashed, random draws with equal weights; bands over three seeds. Drawn for this run '
-               'from its kept draws (not a notebook step).', FW)
-        figure(kc2, 'Representative draws against K under coarser criteria, random draws with equal weights: subsections '
-               '(left) and parent sections by magnitude range (right), by count (today\u2019s check), weighted by rate, and '
-               'the mean within 0.2 posterior sd; bands over three seeds. Drawn for this run from its kept draws (not a '
-               'notebook step).', FW)
+    # (section 7, posterior tables, rate vectors and representative models, removed 2026-11-25, the user's request)
 
     head(f'{SN["posterior"]}. The posterior\u2019s fit, data type by data type')
     hi_bins = [r for m_, r in ratios if m_ >= 7.1]

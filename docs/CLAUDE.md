@@ -47,12 +47,12 @@ leaves figures out of either, the rest renumbered and the text naming a left-out
 reference solution's name. The example (since 2026-11-25: the 630k run _1795518346, MISFIT_SLIP 'exact' + MFD_GR +
 DATATYPES_EQUAL + SLIP_SUM ('between') + PLATE_RATE, 480 min, 8 x 132,000, the first PASS; before, _1795439419 (300
 min), _1794997938, _1794909134 and _1794825297) is example/output_figs (the fit figures, fig_targets_*, the fault
-figures by magnitude, along_strike/ and, when present, the K curves fig_k_curve*.png, drawn from the kept draws by
-scratch scripts, not a notebook step), the summary PDF
+figures by magnitude and along_strike/; since 2026-11-25, the user's request, the summary has no section on the posterior
+tables and representatives and no fig_slip_sections.png or _ruptures_1/_2: make_summary_pdf.py leaves them out itself), the summary PDF
 (workflow_summary.pdf in the repository's root since the user's d3ddc96, 2026-11-19; before, outside it at
 Inversions/Material/), and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
-fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png
-fig_slip_sections_ruptures_1.png fig_slip_sections_ruptures_2.png (the README with --md README.md --fig-dir
+fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png, each name its own word (in zsh a
+$VAR holding them is one word: nothing skipped, as happened on 2026-11-25) (the README with --md README.md --fig-dir
 example/output_figs --pdf-link example/workflow_summary.pdf --no-preamble --no-alternatives (2026-11-19, the user's request:
 no "Other ways to explore the model space" in the README; the PDF keeps it): the user trimmed the README to open on the
 overview's text, no run line, folder, dates, Overview heading or how-written line); example/output_figs holds only the figures shown (the three
