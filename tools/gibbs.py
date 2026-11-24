@@ -402,13 +402,16 @@ static double pm_f(const pmctx *pm, int32_t t, double v, double *fp)
    (the soft band, LW > 0) and of the paleo rows' half misfits f(ln y) (PM), between the predictions y + G_i d0 and
    y + G_i d1 (y = r + DY, the current prediction): +INFINITY if a prediction would not be above 0 at d1, -INFINITY if
    one is not at d0 (that state impossible) */
-static double lw_change(const double *data, const int32_t *indices, int64_t p0, int64_t p1, const double *r,
-                        const double *DY, const double *LW, const double *LWL, const double *LD, double d0, double d1,
-                        const pmctx *PM)
+static double lw_change(const double *data, const int32_t *indices, const int64_t *Q, int64_t p0, int64_t p1,
+                        const double *r, const double *DY, const double *LW, const double *LWL, const double *LD, double d0,
+                        double d1, const pmctx *PM)
 {
+    /* Q (or NULL): the weighted rows' entries (LWQ; then p0, p1 are the column's range in it, LWP[i], LWP[i + 1]): the
+       same rows in the same order, without reading every entry of the column (2026-11-24) */
     double acc = 0.0;
     int bad0 = 0;
-    for (int64_t p = p0; p < p1; p++) {
+    for (int64_t q_ = p0; q_ < p1; q_++) {
+        const int64_t p = Q ? Q[q_] : q_;
         const int32_t j = indices[p];
         const double w = LW[j];
         const int32_t t = PM ? PM->I[j] : -1;
@@ -1218,7 +1221,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         /* --log-band: the slice step, reversible under the rest of the target, is a proposal that
                            the soft band's change accepts or not (Metropolis), so the update stays exact */
                         if ((LW || ST) && !empty && m != xi) {
-                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, 0.0, m - xi, PM) : 0.0;
+                            double dp = LW ? (LWP ? lw_change(data, indices, LWQ, LWP[i], LWP[i + 1], r, DY, LW, LWL, LD, 0.0, m - xi, PM)
+                                    : lw_change(data, indices, NULL, p0, pe, r, DY, LW, LWL, LD, 0.0, m - xi, PM)) : 0.0;
                             if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: its change, from x_i to m */
                                 const int64_t b = ST->bx[i];
                                 const double y = r[ST->row[b]] + ST->dy[b];
@@ -1310,7 +1314,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             if (xl + dhi < g) on = 1; else if (xl + dlo >= g) on = 0;
                         }
                         if (on < 0) {
-                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) : 0.0;
+                            double dp = LW ? (LWP ? lw_change(data, indices, LWQ, LWP[i], LWP[i + 1], r, DY, LW, LWL, LD, -xi, m - xi, PM)
+                                    : lw_change(data, indices, NULL, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM)) : 0.0;
                             if (ST && ST->bx[i] >= 0) {
                                 const int64_t b = ST->bx[i];
                                 const double y = r[ST->row[b]] + ST->dy[b];
@@ -1356,7 +1361,8 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         }
                         if (on < 0) {
                             if (!have_g) g = lr - (log(uu) - log1p(-uu));
-                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) : 0.0;
+                            double dp = LW ? (LWP ? lw_change(data, indices, LWQ, LWP[i], LWP[i + 1], r, DY, LW, LWL, LD, -xi, m - xi, PM)
+                                    : lw_change(data, indices, NULL, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM)) : 0.0;
                             if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: on at m against off, exactly */
                                 const int64_t b = ST->bx[i];
                                 const double y = r[ST->row[b]] + ST->dy[b];
@@ -1494,16 +1500,19 @@ static int swap_in_band(const int64_t *indptr, const int32_t *indices, const dou
    prediction would not be above 0 */
 static double lw_swap(const int64_t *indptr, const int32_t *indices, const double *data, int64_t i, int64_t j,
                       double dl, const double *r, const double *DY, const double *LW, const double *LWL, const double *LD,
-                      const pmctx *PM)
+                      const pmctx *PM, const int64_t *LWP, const int64_t *LWQ)
 {
-    int64_t p = indptr[i], q = indptr[j];
-    const int64_t pe = indptr[i + 1], qe = indptr[j + 1];
+    /* LWP, LWQ (or NULL): the two columns' weighted rows' entries merged in place of the whole columns: the same rows,
+       in the same order, with the same changes (2026-11-24) */
+    int64_t a = LWP ? LWP[i] : indptr[i], b = LWP ? LWP[j] : indptr[j];
+    const int64_t ae = LWP ? LWP[i + 1] : indptr[i + 1], be = LWP ? LWP[j + 1] : indptr[j + 1];
     double acc = 0.0;
-    while (p < pe || q < qe) {
+    while (a < ae || b < be) {
+        const int64_t p = a < ae ? (LWP ? LWQ[a] : a) : -1, q = b < be ? (LWP ? LWQ[b] : b) : -1;
         int32_t row; double dv;
-        if (q >= qe || (p < pe && indices[p] < indices[q])) { row = indices[p]; dv = data[p] * dl; p++; }
-        else if (p >= pe || indices[q] < indices[p]) { row = indices[q]; dv = -data[q] * dl; q++; }
-        else { row = indices[p]; dv = data[p] * dl - data[q] * dl; p++; q++; }
+        if (q < 0 || (p >= 0 && indices[p] < indices[q])) { row = indices[p]; dv = data[p] * dl; a++; }
+        else if (p < 0 || indices[q] < indices[p]) { row = indices[q]; dv = -data[q] * dl; b++; }
+        else { row = indices[p]; dv = data[p] * dl - data[q] * dl; a++; b++; }
         const double w = LW[row];
         const int32_t t = PM ? PM->I[row] : -1;
         if (w <= 0.0 && t < 0) continue;
@@ -1557,7 +1566,8 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
               const double *RLO, const double *RHI, const double *LW, const double *LWL, const double *LD, const double *DY,
               const pmctx *PM, const double *SL2, const double *SH2, const stctx *ST,
               const int64_t *SBIN, int64_t SB, const double *LOD, const double *ZLO, const double *KU, const double *LLO,
-              const double *LHI, const double *SC, double zlo, double zhi, double gam, int64_t *CNT, double frac)
+              const double *LHI, const double *SC, double zlo, double zhi, double gam, int64_t *CNT, double frac,
+              const int64_t *LWP, const int64_t *LWQ)
 {
     /* frac < 1 (--swap-fraction): each pass proposes each pair with probability frac, independently (geometric skips
        through the list), a random choice made apart from the state, so each pass is still a valid move */
@@ -1586,7 +1596,7 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const double dl = mj - mi;
             const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
-            double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
+            double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM, LWP, LWQ) : 0.0);
             if (SBIN && SBIN[i] != SBIN[j]) {     /* --swap-cos-cross: x_i = mj and x_j = mi against x_i = mi and x_j = mj */
                 const int col = SSC_ON && CNT;    /* --collapse: the counts' ratio in place of the fractions on */
                 const double *LODk = col ? NULL : LOD + k * SB;
@@ -1784,7 +1794,7 @@ def build_kernel():
     L.sp_bounds.restype = None
     L.ss_collapse.restype = None
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3 + [P, D]
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3 + [P, D, P, P]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -2254,6 +2264,7 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
     SB = LOD.shape[1] if xb else 0
     groups = np.array_split(np.arange(K), max(1, min(threads, K)))
     shared = (*_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))   # built once, before the threads (see sweeps_c)
+    lwsub = _lw_sub_ptrs(T)
     stp = {int(g_[0]): _st_ptr(T, int(g_[0])) for g_ in groups if len(g_)}
 
     def work(ks):
@@ -2270,7 +2281,7 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
                      None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
                      None if not xb else _ptr(KC[0]), None if not xb else _ptr(KC[1]), None if not xb else _ptr(KC[2]),
                      T.zlo, T.zhi, T.gam, None if CNT is None or not xb else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8),
-                     float(getattr(T, 'swap_frac', 1.0)))
+                     float(getattr(T, 'swap_frac', 1.0)), *lwsub)
     if len(groups) == 1:
         work(groups[0])
     else:

@@ -251,6 +251,10 @@ gain for the slow bins.
 A swap pass visiting only the pairs with a rupture on (a heap through each rupture's pairs; bit-identical) was tried and
 removed: at 630k the on ruptures' pairs are most of the 13.6M, and the heap cost 1.058 s/sweep against the full pass's 0.387.
 swap_run skips the columns' dot products (ci, cj) under SL2 (split or exact misfit): only the Gaussian formula uses them.
+lw_change and lw_swap (the curve terms' and the log band's exact changes) iterate the per-column weighted-row list
+(LWP/LWQ, built for col_lwsums) when it exists, in place of every entry of the column(s); lw_swap merges the two columns'
+lists. The same rows in the same order: bit-identical at 630k; no measurable speed-up (the curve terms' own work, logs and
+table lookups, dominates; the 10% `sample` gave lw_change is that work, not the scan) (2026-11-24, the user's request).
 Off-bounds fallback with early stopping (2026-11-24, the user's go-ahead after scoping): sp_bounds(QI, C_row, HO);
 _off_bounds_qi also builds C_row (each row's C_j, inflated as QI) and HO (int32, each column's likelihood entries in order of
 G_ji^2 C_j, largest first; ~15 s and 4 bytes per nonzero at 630k, built in sample() before t0). In the bq branch, when the
