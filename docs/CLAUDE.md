@@ -44,9 +44,11 @@ run's summary as a PDF, about a paragraph per step with the run's figures, every
 line only, needs reportlab (uv run --no-project --with reportlab --with pillow --with numpy python ...); --md FILE writes
 the same as Markdown instead, without reportlab, figures linked from --fig-dir, --pdf-link naming the PDF; --skip-figs
 leaves figures out of either, the rest renumbered and the text naming a left-out one's file; --ref-name shortens the
-reference solution's name. The example (since 2026-11-24: the 630k run _1795439419, MISFIT_SLIP 'exact' + MFD_GR +
-DATATYPES_EQUAL + SLIP_SUM + PLATE_RATE, 300 min, 16 x 14,800; before, _1794997938, _1794909134 and _1794825297) is
-example/output_figs (the fit figures, fig_targets_*, the fault figures by magnitude and along_strike/), the summary PDF
+reference solution's name. The example (since 2026-11-25: the 630k run _1795518346, MISFIT_SLIP 'exact' + MFD_GR +
+DATATYPES_EQUAL + SLIP_SUM ('between') + PLATE_RATE, 480 min, 8 x 132,000, the first PASS; before, _1795439419 (300
+min), _1794997938, _1794909134 and _1794825297) is example/output_figs (the fit figures, fig_targets_*, the fault
+figures by magnitude, along_strike/ and, when present, the K curves fig_k_curve*.png, drawn from the kept draws by
+scratch scripts, not a notebook step), the summary PDF
 (workflow_summary.pdf in the repository's root since the user's d3ddc96, 2026-11-19; before, outside it at
 Inversions/Material/), and README.md, both made with --ref-name NZSHM22_InversionSolution-630k --skip-figs prelim.png
 fig_rate_magnitude_nnls.png fig_slip_rates_nnls.png fig_paleo_rates_nnls.png fig_slip_sections.png

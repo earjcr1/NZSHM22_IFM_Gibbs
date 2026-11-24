@@ -519,7 +519,7 @@ def main():
     # the figures that exist, numbered in the order they appear
     FIGS = ['prelim.png', 'nnls/fig_rate_magnitude_nnls.png', 'nnls/fig_slip_rates_nnls.png',
             'nnls/fig_paleo_rates_nnls.png', 'fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png'] + [f'{a.prior}/{f}' for f in (
-                'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
+                'fig_k_curve.png', 'fig_k_curve_coarser.png', 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png', 'fig_slip_sections.png',
                 'fig_slip_sections_ruptures_1.png', 'fig_slip_sections_ruptures_2.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png',
                 'along_strike/Alpine_Jacksons_to_Kaniere.png')]
@@ -1271,7 +1271,8 @@ def main():
             f'{p_:,.0f} effective draws for {lab} ({g_:,.0f} achieved)' for lab, p_, g_ in got) + '. ') if got else ''
     para(f'{tt("check_convergence.py")} judges each replicate against '
          + (f'the targets of its preset: ' if rmin is None else f'TARGETS {targets!r}: ')
-         + (f'all {len(names)} <b>pass</b>. ' if passes and all(p == 'PASS' for p in passes) else
+         + ((f'all {len(names)} <b>pass</b>. ' if len(names) > 1 else 'the run <b>passes</b>. ')
+            if passes and all(p == 'PASS' for p in passes) else
             'verdicts ' + ', '.join(n.split('/')[-1] + ' ' + verdict.get(n, 'n/a') for n in names) + ' ('
             + ('; '.join(n.split('/')[-1] + ': ' + why_check[n] for n in names if n in why_check) or
                f'see {tt("convergence_report.txt")} for the reasons') + '). ') + pred_txt
@@ -1375,6 +1376,23 @@ def main():
             f'{s_sub} of subsection means are within 10% (the tolerance asks for 90%)'
             + ('; the selection misses some tolerances, so the posterior-mean rate vector remains the exact input for '
                'mean hazard.' if s_verdict[1] and 'miss' in s_verdict[1] else '.') if reps and sel else ''))
+    kc, kc2 = f'{a.prior}/fig_k_curve.png', f'{a.prior}/fig_k_curve_coarser.png'
+    if kc in num or kc2 in num:                         # K curves, when drawn for the run (not a notebook step)
+        para('How many representatives the tolerances need: '
+             + (f'{fref(kc)} repeats {tt("select_draws.py")}\u2019s selection and checks for K from 2 up, beside the same '
+                'number of kept draws picked at random with equal weights' if kc in num else '')
+             + ('; ' if kc in num and kc2 in num else '')
+             + (f'{fref(kc2)} judges random draws by coarser criteria: each subsection weighted by its rate, the parent '
+                'sections by magnitude range, and the mean within 0.2 posterior sd' if kc2 in num else '') + '.')
+        figure(kc, 'Representative draws against K: the share of subsections whose weighted mean is within 10% of the exact '
+               'mean and whose 50% and 16% points are within 15% of the posterior\u2019s (left; the tolerance asks for 90%), '
+               'and the worst bin total and the total rate (right; within 2%); solid, k-means representatives with '
+               'calibrated weights, dashed, random draws with equal weights; bands over three seeds. Drawn for this run '
+               'from its kept draws (not a notebook step).', FW)
+        figure(kc2, 'Representative draws against K under coarser criteria, random draws with equal weights: subsections '
+               '(left) and parent sections by magnitude range (right), by count (today\u2019s check), weighted by rate, and '
+               'the mean within 0.2 posterior sd; bands over three seeds. Drawn for this run from its kept draws (not a '
+               'notebook step).', FW)
 
     head(f'{SN["posterior"]}. The posterior\u2019s fit, data type by data type')
     hi_bins = [r for m_, r in ratios if m_ >= 7.1]
