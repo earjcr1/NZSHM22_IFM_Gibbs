@@ -309,6 +309,11 @@ check(all("plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)" in src[f_] for f_ in
       and "plate_rate_strips='all'" in STEPS and '_platemax{S[\'SLIP_RATE_FACTOR\']:g}all' in src['run_config.py'],
       "PLATE_RATE's cap on every strip whatever CROSS_SECTIONS (2026-11-24, the user's request), in gibbs.py, "
       "best_fit_as_fitted.py and plate_rate.py's report; CROSS_SECTIONS chooses the summed slip rates' strips only")
+check(re.findall(r'^KEPT_DRAWS = (\S+)', cells[0][1], re.M) == ['1000'] and "'--keep-draws', g['KEPT_DRAWS']" in STEPS
+      and "kept_draws=g['KEPT_DRAWS'] if g['REPRESENTATIVES'] > 0 else 0" in STEPS and "_check(isinstance(kd, int)" in STEPS,
+      "notebook KEPT_DRAWS = 1000 (2026-11-24, the user's request): the whole draws kept for the representatives (gibbs.py "
+      "--keep-draws, with REPRESENTATIVES > 0), at least REPRESENTATIVES; about 10 x the largest number of representatives "
+      "to be tried; recorded (kept_draws)")
 check("ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 'drawn']" in src['gibbs.py']
       and 'void ss_collapse(' in src['gibbs.py'] and 'static inline double ssc_odds(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_collapse(') == 2 and 'ok &= selftest_spikeslab(collapse=True)' in src['gibbs.py']

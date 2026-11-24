@@ -81,6 +81,9 @@ def setup(g):
     _check(num(g['FLOOR']) and -16 < g['FLOOR'] < 0, 'FLOOR', g['FLOOR'], 'give log10 of the slab floor, a negative number')
     rep = g['REPRESENTATIVES']
     _check(isinstance(rep, int) and not isinstance(rep, bool) and rep >= 0, 'REPRESENTATIVES', rep, 'give a number of draws, 0 or more')
+    kd = g['KEPT_DRAWS']
+    _check(isinstance(kd, int) and not isinstance(kd, bool) and kd >= max(rep, 1), 'KEPT_DRAWS', kd,
+           f'give the whole draws kept for the representatives, at least REPRESENTATIVES ({rep}) and 1')
     th = g['THREADS']
     _check(isinstance(th, int) and not isinstance(th, bool) and th >= 1, 'THREADS', th, 'give a number of threads, 1 or more')
     mu = g['MFD_UNCERTAINTY']
@@ -132,7 +135,7 @@ def record_config(**more):
         g['CONFIG'] = dict(
             run_minutes=g['RUN_MINUTES'], targets=g['TARGETS'], dispersed_starts=g['DISPERSED_STARTS'], seed=g['SEED_USED'],
             code_dir=HERE, data_dir=g['DATA_DIR'], run_dir=g['RUN_DIR'], settings=g['P'], floor=g['FLOOR'],
-            representatives=g['REPRESENTATIVES'],
+            representatives=g['REPRESENTATIVES'], kept_draws=g['KEPT_DRAWS'] if g['REPRESENTATIVES'] > 0 else 0,
             slip_sections=g['SLIP_SECTIONS'], mfd_uncertainty=g['MFD_UNCERTAINTY'], down_the_middle=g['DOWN_THE_MIDDLE'],
             misfit=g['MISFIT'], misfit_slip=g['MISFIT_SLIP'], misfit_mfd=g['MISFIT_MFD'],
             mfd_gr=g['MFD_GR'] and g['MFD_GR_SPEC'], misfit_paleo=g['MISFIT_PALEO'], mfd_monotonic=g['MFD_MONOTONIC'],
@@ -367,7 +370,7 @@ def gibbs_args(out, seed, plan, keep=True, init=None):
          '--init', init, '--out', os.path.join(results_dir(), out), f"--diag-floor={g['FLOOR']}",
          '--slip-block', g['SLIP_BLOCK'], '--bins-block', g['BIN_BLOCK'], '--no-samples']
     if g['REPRESENTATIVES'] > 0 and keep:
-        a += ['--keep-draws', 1000]                   # whole draws kept for the representatives
+        a += ['--keep-draws', g['KEPT_DRAWS']]        # whole draws kept for the representatives (KEPT_DRAWS, 1000)
     a += ['--swap-cos', 0.99, '--swap-cos-cross', 0.99,   # swaps between near-duplicates, one threshold within a bin and across
           '--hyper-every', plan.get('hyper_every', 1), '--all-positive']
     return a + _terms(gibbs=True)

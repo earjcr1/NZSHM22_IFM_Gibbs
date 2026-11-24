@@ -673,6 +673,11 @@ exploratory 100/200/1.01, production 1000/2000/1.01, precise 10000/20000/1.005) 
 thin 8, and TARGETS 'exploratory'). FIGURE_SETTINGS RUN_MINUTES ('240 (16x56,000)'; older runs 'preset ...'); summary PDF
 RUN_MINUTES and TARGETS rows (older runs PRESET), the prediction beside the achieved draws; RUN_NAME _{RUN_MINUTES}min.
 630k very conservative run: tau 37 / 73 / ~2,100 sweeps -> 'production' ~245 min on 4 threads.
+KEPT_DRAWS (2026-11-24, the user's request; notebook, beside REPRESENTATIVES, default 1000, the value fixed in
+notebook_steps.gibbs_args before): the whole draws gibbs.py keeps (--keep-draws) when REPRESENTATIVES > 0, at least
+REPRESENTATIVES; recorded as kept_draws (0 without representatives). Rule of thumb: about 10 effective draws per
+representative, so ~10 x the largest K to be tried (select_draws.py --k on a copy of rate_vectors.*, so the run's own
+representatives stay); 4000 kept is ~10 GB at 630k. Not a model setting (not in RUN_NAME or FIGURE_SETTINGS).
 Infeasible polished starts redrawn (2026-11-24, the user's go-ahead): a 120-min run's start 4 (seed 80668435) polished
 to 127 rates on and a total rate of 0 (762 rows predicted at 0, 3 monotonic pairs broken), and gibbs.py's calibration
 refused it, stopping the notebook. dispersed_starts.py now checks each polished start as the sampler would (rates below
