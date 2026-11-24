@@ -129,7 +129,7 @@ check(argdefault(trees['gibbs.py'], '--slab') in (None, 'MISSING') and "a.prelim
       'gibbs.py: the slab always log-uniform (--slab, the square-root slab, removed 2026-11-23, with the hierarchical prior\'s, '
       'transfer moves\', --positive, --mfd-step-sd and the fixed internals\' options)')
 _pl = src['run_plan.py']
-check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.findall(r'^TARGETS = (\S+)', cells[0][1], re.M) == ["'production'"]
+check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['90'] and re.findall(r'^TARGETS = (\S+)', cells[0][1], re.M) == ["'production'"]
       and not re.search(r'^PRESETS? = ', cells[0][1], re.M) and "run_minutes=g['RUN_MINUTES'], targets=g['TARGETS']" in STEPS
       and "TARGETS = {'exploratory': (100, 200, 1.01)," in _pl and "'production': (1000, 2000, 1.01)," in _pl
       and "'precise': (10000, 20000, 1.005)}" in _pl and 'PRESET_TARGETS' in src['check_convergence.py']
@@ -143,7 +143,8 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       and not any("'--slab'" in c for _, c in cells)
       and re.findall(r'^MARGIN = (\S+)', _pl, re.M) == ['0.0'] and re.findall(r'^CHAINS_PER_THREAD = (\S+)', _pl, re.M) == ['2']
       and re.findall(r'^RHAT_SWEEPS = (\S+)', _pl, re.M) == ['90'],
-      "notebook RUN_MINUTES = 240 and TARGETS = 'production' (2026-11-17, in place of the presets): the runs planned just before "
+      "notebook RUN_MINUTES = 90 (since the user's commit 90b520a, 2026-11-24; 240 from 2026-11-17) and TARGETS = 'production' "
+      "(2026-11-17, in place of the presets): the runs planned just before "
       'sampling (run_plan.py: the time spent, sh() measured, calibration runs at two recording rates, the latest run\'s post-processing, no margin (10% until 2026-11-24); '
       '2 chains per thread (4 until 2026-11-24), at least 90 autocorrelation times of the bins\' fractions on after burn-in, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
@@ -187,11 +188,12 @@ check(not re.findall(r'^SLIP_BAND = ', cells[0][1], re.M) and 'slip_band' not in
       'notebook: no SLIP_BAND since 2026-11-10; every slip-rate, paleo and MFD prediction kept above zero (gibbs.py '
       '--all-positive, Target.set_groups; the factor band, --band, --slip-band and --paleo-band, removed 2026-11-23), with the '
       'limits\' exact test (selftest_band) in both self-test sets and set_groups checked against set_positive and set_band')
-check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['False'] and 'mfd_monotonic' in _cfg_keys
+check(re.findall(r'^MFD_MONOTONIC = (\S+)', cells[0][1], re.M) == ['True'] and 'mfd_monotonic' in _cfg_keys
       and any("a += ['--mfd-monotonic']" in c for c in [NBALL]) and not any('MFD_RISE_SD' in c for c in [NBALL])
       and "'--mfd-monotonic'" in src['gibbs.py'] and "a.transfers, a.positive, a.mfd_step_sd, a.mfd_rise_sd = None, False, None, 0.89" in src['gibbs.py']
       and "'monotonicity')" in src['gibbs.py'].split('\ndef selftest_band')[1].split('\ndef ')[0],
-      'notebook MFD_MONOTONIC = False (off by default since 2026-11-09; True from November 10th, out of the notebook from November 4th), '
+      'notebook MFD_MONOTONIC = True (on since the user\'s commit 90b520a, 2026-11-24; off by default from 2026-11-09, True from '
+      'November 10th, out of the notebook from November 4th), '
       'recorded and passed to gibbs.py --mfd-monotonic (a rising target\'s rise capped at --mfd-rise-sd 0.89 sd), with its '
       'exact test in the band\'s self-test')
 check('\ndef check_bin_magnitudes(' in src['cru_common.py'] and 'check_bin_magnitudes(load_problem(args.out)' in src['preliminaries.py']
@@ -206,11 +208,11 @@ check(all(o_ in src['best_fit_as_fitted.py'] for o_ in ("'--down-the-middle'", "
       'monotonic MFD through cru_common.mfd_monotonic, plate rate; augmented Lagrangian, polish, --snap-floor), and gibbs.py '
       '--init fitted notes a fit made with other terms')
 _md_all = '\n'.join(''.join(c_['source']) for c_ in nb['cells'] if c_['cell_type'] == 'markdown')
-check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
+check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['True']
       and re.findall(r'^MFD_GR_B = (\(.*?\))', cells[0][1], re.M) == ['(0.823, 0.959, 1.089)']
       and re.findall(r'^MFD_GR_N5 = (\(.*?\))', cells[0][1], re.M) == ['(2.65, 3.40, 4.57)']
       and re.findall(r'^MFD_GR_NSCALE = (\(.*?\))', cells[0][1], re.M) == ['(0.66, 1.41)'] and 'mfd_gr' in _cfg_keys
-      and re.findall(r'^RECONSIDER_MAGUNCERT = (\S+)', cells[0][1], re.M) == ['True']
+      and re.findall(r'^RECONSIDER_MAGUNCERT = (\S+)', cells[0][1], re.M) == ['False']
       and 'MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))' in src['mfd_gr.py'] and '_MAGRATIO = 3.92 / 3.40' in src['mfd_gr.py']
       and '+ tuple(mag))' in STEPS and "S['RECONSIDER_MAGUNCERT']" in src['run_config.py']
       and "rm = g['RECONSIDER_MAGUNCERT']" in STEPS and 'RECONSIDER_MAGUNCERT' in open(f'{ROOT}/docs/REPORT.md').read()
@@ -223,11 +225,11 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['False']
       and "'pdf']" in src['gibbs.py'] and '\ndef selftest_mfdpdf(' in src['gibbs.py'] and 'ok &= selftest_mfdpdf()' in src['gibbs.py']
       and "'pdf']" in src['best_fit_as_fitted.py'] and "'mfd_pdf_th' in z.files" in src['block_fit.py']
       and '\ndef curve_tables(' in src['paleo_misfit.py'] and 'mfd-bound' not in src['gibbs.py'],
-      'notebook MFD_GR = False (2026-11-17: each bin scored by its own target PDF, propagated through NZSHM22\'s partitioning, '
-      'mfd_gr.py; cru_D\'s bins by default) from NZSHM22\'s upper-plate knobs: MFD_GR_B (0.823, 0.959, 1.089) b\'s 10th '
+      'notebook MFD_GR = True (since the user\'s commit 90b520a, 2026-11-24; False before; 2026-11-17: each bin scored by its own '
+      'target PDF, propagated through NZSHM22\'s partitioning, mfd_gr.py; off, cru_D\'s bins) from NZSHM22\'s upper-plate knobs: MFD_GR_B (0.823, 0.959, 1.089) b\'s 10th '
       'percentile, mean and 90th, MFD_GR_N5 (2.65, 3.40, 4.57) the mean N conditioned on each (correlated), MFD_GR_NSCALE '
-      '(0.66, 1.41) the N scaling\'s 2-sigma values, RECONSIDER_MAGUNCERT = True a further factor on N, 1 / 3.92/3.40 / '
-      '1 + 2(3.92/3.40 - 1), three branches of equal weight (mfd_gr.MAGUNCERT); the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
+      '(0.66, 1.41) the N scaling\'s 2-sigma values, RECONSIDER_MAGUNCERT = False (since 90b520a; True before: a further factor on N, '
+      '1 / 3.92/3.40 / 1 + 2(3.92/3.40 - 1), three branches of equal weight, mfd_gr.MAGUNCERT); the prior\'s soft top from each bin\'s 84% point (mfd_pdf_q84); recorded, passed to preliminaries.py --mfd-gr, the bins then --mfd-misfit pdf in gibbs.py and '
       'best_fit_as_fitted.py (the paleo curves\' tables, paleo_misfit.curve_tables), with its exact test (selftest_mfdpdf) '
       'in the full set; block_fit.py scores the bins by their curves')
 check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'plate_rate' in _cfg_keys
@@ -242,13 +244,13 @@ check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'pla
       'notebook PLATE_RATE = True (back on November 10th, 2026, as a hard upper bound at SLIP_RATE_FACTOR on each strip\'s '
       'share of the plate rate), recorded and passed to gibbs.py --plate-rate with --rupture-set (rows from plate_rate.py on '
       'the --cross-sections strips) and to plate_rate.py --limits, with its exact test in the band\'s self-test')
-check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
+check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'between'"] and 'cross_sections' in _cfg_keys
       and any("if g['SLIP_SUM'] or g['PLATE_RATE']:" in c and "a += ['--cross-sections', g['CROSS_SECTIONS']]" in c for c in [NBALL])
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
       and '\ndef cross_sections(' in src['plate_rate.py'],
-      'notebook CROSS_SECTIONS = \'all\' (a notebook setting again since 2026-11-24, the user\'s request; gibbs.py\'s and '
-      'plate_rate.py\'s default too), recorded and passed with SLIP_SUM: its strips (plate_rate.py\'s cross_sections; '
+      'notebook CROSS_SECTIONS = \'between\' (since the user\'s commit 90b520a, 2026-11-24; \'all\' before; a notebook setting '
+      'again since 2026-11-24, the user\'s request; gibbs.py\'s and plate_rate.py\'s default stays \'all\'), recorded and passed with SLIP_SUM: its strips (plate_rate.py\'s cross_sections; '
       'PLATE_RATE\'s cap on every strip whatever it is)')
 check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_sum' in _cfg_keys
       and "'--slip-sum', action='store_true'" in src['gibbs.py']
@@ -271,7 +273,7 @@ check(not re.findall(r'^SLIP_BAND_SOFT = ', cells[0][1], re.M) and 'slip_band_so
       and 'static inline void col_dots_lw(' in src['gibbs.py'],
       'notebook: no SLIP_BAND_SOFT since 2026-11-10; the soft band\'s options removed from gibbs.py on 2026-11-23 (the user: the '
       'log and years misfits make it needless); its kernel machinery stays, the log misfits\' (lw_change, col_dots_lw)')
-check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP', 'MFD', 'PALEO')] == [["'linear'"], ["'half'"], ["'years'"]]
+check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP', 'MFD', 'PALEO')] == [["'exact'"], ["'half'"], ["'years'"]]
       and not re.findall(r"^MISFIT = '", cells[0][1], re.M)
       and {'misfit', 'misfit_slip', 'misfit_mfd', 'misfit_paleo', 'paleo_misfit', 'mfd_misfit', 'slip_misfit'} <= set(_cfg_keys)
       and "'paleo': {'rate': 'gaussian', 'years': 'years', 'half': 'gaussian+years'}}" in src['run_config.py']
@@ -288,7 +290,8 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
                                                          'ok &= selftest_mfdlog(b=0.5)', 'ok &= selftest_slipgeo()', 'ok &= selftest_slipgeo(b=1.0)'))
       and 'static double pm_f(' in src['gibbs.py'] and '\ndef fit_site(' in src['paleo_misfit.py'] and '\ndef tables(' in src['paleo_misfit.py']
       and '\ndef site_moments_mixed(' in src['paleo_misfit.py'] and "'mfd_log_s' in z.files" in src['block_fit.py'],
-      "notebook MISFIT_SLIP = 'linear', MISFIT_MFD = 'half', MISFIT_PALEO = 'years' (one per group since 2026-11-09, one MISFIT "
+      "notebook MISFIT_SLIP = 'exact' (since the user's commit 90b520a, 2026-11-24; 'linear' before), MISFIT_MFD = 'half', "
+      "MISFIT_PALEO = 'years' (one per group since 2026-11-09, one MISFIT "
       "before, 'half' by default from 2026-11-10; the defaults the user's choice, the space each group's uncertainties are worked "
       "out in; slip and MFD 'linear', 'log10', 'half', paleo 'rate', 'years', 'half'), recorded with their common setting or 'mixed' and each group's mode (cru_common.MISFIT_MODES, misfit_settings) and passed to gibbs.py --slip-misfit, "
       '--mfd-misfit and --paleo-misfit, with exact tests of each group\'s log and half modes in the full self-test set and '
