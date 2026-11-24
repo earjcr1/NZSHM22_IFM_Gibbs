@@ -1476,6 +1476,13 @@ MARK_BLUES_CYCLE = tuple(MARK_BLUES[i] for i in (0, 3, 1, 4, 2))
 MARK_BLUES_9 = ('#f7fcf8', '#dfefe9', '#c9e3da', '#a3d3cb', '#73bdcd', '#48a2cc', '#267eba', '#085ca4', '#083876')
 
 
+# ColorBrewer's Blues, its darkest 6 of 9 classes (light to dark): the slip-rate, paleo and targets figures' marks again since
+# 2026-11-25 (the user's choice; MARK_BLUES there earlier the same day, and these from 2026-11-23 before that)
+BLUES6 = ('#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b')
+# ... light and dark alternating, as before
+BLUES6_CYCLE = tuple(BLUES6[i] for i in (0, 3, 1, 4, 2, 5))
+
+
 def mark_blues_cmap():
     """The averaged Blues and GnBu as a continuous colormap (light to dark)."""
     from matplotlib.colors import LinearSegmentedColormap

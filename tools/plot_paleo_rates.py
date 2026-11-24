@@ -42,7 +42,7 @@ runs are found (a bar reaching an axis continues beyond it, below possibly to 0)
 including 0, on their edges as triangles; the 1:1 line; the
 bands; and the original row numbers of the --label rows furthest from their targets in units of uncertainty (default
 4). Each row's dot and bar share a colour, cycling along the targets through the six colours
-(ColorBrewer's Blues and GnBu averaged, the darkest 5 of 9 classes, light and dark alternating: cru_common.MARK_BLUES_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring rows never
+(ColorBrewer's Blues, its darkest 6 of 9 classes, light and dark alternating: cru_common.BLUES6_CYCLE and neighbour_colours; outlined in grey, as several are pale), so that neighbouring rows never
 share one; the colours only tell neighbours apart, and a row keeps its colour in every model's figure. Writes FIGURE (default: fig_paleo_rates.png next to the first rate vectors) and, as its table view, the same name
 with .txt: the mean model's chi-squared over the paleo rows, the shares within one and two uncertainties, and per row
 the target, the mean prediction, the posterior 16%, 50% and 84% points, the difference and the ratio.
@@ -66,7 +66,7 @@ import textwrap
 
 import numpy as np
 
-from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+from cru_common import (BLUES6, BLUES6_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_list, run_predictions,
                         run_config, figure_settings, settings_lines)
 
@@ -285,7 +285,7 @@ def main():
     from matplotlib.patches import Patch
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
-    col = neighbour_colours(t, MARK_BLUES_CYCLE)                       # each row's colour, unlike its neighbours'
+    col = neighbour_colours(t, BLUES6_CYCLE)                       # each row's colour, unlike its neighbours'
     nn = best_fit_rates(a.problem)                   # the best fit's predictions fix the axes, the same for every model
     fixed = nn is not None and len(nn) == Gp.shape[1]
     if fixed:
@@ -433,7 +433,7 @@ def main():
                                va='bottom', color=INK, fontsize=11.5, fontweight='bold')
         axs[i][0].annotate(sub, (0, 1), xycoords='axes fraction', xytext=(0, 25), textcoords='offset points',
                            va='bottom', color=INK2, fontsize=9)
-    few = MARK_BLUES[0], MARK_BLUES[2], MARK_BLUES[4]            # the legend shows a few of the colours
+    few = BLUES6[0], BLUES6[3], BLUES6[5]            # the legend shows a few of the colours
     handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=5.3, mfc=c, mec=MUTED,
                              mew=0.45) for c in few), 'prediction' if mm == 'model' else 'mean prediction')]
     if bars:

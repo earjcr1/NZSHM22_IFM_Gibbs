@@ -73,8 +73,10 @@ each section mean's posterior 16-84% range), plot_paleo_rates.py (paleo-rate tar
 log-log, with each prediction's posterior 16-84% range; with kept draws, the default, all of these figures and
 plot_slip_sections.py's draw each kept draw as an x instead (cru_common.kept_draws, kept_predictions, draw_xs); the three ranges come from the predictions the runs next to
 the rate vectors recorded, main_rep<k>.npz, cru_common.run_predictions; the slip-rate sections and paleo rows are
-coloured from cru_common.MARK_BLUES_CYCLE (ColorBrewer Blues and GnBu averaged class by class in RGB, the darkest 5 of
-9, light and dark alternating; every figure since 2026-11-25, the user's choice; Blues' darkest 6 from 2026-11-23); each kept draw's x
+coloured from cru_common.BLUES6_CYCLE in fig_slip_rates, fig_paleo_rates and fig_targets_slip/_paleo (ColorBrewer
+Blues, its darkest 6 of 9, light and dark alternating; back since late 2026-11-25, the user's choice, after a few hours
+of MARK_BLUES_CYCLE, Blues and GnBu averaged class by class in RGB, the darkest 5 of 9, which plot_slip_sections.py and
+plot_along_strike.py's heat maps still use); each kept draw's x
 faded as 1 / the number of kept draws (draw_xs: the alphas given are for X_REF_DRAWS = 1250, scaled by 1250 / N, N set by
 kept_draws, at least X_MIN_ALPHA 0.004; 2026-11-25, the user's requests: 1000 first, when 5,120 draws drew solid, then
 1500, then 1250); the slip-sections rupture figures (_ruptures_*) all in one blue, PANEL_BLUE #0060c0 = rgb(0, 96, 192), the same as plot_rate_magnitude's ruptures and bin totals, cycled along the targets so that neighbours differ, neighbour_colours; the
