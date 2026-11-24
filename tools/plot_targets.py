@@ -21,7 +21,10 @@ fig_targets_paleo.png: each paleo site's rate per year, the same two panels. The
   scores the site by. Both are centred on bestEstimate (the PDF's mode in years is at 1/bestEstimate), so the
   difference is the spread.
 fig_targets_mfd.png: the magnitude bins (MFD_GR's figure): per bin and cumulative, from M6.5, the total GR and its
-  partitioning (mfd_gr.py), cru_D's targets with NZSHM22's sigma, and MFD_GR's bin PDFs (16-84% and 2.3-97.7%), with
+  partitioning (mfd_gr.py), cru_D's target, the 16-84% (target +-1 sigma) of each NZSHM22 inversion the run refers to
+  (workflow_config.json's references, or --mfd-reference: black and red lines as the fit figures' references, each sigma
+  its own uncertainty scalar's; none: the target's with the run's rupture set's recipe), and MFD_GR's bin PDFs in blue
+  (#0060c0; 16-84% and 2.3-97.7%), with
   the run's MFD_GR knobs or, if the run did not use MFD_GR, the defaults (RECONSIDER_MAGUNCERT on) for comparison; the
   cumulative panel's MFD_GR band adds the bins drawn independently, as the sampler scores them (Monte Carlo). Needs
   an inversion solution's files (--ruptures, or the run's rupture set).
@@ -33,11 +36,13 @@ import os
 
 import numpy as np
 
-from cru_common import (MARK_BLUES_CYCLE, find_rupture_set, load_problem, neighbour_colours, run_config, slip_sections)
+from cru_common import (MARK_BLUES_CYCLE, REF_INKS, find_rupture_set, load_problem, neighbour_colours, run_config,
+                        slip_sections)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 OLD = '#b9b8b1'                       # the inputs' Gaussians: grey, wide
 BLUE, ORANGE = '#2a78d6', '#eb6834'
+GR_BLUE = '#0060c0'                                       # MFD_GR's bands (2026-11-25, the user's: as the fit figures' blue)
 
 
 def _axes_style(ax):
@@ -204,8 +209,39 @@ def paleo_figure(P, rd, cfg, outdir, slip_block='S', bins_block='MFD'):
     return out
 
 
-def mfd_figure(rd, cfg, outdir, n_mc=200000, seed=1):
-    """fig_targets_mfd.png and its table (see the module docstring): MFD_GR's bin PDFs against cru_D's targets."""
+def mfd_references(cfg, given=None):
+    """The NZSHM22 inversions whose MFD targets fig_targets_mfd.png draws (2026-11-25, the user's request): given (solution
+    folders, --mfd-reference), else the run's reference solutions (workflow_config.json's references, the fit figures'),
+    at most two. Each: dict(label, R: its stored supra-seismogenic target, 40 bins, sig: its sigma by NZSHM22's recipe at
+    its own uncertainty scalar and power, scalar, ink). Folders without an inversion solution's files are left out."""
+    import mfd_gr as M
+    dirs = list(given or [])
+    if not dirs:
+        for f_ in (cfg.get('references') or ([cfg['reference']] if cfg.get('reference') else [])):
+            dirs.append(os.path.dirname(os.path.dirname(os.path.abspath(f_))))      # .../solution/rates.csv -> the solution
+    out = []
+    for d_ in dirs[:len(REF_INKS)]:
+        rd_ = find_rupture_set(d_, search=False)
+        try:
+            pt = M.load_parts(rd_) if rd_ else None
+        except (OSError, ValueError, KeyError):
+            pt = None
+        if pt is None or pt.get('source') != 'solution':
+            print(f'fig_targets_mfd: {d_}: no inversion solution\'s MFD files; left out')
+            continue
+        Rr = np.asarray(pt['stored']['supra'], float)
+        out.append(dict(dir=d_, R=Rr, sig=M.nzshm22_sigma(Rr, pt), scalar=float(pt['scalar']), power=float(pt['power'])))
+    sc = [r_['scalar'] for r_ in out]
+    for k_, r_ in enumerate(out):
+        r_['ink'] = REF_INKS[k_]
+        r_['label'] = (f'NZSHM22, MFD σ ×{r_["scalar"]:g}' if len(set(sc)) == len(sc) else
+                       os.path.basename(os.path.normpath(r_['dir'])))
+    return out
+
+
+def mfd_figure(rd, cfg, outdir, n_mc=200000, seed=1, refs=None):
+    """fig_targets_mfd.png and its table (see the module docstring): MFD_GR's bin PDFs against cru_D's targets and the
+    NZSHM22 inversions' 16-84% (refs, mfd_references; none: the target with the run's rupture set's recipe sigma)."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -239,39 +275,51 @@ def mfd_figure(rd, cfg, outdir, n_mc=200000, seed=1):
     qc = np.percentile(np.cumsum(Ti[:, ::-1], 1)[:, ::-1], PQ, axis=0)
     cum = lambda y: np.cumsum(np.where(on, y, 0)[::-1])[::-1]
     Rc, sd_cn = cum(R), np.sqrt(cum(sig_n ** 2))
-    fig, axs = plt.subplots(1, 2, figsize=(13, 5.8), facecolor=SURFACE)
+    refs = list(refs or [])
+    if not refs:                                          # no NZSHM22 solution: the target with the recipe's sigma, as before
+        refs = [dict(R=R, sig=sig_n, ink=INK, scalar=float(parts['scalar']), power=float(parts['power']),
+                     label=f'cru_D target (NZSHM22 recipe, σ ×{float(parts["scalar"]):g})')]
+    for r_ in refs:
+        r_['Rc'], r_['sdc'] = cum(r_['R']), np.sqrt(cum(r_['sig'] ** 2))
+    pos = lambda y: np.where(y > 0, y, np.nan)            # a lower edge at or below 0: off the log axis
+    fig, axs = plt.subplots(1, 2, figsize=(13, 6.4), facecolor=SURFACE)
     for ax, cumul in zip(axs, (False, True)):
         _axes_style(ax)
         xs = X - 0.05 if cumul else X
         allb = (lambda y: np.cumsum(y[::-1])[::-1]) if cumul else (lambda y: y)
         for y, ls, lab in ((c['total'], '-', f'total GR (N {Nc:.2f}, b {bm:g})'), (c['off'], ':', 'truly off-fault'),
                            (c['sub'], '-.', 'sub-seismogenic on-fault')):
+            lab = None if cumul else lab                  # one legend, below both panels
             yy = allb(np.where(y > 1e-19, y, 0 if cumul else np.nan))
             if cumul:
                 yy = np.where(yy > 1e-12, yy, np.nan)
             ax.plot(xs, yy, color=MUTED, lw=1.6, ls=ls, label=lab, zorder=2)
         xo = xs[on]
         if not cumul:
-            ax.fill_between(xo, qi[0], qi[4], color=ORANGE, alpha=0.14, lw=0, label='MFD_GR bin PDF 2.3–97.7%', zorder=3)
-            ax.fill_between(xo, qi[1], qi[3], color=ORANGE, alpha=0.30, lw=0, label='MFD_GR bin PDF 16–84%', zorder=3)
-            ax.fill_between(xo, np.maximum(R[on] - sig_n[on], 1e-6), R[on] + sig_n[on], color=BLUE, alpha=0.45, lw=0,
-                            label='cru_D target ±1σ (NZSHM22 recipe)', zorder=4)
-            ax.plot(xo, R[on], color=INK, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, label='supra-seismogenic target', zorder=5)
+            ax.fill_between(xo, qi[0], qi[4], color=GR_BLUE, alpha=0.13, lw=0, label='MFD_GR bin PDF 2.3–97.7%', zorder=3)
+            ax.fill_between(xo, qi[1], qi[3], color=GR_BLUE, alpha=0.30, lw=0, label='MFD_GR bin PDF 16–84%', zorder=3)
+            for r_ in refs:
+                ax.plot(xo, r_['R'][on] + r_['sig'][on], color=r_['ink'], lw=1.4, zorder=4, label=f'{r_["label"]}: 16–84% (±1σ)')
+                ax.plot(xo, pos(r_['R'][on] - r_['sig'][on]), color=r_['ink'], lw=1.4, zorder=4)
+            ax.plot(xo, R[on], color=INK2, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, label='supra-seismogenic target', zorder=5)
         else:
-            ax.fill_between(xo, qc[1][on], qc[3][on], color=ORANGE, alpha=0.30, lw=0,
-                            label='MFD_GR 16–84% as scored (bins independent)', zorder=3)
-            ax.fill_between(xo, np.maximum(Rc[on] - sd_cn[on], 1e-6), Rc[on] + sd_cn[on], color=BLUE, alpha=0.45, lw=0,
-                            label='cru_D ±1σ (bins independent)', zorder=4)
-            ax.plot(xo, Rc[on], color=INK, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, label='supra-seismogenic target', zorder=5)
+            ax.fill_between(xo, qc[1][on], qc[3][on], color=GR_BLUE, alpha=0.30, lw=0, zorder=3)
+            for r_ in refs:
+                ax.plot(xo, r_['Rc'][on] + r_['sdc'][on], color=r_['ink'], lw=1.4, zorder=4)
+                ax.plot(xo, pos(r_['Rc'][on] - r_['sdc'][on]), color=r_['ink'], lw=1.4, zorder=4)
+            ax.plot(xo, Rc[on], color=INK2, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, zorder=5)
         ax.set_yscale('log')
         ax.set_xlim(6.45, X[on].max() + 0.1)
         top = (max(qi[4].max(), c['total'][X > 6.45].max()) if not cumul else max(qc[4][on].max(), allb(c['total'])[X - 0.05 > 6.45].max()))
+        top = max([top] + [float(np.nanmax((r_['Rc'] + r_['sdc'] if cumul else r_['R'] + r_['sig'])[on])) for r_ in refs])
         ax.set_ylim(min(qi[0].min(), Rc[on].min()) / 2, top * 1.3)
         ax.axvline(6.8, color=MUTED, lw=0.8, ls=(0, (2, 3)), zorder=1)
         ax.set_xlabel('magnitude' + (' M (lower edge: rate of M or larger)' if cumul else ' (bin centre, 0.1 bins)'), color=INK2, fontsize=10)
         ax.set_ylabel('cumulative rate N(≥M) per year' if cumul else 'rate per year in the bin', color=INK2, fontsize=10)
-        ax.set_title('Cumulative' if cumul else 'Per bin', color=INK, fontsize=11, loc='left', fontweight='bold')
-        ax.legend(fontsize=8.1, frameon=False, loc='upper right', labelcolor=INK2)
+        ax.set_title('Cumulative (the bins drawn independently, as scored)' if cumul else 'Per bin', color=INK, fontsize=11,
+                     loc='left', fontweight='bold')
+    fig.legend(*axs[0].get_legend_handles_labels(), fontsize=8.6, frameon=False, loc='lower center', ncol=4,
+               labelcolor=INK2, bbox_to_anchor=(0.5, 0.0))
     mtxt = (f', magnitude factor m {"/".join(f"{x_:.4g}" for x_ in mk)} (three branches, equal weights)' if mk else '')
     fig.suptitle('The magnitude bins: NZSHM22’s targets (cru_D) and MFD_GR’s PDFs', x=0.06, ha='left', color=INK,
                  fontsize=13, fontweight='bold')
@@ -279,19 +327,25 @@ def mfd_figure(rd, cfg, outdir, n_mc=200000, seed=1):
     fig.text(0.06, 0.93, '\n'.join(textwrap.fill(p_, 175) for p_ in (f'MFD_GR{"" if used else " (not used in this run: its defaults, for comparison)"}: b {bl:g}/{bm:g}/{bh:g} '
                            f'(10/50/90%), N {K["n"][0]:g}/{K["n"][1]:.2f}/{K["n"][2]:g} at each (correlated), N scaling '
                            f'{sl:g}–{sh:g} (±2σ){mtxt}.\nCentral target: b’s mean, its N{", m’s middle value" if mk else ""}, s = 1 '
-                           f'(N {Nc:.2f}). Lower band edges at or below 0 are cut at the axis.').split('\n')),
+                           f'(N {Nc:.2f}). ' + ('NZSHM22’s inversions: each one’s target ±1σ, σ its uncertainty scalar × the recipe ('
+                           + ', '.join(f'×{r_["scalar"]:g}' for r_ in refs) + '). ' if refs[0].get('dir') else '')
+                           + 'Lower edges at or below 0 are cut at the axis.').split('\n')),
              color=INK2, fontsize=8.8, ha='left', va='top', linespacing=1.35)
-    fig.tight_layout(rect=(0, 0, 1, 0.86))
+    fig.tight_layout(rect=(0, 0.1, 1, 0.86))
     out = os.path.join(outdir, 'fig_targets_mfd.png')
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
     with open(out[:-4] + '.txt', 'w') as f_:
         f_.write(f'MFD_GR {spec} ({"used" if used else "not used in this run; its defaults"}); per bin: cru_D\'s target and sigma, '
                  'MFD_GR\'s target (the same knobs\' centre) and its 2.3, 15.9, 50, 84.1, 97.7% points; cumulative from the bin\'s lower '
-                 'edge: the target and the 15.9-84.1% of the bins drawn independently\n')
+                 'edge: the target and the 15.9-84.1% of the bins drawn independently; then per reference ('
+                 + '; '.join(f'{r_["label"]}, σ ×{r_["scalar"]:g}' for r_ in refs) + '): its target and sigma per bin, '
+                 'and cumulative its target and summed sigma\n')
         for k_, j in enumerate(js):
             f_.write(f'{X[j]:5.2f} {R[j]:10.4e} {sig_n[j]:10.4e} ' + ' '.join(f'{v:10.4e}' for v in qi[:, k_])
-                     + f' | {Rc[j]:10.4e} {qc[1][j]:10.4e} {qc[3][j]:10.4e}\n')
+                     + f' | {Rc[j]:10.4e} {qc[1][j]:10.4e} {qc[3][j]:10.4e}'
+                     + ''.join(f' | {r_["R"][j]:10.4e} {r_["sig"][j]:10.4e} {r_["Rc"][j]:10.4e} {r_["sdc"][j]:10.4e}' for r_ in refs)
+                     + '\n')
     return out
 
 
@@ -308,6 +362,9 @@ def main():
     ap.add_argument('--grey', default='cfm', choices=['cfm', 'gaussian'],
                     help='the slip figure\'s grey bars: the CFM\'s SR_min to SR_max times the slip-rate factor (cfm, the default '
                          'since 2026-11-25) or the inputs\' Gaussian\'s 2.3-97.7%% (gaussian)')
+    ap.add_argument('--mfd-reference', action='append', default=None, metavar='SOLUTION',
+                    help='an NZSHM22 inversion solution\'s folder whose MFD target and sigma (16-84%%) the MFD figure draws, '
+                         'up to twice (default: the run\'s reference solutions, workflow_config.json\'s references)')
     a = ap.parse_args()
     cfg = run_config(a.config, a.problem) or {}
     rd = find_rupture_set(a.ruptures or cfg.get('rupture_dir') or '')
@@ -317,7 +374,7 @@ def main():
     want = set(a.only.split(','))
     P = load_problem(a.problem) if want & {'slip', 'paleo'} else None
     for k, fn in (('slip', lambda: slip_figure(P, rd, cfg, outdir, old_k=a.old_sd, grey=a.grey)), ('paleo', lambda: paleo_figure(P, rd, cfg, outdir)),
-                  ('mfd', lambda: mfd_figure(rd, cfg, outdir))):
+                  ('mfd', lambda: mfd_figure(rd, cfg, outdir, refs=mfd_references(cfg, a.mfd_reference)))):
         if k in want:
             try:
                 print('wrote', fn())

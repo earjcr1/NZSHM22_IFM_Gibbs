@@ -1208,8 +1208,10 @@ def main():
            'recurrence interval seen in rate, and never reaches zero, where several of the Gaussians do.', FW)
     figure('fig_targets_mfd.png', 'The magnitude bins. Left, per bin: the total Gutenberg\u2013Richter MFD and NZSHM22\u2019s '
            'partitioning of it (the truly off-fault and the sub-seismogenic on-fault MFDs), the supra-seismogenic target '
-           'that remains (cru_D\u2019s, black) with NZSHM22\u2019s \u00b11\u03c3 (blue), and MFD_GR\u2019s PDF for each bin '
-           '(orange: 16\u201384% and 2.3\u201397.7%), propagated from the logic tree\u2019s correlated (b, N) pairs, the N '
+           'that remains (cru_D\u2019s, dark grey dots), the 16\u201384% (target \u00b11\u03c3) of each NZSHM22 inversion '
+           'the run refers to, each with its own uncertainty scalar on the recipe\u2019s \u03c3 (black and red lines: '
+           'here MFD \u03c3 \u00d70.1 and \u00d71; where \u03c3 exceeds the target the lower line leaves the log axis), '
+           'and MFD_GR\u2019s PDF for each bin (blue: 16\u201384% and 2.3\u201397.7%), propagated from the logic tree\u2019s correlated (b, N) pairs, the N '
            'scaling and, with RECONSIDER_MAGUNCERT, the magnitude-uncertainty factor on N. Right, cumulative: the same '
            'targets summed from each magnitude up, with the band the bins give when each is drawn from its own PDF, as '
            'the sampler scores them (independently). The central target is cru_D\u2019s either way; MFD_GR widens each '
