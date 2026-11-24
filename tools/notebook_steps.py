@@ -144,7 +144,7 @@ def record_config(**more):
             cfm_timeframe_shape='fit' if g['CFM_TIMEFRAME'] and g['CFM_SLIPRATES'] else None,
             cfm_template_rho=g['CFM_TEMPLATE_RHO'], cfm_rate_links=g['CFM_RATE_LINKS'] and g['CFM_TEMPLATE_RHO'] is not None,
             slip_rate_factor=g['SLIP_RATE_FACTOR'], slip_sd_multiplier=1, cross_sections=g['CROSS_SECTIONS'],
-            slip_sum=g['SLIP_SUM'], slip_sum_l0=g['SLIP_SUM_L0'], rupture_set=g['RUPTURE_SET'], rupture_dir=g['RUPTURE_DIR'],
+            slip_sum=g['SLIP_SUM'], slip_sum_l0=g['SLIP_SUM_L0'], plate_rate_strips='all', rupture_set=g['RUPTURE_SET'], rupture_dir=g['RUPTURE_DIR'],
             reference=(reference_solutions()[0] or [(None, None)])[0][0],
             references=[f for f, _ in reference_solutions()[0]], slip_block=g['SLIP_BLOCK'], bin_block=g['BIN_BLOCK'],
             threads=g['THREADS'], log_file=g['LOG_FILE'], started=time.strftime('%Y-%m-%d %H:%M'))

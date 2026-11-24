@@ -227,7 +227,8 @@ def sampler_terms(P, a):
     if a.plate_rate is not None:
         from plate_rate import parse_limits, plate_rows
         lo_p, hi_p = parse_limits(a.plate_rate)
-        A_p = plate_rows(rd, P, a.cross_sections, a.slip_block, cs=cs)[0]
+        cs_p = cs if a.cross_sections == 'all' else cross_sections(rd, P, 'all', a.slip_block)   # every strip (gibbs.py's)
+        A_p = plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)[0]
         k_ = A_p.shape[0]
         cons.append(('the plate rate', sp_.csr_matrix(A_p), np.full(k_, -np.inf if lo_p is None else lo_p), np.full(k_, hi_p)))
     return extra, cons

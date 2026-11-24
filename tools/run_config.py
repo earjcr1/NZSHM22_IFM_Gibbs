@@ -28,9 +28,6 @@ SLIP_SECTIONS = 'auto'                         # each run of subsections holding
 RUPTURE_SET = 'auto'                           # the OpenSHA rupture set: the one folder in DATA_DIR with a ruptures/ (a rupture set, NZSHM22_RuptureSet-...,
                                                # or an inversion solution, NZSHM22_InversionSolution-211k; its solution/rates.csv, if any, drawn for comparison);
                                                # or that folder's name, or its ruptures/ folder, in DATA_DIR (always needed: the CFM's slip rates map onto its subsections)
-CROSS_SECTIONS = 'all'                         # SLIP_SUM's and PLATE_RATE's strips of cross-sections perpendicular to the plate motion, each the mean
-                                               # subsection trace length wide, over all of New Zealand (166 at 211,000 ruptures); 'between': only the 72
-                                               # between the Alpine Fault's offshore end and the Needles-Wairarapa step-over (plate_rate.py)
 CFM_SLIPRATES = True                           # the slip rates from the NZ Community Fault Model (cru_common.CFM_CSV, data/NZ_CFM_v1_0.csv;
                                                # preliminaries.py --cfm-sliprates, with the rupture set), no longer a setting since 2026-11-09:
                                                # each subsection's slip rate a split normal in mm/yr from its parent fault's line, mode
@@ -56,7 +53,7 @@ DISPERSED_STARTS = True                        # every chain from its own prior 
                                                # every chain from the NNLS best fit, which cleaning then computes, for tests only
                                                # (tools/run_quick_checks.sh)
 SLIP_BLOCK, BIN_BLOCK = 'S', 'MFD'             # the row groups for the subsection and magnitude-bin summaries (cleaning names them)
-FIXED = ('SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
+FIXED = ('SLIP_SECTIONS', 'RUPTURE_SET', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',
          'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')
 OVERRIDABLE = FIXED + ('RUN_DIR', 'RUN_PLAN')  # what run_nb.py may set through _OVERRIDES (RUN_DIR: its own folder; RUN_PLAN: a fixed
                                                # plan, dict(chains, sweeps, burn, thin, replicates), in place of RUN_MINUTES's, for tests)
@@ -80,7 +77,7 @@ def derived_settings(g):
                      ('half',) * 3: 'half'}.get((g['MISFIT_SLIP'], g['MISFIT_MFD'], g['MISFIT_PALEO']), 'mixed')   # for gibbs.py
     if g['MFD_GR']:                                # MFD_GR: the bins scored by their own PDFs, whatever MISFIT_MFD says
         out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'
-    fixed = dict(SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET, CROSS_SECTIONS=CROSS_SECTIONS,
+    fixed = dict(SLIP_SECTIONS=SLIP_SECTIONS, RUPTURE_SET=RUPTURE_SET,
                  CFM_SLIPRATES=CFM_SLIPRATES, CFM_RATE_LINKS=g['CFM_TEMPLATE_RHO'] is not None, DOWN_THE_MIDDLE=DOWN_THE_MIDDLE,
                  SLIP_BLOCK=SLIP_BLOCK, BIN_BLOCK=BIN_BLOCK, MFD_UNCERTAINTY=MFD_UNCERTAINTY)
     fixed['DISPERSED_STARTS'] = DISPERSED_STARTS
@@ -122,7 +119,7 @@ def run_name(g, d):
                   if S.get('RECONSIDER_MAGUNCERT') else '') if S['MFD_GR'] else '')
             + (f"_mfdtau{S['MFD_GR_TAU']:g}" if S['MFD_GR'] and S.get('MFD_GR_TAU') is not None else '')
             + ('_dtequal' if S.get('DATATYPES_EQUAL') else '')
-            + (f"_platemax{S['SLIP_RATE_FACTOR']:g}{S['CROSS_SECTIONS']}" if S['PLATE_RATE'] else '')
+            + (f"_platemax{S['SLIP_RATE_FACTOR']:g}all" if S['PLATE_RATE'] else '')   # every strip since 2026-11-24
             + ('_cfm' + ('tf' if S['CFM_TIMEFRAME'] else '')
                + (f"tmpl{S['CFM_TEMPLATE_RHO']:g}" + ('links' if S['CFM_RATE_LINKS'] else '')
                   if S['CFM_TEMPLATE_RHO'] is not None else '') if S['CFM_SLIPRATES'] else '')

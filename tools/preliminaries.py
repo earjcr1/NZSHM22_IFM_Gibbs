@@ -393,6 +393,10 @@ def main():
     ap.add_argument('--lowest-bin', type=float, default=6.8, help='lower magnitude edge of the lowest bin row left after '
                     'cleaning (default 6.8), for finding the M7.0-7.1 bin, as in plot_rate_magnitude.py')
     ap.add_argument('--bin-width', type=float, default=0.1, help='magnitude width of every bin (default 0.1)')
+    ap.add_argument('--dup-cos', type=float, default=0.99, metavar='C',
+                    help='keep near-duplicate pairs with cosine above C (default 0.99), within a '
+                         'magnitude bin and across, for gibbs.py --swap-cos and --swap-cos-cross; a lower C finds more pairs, '
+                         'with more memory and time')
     ap.add_argument('--dup-cross-cos', type=float, default=None, metavar='C',
                     help='also keep near-duplicate pairs with cosine above C (below 0.99) whose ruptures are in different '
                          'magnitude bins, for gibbs.py --swap-cos-cross (the notebook: 0.95); same-bin pairs stay at 0.99')
@@ -930,6 +934,9 @@ def main():
 
     # ---- duplicates
     dup = None
+    if not 0.0 < args.dup_cos < 1.0:
+        raise SystemExit(f'--dup-cos {args.dup_cos:g}: give a cosine between 0 and 1 (0.99 by default)')
+    dup_th = tuple(sorted({float(args.dup_cos), 0.99, 0.999, 0.9999} - {t_ for t_ in (0.99, 0.999, 0.9999) if t_ < args.dup_cos}))
     if not args.no_duplicates:
         t = time.time()
         if args.dup_cross_cos is not None and args.bins_block in bnames:   # each column's bin: its bin row's index
@@ -937,10 +944,10 @@ def main():
             cbin = np.full(G.shape[1], -1, np.int64)
             for k_ in range(Gbr.shape[0]):
                 cbin[Gbr.indices[Gbr.indptr[k_]:Gbr.indptr[k_ + 1]]] = k_
-            dup = near_duplicates(G, cn, low=args.dup_cross_cos,
+            dup = near_duplicates(G, cn, thresholds=dup_th, low=args.dup_cross_cos,
                                   keep_low=lambda i, j: (cbin[i] != cbin[j]) & (cbin[i] >= 0) & (cbin[j] >= 0))
         else:
-            dup = near_duplicates(G, cn)
+            dup = near_duplicates(G, cn, thresholds=dup_th)
         took = time.time() - t
         flat_txt = f', {dup["flat_columns"]} flat columns compared with one another' if dup['flat_columns'] else ''
         say(f'== near-duplicate columns (cosine similarity; {100 * dup["computed"]:.1f}% of the cosines a full search computes, '
@@ -950,7 +957,7 @@ def main():
             say(f'   {k:10s}: {v["pairs"]:7d} pairs, {v["cols_in_groups"]:6d} columns in {v["groups"]:5d} groups, largest group {v["largest"]}')
         say(f'   exactly proportional pairs (cos > 1 - 1e-12): {dup["exact_proportional_pairs"]}')
         if args.dup_cross_cos is not None and args.bins_block in bnames:
-            nx_ = int(np.sum(dup['pairs_cos'] <= 0.99))
+            nx_ = int(np.sum(dup['pairs_cos'] <= min(dup_th)))
             say(f'   cos>{args.dup_cross_cos:g} across magnitude bins (--dup-cross-cos, for gibbs.py --swap-cos-cross): {nx_} more '
                 f'pairs, between ruptures in different bins')
 
@@ -987,7 +994,7 @@ def main():
              **({} if m_nnls is None else dict(m_nnls=m_nnls, r_nnls=r, chi2_min=chi2_min)), block=block,
              dup_i=dup['pairs_i'] if dup else np.zeros(0, int), dup_j=dup['pairs_j'] if dup else np.zeros(0, int),
              dup_cos=dup['pairs_cos'] if dup else np.zeros(0),
-             dup_cross_cos=np.nan if args.dup_cross_cos is None else float(args.dup_cross_cos))
+             dup_cross_cos=np.nan if args.dup_cross_cos is None else float(args.dup_cross_cos), dup_cos_min=float(min(dup_th)))
     if m_nnls is not None:
         m_orig = np.zeros(A.shape[1])                    # the best fit as rate vectors (original rupture numbering, removed
         m_orig[keep_c] = m_nnls                          # ruptures 0), for the fit figures (plot_*.py)

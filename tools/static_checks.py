@@ -242,13 +242,14 @@ check(re.findall(r'^PLATE_RATE = (\S+)', cells[0][1], re.M) == ['True'] and 'pla
       'notebook PLATE_RATE = True (back on November 10th, 2026, as a hard upper bound at SLIP_RATE_FACTOR on each strip\'s '
       'share of the plate rate), recorded and passed to gibbs.py --plate-rate with --rupture-set (rows from plate_rate.py on '
       'the --cross-sections strips) and to plate_rate.py --limits, with its exact test in the band\'s self-test')
-check(re.findall(r'^CROSS_SECTIONS = (\S+)', src['run_config.py'], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
+check(re.findall(r'^CROSS_SECTIONS = (\S+)', cells[0][1], re.M) == ["'all'"] and 'cross_sections' in _cfg_keys
       and any("if g['SLIP_SUM'] or g['PLATE_RATE']:" in c and "a += ['--cross-sections', g['CROSS_SECTIONS']]" in c for c in [NBALL])
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['gibbs.py']
       and "'--cross-sections', default='all', choices=['all', 'between']" in src['plate_rate.py']
       and '\ndef cross_sections(' in src['plate_rate.py'],
-      'notebook CROSS_SECTIONS = \'all\' (gibbs.py\'s and plate_rate.py\'s default too), recorded and passed with '
-      'SLIP_SUM: its strips (plate_rate.py\'s cross_sections; gibbs.py --plate-rate uses them too)')
+      'notebook CROSS_SECTIONS = \'all\' (a notebook setting again since 2026-11-24, the user\'s request; gibbs.py\'s and '
+      'plate_rate.py\'s default too), recorded and passed with SLIP_SUM: its strips (plate_rate.py\'s cross_sections; '
+      'PLATE_RATE\'s cap on every strip whatever it is)')
 check(re.findall(r'^SLIP_SUM = (\S+)', cells[0][1], re.M) == ['True'] and 'slip_sum' in _cfg_keys
       and "'--slip-sum', action='store_true'" in src['gibbs.py']
       and 'from plate_rate import describe_slip_sum, slip_sum_rows' in src['gibbs.py']
@@ -303,6 +304,11 @@ check('void sp_tables(' in src['gibbs.py'] and 'static inline double spt_f(' in 
       "would be, and with SLIP_SUM each cross-section by its parents' densities convolved; the kernel reads tables for rows with "
       "L2 < 0, its slice floor quasiconvex; self-tests selftest_exact and selftest_sum_pdf in both lists; block_fit scores the same")
 
+check(all("plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)" in src[f_] for f_ in ('gibbs.py', 'best_fit_as_fitted.py'))
+      and "A, info = plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)" in src['plate_rate.py']
+      and "plate_rate_strips='all'" in STEPS and '_platemax{S[\'SLIP_RATE_FACTOR\']:g}all' in src['run_config.py'],
+      "PLATE_RATE's cap on every strip whatever CROSS_SECTIONS (2026-11-24, the user's request), in gibbs.py, "
+      "best_fit_as_fitted.py and plate_rate.py's report; CROSS_SECTIONS chooses the summed slip rates' strips only")
 check("ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 'drawn']" in src['gibbs.py']
       and 'void ss_collapse(' in src['gibbs.py'] and 'static inline double ssc_odds(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_collapse(') == 2 and 'ok &= selftest_spikeslab(collapse=True)' in src['gibbs.py']
@@ -482,18 +488,18 @@ check(re.findall(r"^RUPTURE_SET = ('[^']*')", src['run_config.py'], re.M) == ["'
 # every model setting recorded, in the figures' settings table, in the run name, in the summary PDF and documented
 MODEL_SETTINGS = [
                   'MISFIT_SLIP', 'MISFIT_MFD', 'MISFIT_PALEO', 'MFD_MONOTONIC', 'MFD_GR', 'MFD_GR_TAU', 'DATATYPES_EQUAL', 'SLIP_ALONG_RUPTURE', 'CFM_TIMEFRAME', 'CFM_TEMPLATE_RHO',
-                  'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'PLATE_RATE', 'RUN_MINUTES', 'FLOOR']
+                  'SLIP_RATE_FACTOR', 'SLIP_SUM', 'SLIP_SUM_L0', 'CROSS_SECTIONS', 'PLATE_RATE', 'RUN_MINUTES', 'FLOOR']
 _rc = src['run_config.py']
 check('setup(globals())' in cells[0][1] and 'g.update(derived_settings(g))' in STEPS
       and cells[0][1].index('setup(globals())') > cells[0][1].index('SEED = ')
       and all(re.search(rf'^{s_} = ', _rc, re.M) and not re.search(rf'^{s_} = ', cells[0][1], re.M)
-              for s_ in ('SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_SLIPRATES', 'DISPERSED_STARTS'))
+              for s_ in ('SLIP_SECTIONS', 'RUPTURE_SET', 'CFM_SLIPRATES', 'DISPERSED_STARTS'))
       and not re.search(r'^BLOCKS = ', _rc, re.M)
-      and "FIXED = ('SLIP_SECTIONS', 'RUPTURE_SET', 'CROSS_SECTIONS', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')" in _rc
+      and "FIXED = ('SLIP_SECTIONS', 'RUPTURE_SET', 'CFM_RATE_LINKS', 'DOWN_THE_MIDDLE',\n         'SLIP_BLOCK', 'BIN_BLOCK', 'MFD_UNCERTAINTY', 'DISPERSED_STARTS')" in _rc
       and "if 'CFM_SLIPRATES' in ov and ov['CFM_SLIPRATES'] is not True:" in _rc
       and "('SLIP_SECTIONS' + str(S['SLIP_SECTIONS']) + '_' if S['SLIP_SECTIONS'] != 'auto' else '')" in _rc
       and 'from run_config import OVERRIDABLE' in open(f'{ROOT}/tools/run_nb.py').read(),
-      'notebook: SLIP_SECTIONS, RUPTURE_SET, CROSS_SECTIONS, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed '
+      'notebook: SLIP_SECTIONS, RUPTURE_SET, CFM_RATE_LINKS (with CFM_TEMPLATE_RHO) and CFM_SLIPRATES fixed (CROSS_SECTIONS too until 2026-11-24) '
       'in tools/run_config.py since 2026-11-17 (2026-11-09 below the settings; run_nb.py overrides them through _OVERRIDES, for '
       'sensitivity tests, all but CFM_SLIPRATES, always True since 2026-11-23); the notebook calls derived_settings; runs named SLIP_SECTIONS... only off auto')
 _cfgmap = dict((v, k) for k, v in re.findall(r"(\w+)=g\['([A-Z][A-Z0-9_]+)'\]",

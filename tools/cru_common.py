@@ -1192,10 +1192,10 @@ FIGURE_SETTINGS = (('MISFIT_SLIP', 'misfit_slip'), ('MISFIT_MFD', 'misfit_mfd'),
                    ('CFM_TIMEFRAME', 'cfm_timeframe'),
                    ('CFM_TEMPLATE_RHO', 'cfm_template_rho'),
                    ('SLIP_RATE_FACTOR', 'slip_rate_factor'),
-                   ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('PLATE_RATE', 'plate_rate'),
+                   ('SLIP_SUM', 'slip_sum'), ('SLIP_SUM_L0', 'slip_sum_l0'), ('CROSS_SECTIONS', 'cross_sections'), ('PLATE_RATE', 'plate_rate'),
                    ('RUN_MINUTES', 'run_minutes'), ('FLOOR', 'floor'))   # the notebook's settings from MISFIT_SLIP to FLOOR, every
                                                                 # one in every figure's table, whatever its value
-SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 16 in 3 lines
+SETTINGS_PER_LINE = 6                                          # the table's columns per line: 'model' and these 17 in 3 lines
 
 
 def run_config(config, problem):

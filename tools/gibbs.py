@@ -1544,9 +1544,12 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
             const int64_t i = pi[q], j = pj[q];
             const double mi = x[i], mj = x[j];
             if (mi == mj) continue;
-            double ci = 0.0, cj = 0.0;
-            for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) ci += data[p] * r[indices[p]];
-            for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) cj += data[p] * r[indices[p]];
+            double ci = 0.0, cj = 0.0;        /* the columns' dot products, for the Gaussian change only (with SL2, the
+                                                 split or exact misfit, sp_swap's own pass gives it: skipped, 2026-11-24) */
+            if (!SL2) {
+                for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) ci += data[p] * r[indices[p]];
+                for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) cj += data[p] * r[indices[p]];
+            }
             const double dl = mj - mi;
             const double dchi = SL2 ? sp_swap(indptr, indices, data, i, j, dl, r, SL2, SH2)
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
@@ -2106,6 +2109,11 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
     sbin = None if T.ss is None else np.ascontiguousarray(T.ss['bins'], np.int64)
     K = X.shape[0]
     groups = np.array_split(np.arange(K), max(1, min(threads, K)))
+    # the shared tables, structs and pointers, built (and cached) here, once, before any thread starts: built inside each
+    # thread's call, two threads could each build a cache on the first call, the first one's freed while its kernel reads
+    # it (2026-11-24: identical runs on 4 threads differed from their first draw)
+    shared = (*_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T), *_pass_ptrs(T))
+    stp = {int(g_[0]): _st_ptr(T, int(g_[0])) for g_ in groups if len(g_)}
 
     def work(ks):
         if len(ks) == 0:
@@ -2122,8 +2130,7 @@ def sweeps_c(lib, T, X, R, rng, nsweeps, threads=1, MUZ=None, KZ=None, SM=None, 
                       None if sbin is None else _ptr(sbin), SB, _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]),
                       None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8), T.gam,
                       None if T.rlo is None else _ptr(T.rlo),
-                      None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T), *_lw_sub_ptrs(T),
-                      *_pass_ptrs(T), _st_ptr(T, k0))
+                      None if T.rhi is None else _ptr(T.rhi), *shared, stp[k0])
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2197,6 +2204,8 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
     sbin = np.ascontiguousarray(T.ss['bins'], np.int64) if xb else None              # for pairs in different bins
     SB = LOD.shape[1] if xb else 0
     groups = np.array_split(np.arange(K), max(1, min(threads, K)))
+    shared = (*_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))   # built once, before the threads (see sweeps_c)
+    stp = {int(g_[0]): _st_ptr(T, int(g_[0])) for g_ in groups if len(g_)}
 
     def work(ks):
         if len(ks) == 0:
@@ -2206,8 +2215,8 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
                      _ptr(pi), _ptr(pj), _ptr(gij), _ptr(T.beta), T.sigma,
                      ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
                      ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(nacc.ctypes.data + k0 * 8),
-                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T),
-                     _st_ptr(T, k0), None if sbin is None else _ptr(sbin), SB,
+                     None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *shared,
+                     stp[k0], None if sbin is None else _ptr(sbin), SB,
                      None if not xb else ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
                      None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
                      None if not xb else _ptr(KC[0]), None if not xb else _ptr(KC[1]), None if not xb else _ptr(KC[2]),
@@ -5383,7 +5392,10 @@ def main():
         from plate_rate import describe_limits, describe_plate, parse_limits, plate_rows
         try:
             lo_p, hi_p = parse_limits(a.plate_rate)
-            A_p, pinfo = plate_rows(rd, P, a.cross_sections, a.slip_block, cs=cs)
+            # every strip, whatever --cross-sections (since 2026-11-24, the user's request: CROSS_SECTIONS 'between'
+            # limits the summed slip rates only)
+            cs_p = cs if a.cross_sections == 'all' else cross_sections(rd, P, 'all', a.slip_block)
+            A_p, pinfo = plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)
         except (OSError, ValueError) as e:
             raise SystemExit(f'--plate-rate: {e}')
         if lo_p is not None and lo_p > 0 and len(pinfo['empty']):
@@ -5541,6 +5553,12 @@ def main():
         raise SystemExit(f'--swap-fraction {a.swap_fraction:g}: give a probability in (0, 1]')
     if a.swap_cos > 0:
         pr = np.load(fprelim)
+        lo_dup = float(pr['dup_cos_min']) if 'dup_cos_min' in pr.files else 0.99   # cleaning's search: its lowest cosine,
+        dcx_ = float(pr['dup_cross_cos']) if 'dup_cross_cos' in pr.files else np.nan  # and across bins (--dup-cross-cos)
+        lo_x = min(lo_dup, dcx_) if np.isfinite(dcx_) else lo_dup
+        if a.swap_cos < lo_dup - 1e-9 or (0 < a.swap_cos_cross < lo_x - 1e-9):
+            raise SystemExit(f'swap moves: --swap-cos {a.swap_cos:g} (--swap-cos-cross {a.swap_cos_cross:g}) is below the '
+                             f'cosine cleaning searched down to, {lo_dup:g}: clean again with preliminaries.py --dup-cos')
         sel = pr['dup_cos'] > a.swap_cos
         if lognormal is not None:                  # swaps must leave the prior unchanged: same bin only
             sel &= lognormal['bins'][pr['dup_i']] == lognormal['bins'][pr['dup_j']]

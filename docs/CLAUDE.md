@@ -240,6 +240,21 @@ he = thin when collapsed (unless --mfd-gr-tau's joint step); update_pi only at r
 selftest_collapse uses pairs (0,2),(1,2) only: with all four pairs an always-accepted swap pass maps (2,0) to (0,2) and the
 test cannot see a missing count ratio. --swap-fraction F (default 1): geometric skips through the pair list per pass.
 Float32 tables tried and dropped (no gain).
+Swap threshold below 0.99, tested 2026-11-24 and shelved (the user's choice; SWAP_COS was a notebook knob for part of the
+day, then removed): preliminaries.py --dup-cos C (default 0.99; pairs kept down to C, groups still reported at 0.99/0.999/
+0.9999; prelim dup_cos_min) and gibbs.py's check that --swap-cos/--swap-cos-cross are not below cleaning's dup_cos_min stay for
+the command line; the summary reads swap_cos from the config (default 0.99). At 211k: 9.98M pairs at 0.95 against 1.90M at
+0.99 (prelim 248 MB against 54 MB, cleaning 258 s); with every pair proposed the swap pass swamped the run (93 s a sweep at
+first: on ruptures sit in clusters of up to 13,377). With --swap-fraction 0.19 (equal proposals per pass): bin 11's tau 712
+against 360 and 900 at 0.99 (two seeds), median bin tau 53 against 74 and 67, worst R-hat 1.091 against 1.082 and 1.085: no
+gain for the slow bins.
+A swap pass visiting only the pairs with a rupture on (a heap through each rupture's pairs; bit-identical) was tried and
+removed: at 630k the on ruptures' pairs are most of the 13.6M, and the heap cost 1.058 s/sweep against the full pass's 0.387.
+swap_run skips the columns' dot products (ci, cj) under SL2 (split or exact misfit): only the Gaussian formula uses them.
+Thread race fixed 2026-11-24: sweeps_c/swaps_c built the shared pointers (_pm_ptr's struct, _sp_ptrs' interleaved table FD and
+off-bounds QI, _st_ptr) inside each thread's call, so on a run's first call two threads could each build a cache and the first
+copy be freed while its kernel read it; identical 4-thread runs differed from their first draw. Now built once before the
+threads start (shared, stp). Earlier 4-thread bit-identity checks (bounds on/off) may have passed by luck; rechecked after.
 MISFIT_SLIP, MISFIT_MFD, MISFIT_PALEO (the user's request after run _1794201333): MISFIT split into one setting per group,
 slip and MFD 'linear' | 'log10' | 'half' (default), paleo 'rate' | 'years' | 'half' (the user's names), each group's mode
 from cru_common.GROUP_MISFIT_MODES (the notebook's copy _MISFIT_GROUP_MODES); MISFIT kept as their common setting as one
@@ -379,8 +394,10 @@ the bins against their limits and spoiled the MFD fit in the conservative run _1
 since November 3rd, 2026, where it rises, the rise capped at rho = (R_low + (R_up - R_low) + --mfd-rise-sd sd) / R_low
 times the lower total; --mfd-rise-sd, 0.89 by default, command line only), through constraint rows after
 the likelihood's (T.n_fit; eps 1e-9 coefficients, Target.add_limits), with or without the band; exact test in
-selftest_band. --cross-sections all|between (CROSS_SECTIONS, 'all' by default): the strips that --slip-sum and
---plate-rate share (plate_rate.py's cross_sections: cross-sections are great circles through the Beavan et al. 2002
+selftest_band. --cross-sections all|between (CROSS_SECTIONS, 'all' by default; a notebook setting again since 2026-11-24,
+the user's request, beside SLIP_SUM_L0, out of run_config's FIXED, in FIGURE_SETTINGS and run_plan's MODEL_KEYS): the strips --slip-sum uses; since
+2026-11-24 (the user's request) --plate-rate's cap always applies to every strip ('all'), in gibbs.py, best_fit_as_fitted.py
+and plate_rate.py's report alike (config plate_rate_strips 'all'; RUN_NAME _platemax{f}all; older runs had one set of strips for both) (plate_rate.py's cross_sections: cross-sections are great circles through the Beavan et al. 2002
 pole; strips the mean subsection trace length wide, 8.5 km, 72 between END_SW, where the Alpine Fault goes offshore,
 and END_NE, the Needles / Wairarapa: Needles step-over in Cook Strait; 'all': 166 over all of New Zealand).
 --plate-rate HI or LO,HI --rupture-set DIR (the notebook's PLATE_RATE: until November 4th, 2026 None | HI | (LO, HI), off by

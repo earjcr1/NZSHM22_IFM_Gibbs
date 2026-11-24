@@ -172,6 +172,8 @@ def main():
     ssum = cfg.get('slip_sum')                         # True or False ('all' or 'between' in runs before CROSS_SECTIONS)
     xsec = cfg.get('cross_sections') or (ssum if isinstance(ssum, str) else 'all')
     xsec_txt = 'over all of New Zealand' if xsec == 'all' else 'between the Alpine and Cook Strait edges'
+    pxsec = cfg.get('plate_rate_strips', xsec)          # the plate rate's strips: every one since 2026-11-24 (recorded as
+    pxsec_txt = 'over all of New Zealand' if pxsec == 'all' else xsec_txt   # 'all'); before, CROSS_SECTIONS' as the sums'
     plate_txt = None if plate is None else (f'at most {plate[1]:g}' if plate[0] is None else
                                             f'between {plate[0]:g} and {plate[1]:g}')
     hard = bool(band or positive or mono or plate)     # any hard constraint, kept in every recorded draw
@@ -275,7 +277,8 @@ def main():
                              float, (1, 2, 3))
     rank = grab(pre, r'numerical rank (\d+)', 'rank', int)
     res_med = grab(pre, r'resolution diagonal R_ii: .*?median ([\d.e+-]+)', 'resolution')
-    dup = grab(pre, r'cos>0\.99\s*:\s*(\d+) pairs', 'near-duplicate pairs', int)
+    swc = float(cfg.get('swap_cos', 0.99))           # the swap moves' threshold, if a run recorded one (0.99)
+    dup = grab(pre, r'cos>' + re.escape(f'{swc:g}') + r'\s*:\s*(\d+) pairs', 'near-duplicate pairs', int)
     has_nnls = bool(re.search(r'== best fit \(Lawson-Hanson', pre))   # cleaning's best fit (none since 2026-11-21: --no-nnls)
     nn_s = grab(pre, r'best fit \(Lawson-Hanson NNLS, \d+ outer iterations, ([\d.]+)s\)', 'best-fit time') if has_nnls else None
     nn_chi2, nn_nz, nn_sum = (grab(pre, r'chi\^2_min = ([\d.]+) .*?nonzeros (\d+);.*?sum m = ([\d.]+)', 'best fit',
@@ -680,7 +683,7 @@ def main():
          'misfits are themselves scored partly in log space.')
     para('<b>Where it is slow.</b> One rate at a time is slow where rates are strongly correlated. Near-duplicate '
          'ruptures'
-         + (f' ({fmt(dup)} pairs with cosine similarity above 0.99)' if dup else '') + ' can trade rate between them almost '
+         + (f' ({fmt(dup)} pairs with cosine similarity above {swc:g})' if dup else '') + ' can trade rate between them almost '
          'freely, which single-rate updates do only in small steps; swap moves, which exchange two such ruptures’ '
          'rates in one step, address this. The slowest quantities are the fractions of ruptures on in the highest '
          'magnitude bins, which change only as individual ruptures switch (' f'step {SN["convergence"]}' ').')
@@ -843,7 +846,8 @@ def main():
           + ('UCERF3’s sqrt-sine taper by area, its average kept (less near the ends, up to 1.31 times it mid-rupture)'
              if dsr == 'tapered' else 'the same average slip on each, as the inputs have it')]] + [
            ['CROSS_SECTIONS', repr(xsec), 'the strips of cross-sections perpendicular to the plate motion that SLIP_SUM '
-            + ('and PLATE_RATE use' if plate else 'uses') + f', 8.5 km wide {xsec_txt}'],
+            + ('and PLATE_RATE use' if plate and pxsec == xsec else 'uses') + f', 8.5 km wide {xsec_txt}'
+            + (' (PLATE_RATE’s cap applies to every strip, over all of New Zealand)' if plate and pxsec != xsec else '')],
            ['SLIP_SUM', str(bool(ssum)),
             'the slip along the plate motion (each fault\u2019s slip vector projected on it) summed along each '
             'cross-section perpendicular to it, against the targets\u2019 sums (a soft term)' if ssum else 'not added']]
@@ -894,7 +898,7 @@ def main():
                                     f'{tt("prelim.png")} in the run folder, not shown here') + ') show how weakly '
          f'individual rates are determined: <i>G</i> has rank {fmt(rank)}, and the median diagonal of the resolution '
          f'matrix is {fmt(res_med, "{:.3f}")}, so the data fix sums of rates far better than single rates. There are also '
-         f'{fmt(dup)} pairs of near-duplicate ruptures (cosine similarity above 0.99), which the sampler handles with swap '
+         f'{fmt(dup)} pairs of near-duplicate ruptures (cosine similarity above {swc:g}), which the sampler handles with swap '
          'moves.')
     figure('prelim.png', 'Cleaning diagnostics. Top left: per-rupture scales (the rate at which one rupture alone moves a '
            'prediction by one uncertainty, the most any datum allows it, and an even share of each datum). Top right: the '
@@ -1061,7 +1065,7 @@ def main():
             'the average mid-rupture, in the slip-rate rows, the summed slip rates and the plate rate alike.'
             if dsr == 'tapered' else '')
          + (f' <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
-            f'{xsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
+            f'{pxsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
             'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '
             f'cross-sections ({tt("plate_rate.txt")}).' if plate else '')
          + (' <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '

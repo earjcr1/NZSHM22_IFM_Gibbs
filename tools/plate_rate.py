@@ -511,7 +511,8 @@ def main():
     chunks = lambda f: np.vstack([f(np.asarray(Kd[c:c + 250], np.float64)[:, kc]) for c in range(0, len(Kd), 250)])
 
     # the plate rate
-    A, info = plate_rows(rd, P, a.cross_sections, a.slip_block, cs=cs)
+    cs_p = cs if a.cross_sections == 'all' else cross_sections(rd, P, 'all', a.slip_block)   # the cap: every strip, whatever
+    A, info = plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)                                # --cross-sections (since 2026-11-24)
     k, N = info['k'], info['N']
     print('plate rate: the share of the relative plate motion that the faults take up, strip by strip')
     print('   ' + describe_plate(info))
