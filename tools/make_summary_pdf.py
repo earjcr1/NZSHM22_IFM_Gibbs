@@ -1124,15 +1124,18 @@ def main():
     _tk = re.search(r'sd ([\d.]+) SlipRateStdDev', open(os.path.join(RUN, 'fig_targets_slip.txt')).readline()) \
         if os.path.exists(os.path.join(RUN, 'fig_targets_slip.txt')) else None
     old_k = float(_tk.group(1)) if _tk else 2.0          # plot_targets.py --old-sd: the grey Gaussian's sd in SlipRateStdDev
-    figure('fig_targets_slip.png', 'Slip-rate targets. For each fault section, at the inputs\u2019 target (the x axis), '
+    _l0 = open(os.path.join(RUN, 'fig_targets_slip.txt')).readline() if os.path.exists(os.path.join(RUN, 'fig_targets_slip.txt')) else ''
+    _gc = re.search(r"grey cfm \(the CFM's SR_min to SR_max, times ([\d.]+)\)", _l0)   # plot_targets.py --grey cfm (since 2026-11-25)
+    figure('fig_targets_slip.png', 'Slip-rate targets. For each fault section, at the inputs\u2019 target (the x axis, 0.8 '
+           'SlipRate), ' + (f'the wide grey bar is the NZ Community Fault Model\u2019s SR_min to SR_max for its fault, times the '
+                            f'slip-rate factor {float(_gc.group(1)):g} as this run\u2019s distributions are, ' if _gc else
            'the wide grey bar is the 16\u201384% range of a Gaussian read from the rupture set\u2019s fault_sections.geojson, '
            f'mean 0.8 SlipRate and sd {old_k:g} SlipRateStdDev (the 0.8 on the mean only'
            + ('; NZSHM22\u2019s inversion inputs, as here' if old_k == 2 else '; NZSHM22\u2019s inversion inputs use 2')
-           + '), and the coloured bar the same range of the distribution this run '
+           + '), ') + 'and the coloured bar the 16\u201384% range of the distribution this run '
            'scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same '
            'colours. ' + ('Here that is each fault\u2019s exact timeframe-corrected density (MISFIT_SLIP \'exact\'): the modes '
-           'stay close to the inputs\u2019 targets, and the ranges are lopsided, long above, and never reach zero, where many '
-           'of the Gaussians do; the slip-rate factor scales the whole distribution.' if exact_slip else
+           'stay close to the inputs\u2019 targets, and the ranges are lopsided, long above, and never reach zero; the slip-rate factor scales the whole distribution.' if exact_slip else
            'With the CFM\u2019s slip rates the modes stay close to the inputs\u2019 targets but the ranges are '
            'narrower and lopsided: the CFM\u2019s SR_min and SR_max are read as 2\u03c3, where SlipRateStdDev, about half '
            f'their spread, is {old_k:g}\u03c3 here, and the slip-rate factor scales the whole distribution, sds included; '

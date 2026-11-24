@@ -9,7 +9,8 @@ Three figures, written next to --problem (or in --outdir), each with its table v
 fig_targets_slip.png: each fault section's slip rate, in mm/yr, linear and log panels as in fig_slip_rates.png. The
   x axis is the inputs' target, NZSHM22's Gaussian: 0.8 SlipRate from the rupture set's fault_sections.geojson, its sd
   2 SlipRateStdDev (--old-sd K: K SlipRateStdDev) (or 0.8 SlipRate where that is 0; the inputs' 0.8 on the target only). At each section, a wide grey
-  bar is that Gaussian's 16-84% range (the 1:1 line its centre); a coloured bar is the same range of the distribution
+  bar is the CFM's SR_min to SR_max (each subsection its parent fault's line of NZ_CFM_v1_0.csv), times the slip-rate
+  factor as the run's distributions are (--grey gaussian: that Gaussian's 16-84% range instead); a coloured bar is the same range of the distribution
   this run scores the section by, read from the cleaned problem (with the CFM's slip rates, a split normal with its own
   sd each side, timeframe-corrected with CFM_TIMEFRAME, the slip-rate factor on the whole distribution: its 15.9-84.1%
   points), with a dot at its mode. Colours as in fig_slip_rates.png (cru_common.neighbour_colours along the targets).
@@ -50,7 +51,8 @@ def _axes_style(ax):
     ax.tick_params(colors=MUTED, labelcolor=INK2, labelsize=8.5)
 
 
-def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, sub, out, what, item='section'):
+def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, sub, out, what, item='section',
+                old_label='inputs (NZSHM22): Gaussian, 16–84%'):
     """Two panels, linear and log: per item, the inputs' 16-84% range (grey, wide) and the run's (coloured), at the
     inputs' target x; a dot at the run's centre; the 1:1 line."""
     import matplotlib
@@ -65,8 +67,7 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
         _axes_style(ax)
         bottom = lo_log if log else 0.0
         clip = lambda v: np.maximum(v, bottom)
-        ax.vlines(x, clip(old_lo), old_hi, color=OLD, lw=4.2, alpha=0.55, zorder=2, capstyle='butt',
-                  label='inputs (NZSHM22): Gaussian, 16–84%')
+        ax.vlines(x, clip(old_lo), old_hi, color=OLD, lw=4.2, alpha=0.55, zorder=2, capstyle='butt', label=old_label)
         ax.vlines(x, clip(new_lo), new_hi, colors=colours, lw=1.3, zorder=3, label=f'this run: {what}, 16–84%')
         ax.scatter(x, new_c, s=14, c=colours, edgecolors='#7d7c76', linewidths=0.4, zorder=4, label='this run: centre')
         ax.plot([bottom if log else 0, hi], [bottom if log else 0, hi], color=INK2, lw=0.8, ls=(0, (4, 3)), zorder=1,
@@ -81,7 +82,7 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
         ax.set_title('log' if log else 'linear', color=INK, fontsize=10.5, loc='left', fontweight='bold')
     h = [Line2D([], [], color=OLD, lw=5, alpha=0.7), Line2D([], [], color=INK2, lw=1.3),
          Line2D([], [], marker='o', ls='', mfc=MUTED, mec='#7d7c76', ms=5), Line2D([], [], color=INK2, lw=0.8, ls=(0, (4, 3)))]
-    l_ = ['inputs (NZSHM22): Gaussian, 16–84%', f'this run: {what}, 16–84% (colour: {item}, as in the fit figures)',
+    l_ = [old_label, f'this run: {what}, 16–84% (colour: {item}, as in the fit figures)',
           'this run: centre', '1:1 (the inputs\u2019 target)']
     fig.suptitle(title, x=0.06, y=0.985, ha='left', color=INK, fontsize=12, fontweight='bold')
     sub = '\n'.join(textwrap.fill(p_, 150) for p_ in sub.split('\n'))
@@ -92,7 +93,7 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
     plt.close(fig)
 
 
-def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
+def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0, grey='cfm'):
     """fig_targets_slip.png and its table (see the module docstring)."""
     from cfm_sliprates import load_subsections
     from plate_rate import _sections, check_problem, rupture_matrix
@@ -119,6 +120,19 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     o_m = f_in * rate                                    # the inputs' Gaussian: mean 0.8 SlipRate, sd 2 SD (0.8 SlipRate if 0);
     o_s = np.where(sd > 0, old_k * sd, f_in * rate)      # --old-sd K: K SD in its place (1: SlipRateStdDev itself as 1 sd)
     ts, sl, sh, om, os_ = (mean_s(v) for v in (t, s_lo, s_hi, o_m, o_s))
+    fac = cfg.get('slip_rate_factor', 0.8)
+    if grey == 'cfm':                                    # the grey bar: the CFM's SR_min to SR_max (each subsection its
+        from cfm_sliprates import load_cfm               # parent fault's line), times the slip-rate factor as the run's are
+        from cru_common import CFM_CSV                   # (2026-11-25, the user's request; the Gaussian before)
+        cfm_ = load_cfm(cfg.get('cfm_file') or CFM_CSV)
+        par_ = [sub['parent'][j] for j in orig]
+        miss_ = sorted({q for q in par_ if q not in cfm_})
+        if miss_:
+            raise ValueError(f'parent faults not in the CFM: {", ".join(miss_[:5])}')
+        g_lo = mean_s(np.array([fac * cfm_[q][1] for q in par_]))
+        g_hi = mean_s(np.array([fac * cfm_[q][2] for q in par_]))
+    else:
+        g_lo, g_hi = om - os_, om + os_
     n16, n84 = sn_quantile(ts, sl, sh, 0.158655), sn_quantile(ts, sl, sh, 0.841345)
     exact = str(cfg.get('misfit_slip')) == 'exact' and P.get('slip_pdf_key') is not None
     if exact:                                            # MISFIT_SLIP 'exact': the exact corrected density's points
@@ -130,24 +144,32 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0):
     tf = bool(cfg.get('cfm_timeframe'))
     what = ('exact timeframe-corrected density' if exact else
             ('CFM split normal' + (', timeframe-corrected' if tf else '')) if cfm else 'the inputs’ Gaussian, rescaled')
-    fac = cfg.get('slip_rate_factor', 0.8)
     med = lambda v: float(np.median(v))
-    sub_txt = (f'{S} fault sections. Grey: NZSHM22’s Gaussian, mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev (the 0.8 on the mean '
-               f'only' + ('' if old_k == 2 else '; NZSHM22’s inputs use 2') + f'). Coloured: this run’s {what}, the slip-rate factor {fac:g} on the whole distribution '
-               f'(MISFIT_SLIP {cfg.get("misfit_slip", "linear")!r}). Median ratios, this run / inputs: centre '
-               f'{med(ts[om > 0] / om[om > 0]):.2f}, 16–84% width '
-               f'{med((n84 - n16)[om > 0] / (2 * os_[om > 0])):.2f}. Ranges below 0 stop at the log panel’s axis.')
+    gw = g_hi - g_lo
+    grey_txt = (f'Grey: the CFM’s SR_min to SR_max, times the slip-rate factor {fac:g}' if grey == 'cfm' else
+                f'Grey: NZSHM22’s Gaussian, mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev (the 0.8 on the mean '
+                f'only' + ('' if old_k == 2 else '; NZSHM22’s inputs use 2') + ')')
+    sub_txt = (f'{S} fault sections at the inputs’ target (0.8 SlipRate). {grey_txt}. Coloured: this run’s {what}, the '
+               f'slip-rate factor {fac:g} on the whole distribution (MISFIT_SLIP {cfg.get("misfit_slip", "linear")!r}). '
+               f'Median ratios: centre over the inputs’ target {med(ts[om > 0] / om[om > 0]):.2f}; 16–84% width over the '
+               + (f'CFM’s range {med((n84 - n16)[gw > 0] / gw[gw > 0]):.2f}' if grey == 'cfm' else
+                  f'Gaussian’s {med((n84 - n16)[om > 0] / (2 * os_[om > 0])):.2f}') + '. Ranges below 0 stop at the log panel’s axis.')
     out = os.path.join(outdir, 'fig_targets_slip.png')
-    pair_figure(om, om - os_, om + os_, ts, n16, n84, col, 'mm/yr', 'Slip-rate targets: the inputs’ Gaussians and this run’s',
-                sub_txt, out, what)
+    pair_figure(om, g_lo, g_hi, ts, n16, n84, col, 'mm/yr',
+                'Slip-rate targets: ' + ('the CFM’s ranges' if grey == 'cfm' else 'the inputs’ Gaussians') + ' and this run’s',
+                sub_txt, out, what, old_label=(f'CFM: SR_min to SR_max, × {fac:g}' if grey == 'cfm'
+                                               else 'inputs (NZSHM22): Gaussian, 16–84%'))
     with open(out[:-4] + '.txt', 'w') as f_:
-        f_.write(f'slip-rate targets per section (mm/yr): the inputs\' Gaussian (mean, sd; from the rupture set\'s fault_sections.geojson, '
-                 f'mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev) and this run\'s ({what}: mode, sd below, sd above, 15.9% and 84.1% points)\n')
-        f_.write(f'{"section":>7s} {"rows":>9s} {"in mean":>8s} {"in sd":>7s} {"mode":>8s} {"sd lo":>7s} {"sd hi":>7s} '
-                 f'{"16%":>8s} {"84%":>8s}\n')
+        f_.write(f'slip-rate targets per section (mm/yr): grey {grey}' + (f' (the CFM\'s SR_min to SR_max, times {fac:g})' if grey == 'cfm' else '')
+                 + f'; the inputs\' Gaussian (mean, sd; from the rupture set\'s fault_sections.geojson, '
+                 f'mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev); this run\'s ({what}: mode, sd below, sd above, 15.9% and 84.1% '
+                 f'points)\n')
+        f_.write(f'{"section":>7s} {"rows":>9s} {"in mean":>8s} {"in sd":>7s} {"grey lo":>8s} {"grey hi":>8s} {"mode":>8s} '
+                 f'{"sd lo":>7s} {"sd hi":>7s} {"16%":>8s} {"84%":>8s}\n')
         for s in range(S):
             r_ = orig[sec == s]
             f_.write(f'{s:7d} {f"{r_.min()}-{r_.max()}" if len(r_) > 1 else str(r_[0]):>9s} {om[s]:8.3f} {os_[s]:7.3f} '
+                     f'{g_lo[s]:8.3f} {g_hi[s]:8.3f} '
                      f'{ts[s]:8.3f} {sl[s]:7.3f} {sh[s]:7.3f} {n16[s]:8.3f} {n84[s]:8.3f}\n')
     return out
 
@@ -278,7 +300,10 @@ def main():
     ap.add_argument('--outdir', default=None, help='where the figures go (default: next to --problem)')
     ap.add_argument('--only', default='slip,paleo,mfd', help='which figures (default slip,paleo,mfd)')
     ap.add_argument('--old-sd', type=float, default=2.0, metavar='K',
-                    help='the slip figure\'s grey Gaussian: sd K SlipRateStdDev (default 2, as NZSHM22\'s inversion inputs have it; 1: SlipRateStdDev itself as 1 sd)')
+                    help='the slip figure\'s Gaussian (with --grey gaussian, and in its table): sd K SlipRateStdDev (default 2, as NZSHM22\'s inversion inputs have it; 1: SlipRateStdDev itself as 1 sd)')
+    ap.add_argument('--grey', default='cfm', choices=['cfm', 'gaussian'],
+                    help='the slip figure\'s grey bars: the CFM\'s SR_min to SR_max times the slip-rate factor (cfm, the default '
+                         'since 2026-11-25) or the inputs\' Gaussian\'s 16-84%% (gaussian)')
     a = ap.parse_args()
     cfg = run_config(a.config, a.problem) or {}
     rd = find_rupture_set(a.ruptures or cfg.get('rupture_dir') or '')
@@ -287,7 +312,7 @@ def main():
     outdir = a.outdir or os.path.dirname(os.path.abspath(a.problem))
     want = set(a.only.split(','))
     P = load_problem(a.problem) if want & {'slip', 'paleo'} else None
-    for k, fn in (('slip', lambda: slip_figure(P, rd, cfg, outdir, old_k=a.old_sd)), ('paleo', lambda: paleo_figure(P, rd, cfg, outdir)),
+    for k, fn in (('slip', lambda: slip_figure(P, rd, cfg, outdir, old_k=a.old_sd, grey=a.grey)), ('paleo', lambda: paleo_figure(P, rd, cfg, outdir)),
                   ('mfd', lambda: mfd_figure(rd, cfg, outdir))):
         if k in want:
             try:
