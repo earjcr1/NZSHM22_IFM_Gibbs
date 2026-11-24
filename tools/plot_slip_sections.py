@@ -65,7 +65,7 @@ reference's value, and the name.
 
 Second figure, in two parts for readability: FIGURE's name with _ruptures_1 and _ruptures_2 (default
 fig_slip_sections_ruptures_1.png and _2.png: the first 18 columns six across, the rest in three rows), one panel per
-column in the same order and colours, counting the ruptures crossing it by their posterior mean rates (log10, bins a quarter
+column in the same order (all in one dark blue, PANEL_BLUE), counting the ruptures crossing it by their posterior mean rates (log10, bins a quarter
 of a decade wide, counts on a log scale), and in each title how many of the largest make up 90% of their total, the
 column's event rate. With --reference, the same ruptures counted by the reference's rates (a black outline), and in
 each title how many of its largest rates make up 90% of its total and how many are below the axis, 0 included. A single model compares with a single draw more than with the means, which spread each
@@ -98,6 +98,10 @@ SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '
 REF = INK                                        # the reference model's marks: black, apart from every series colour
 BARS = '#a9a8a1'                                 # the lower panels' bars: context, not a series
 QS = (2.5, 16.0, 50.0, 84.0, 97.5)               # the posterior points drawn and tabulated
+
+
+PANEL_BLUE = '#08519c'   # the rupture figures' one colour: the MFD figure's dark blue (the user's choice, 2026-11-25;
+                         # before, each panel its section's colour from MARK_BLUES_CYCLE)
 
 
 def parse_set(s):
@@ -661,7 +665,7 @@ def main():
     def draw_rates(a_, k):
         """Column k's ruptures counted by their posterior mean rates (and the reference's)."""
         st = stats[0][k]
-        a_.bar(bins[:-1], st['counts'], width=0.25, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2,
+        a_.bar(bins[:-1], st['counts'], width=0.25, align='edge', color=PANEL_BLUE, edgecolor=MUTED, linewidth=0.3, zorder=2,
                alpha=0.4 if ons is not None else 1.0)    # behind the x's, lighter
         a_.set_yscale('log', nonpositive='clip')
         cmax = max(s_[k]['counts'].max() for s_ in stats)
@@ -672,7 +676,7 @@ def main():
             C = np.bincount(d_ * nb_ + b_, minlength=nK * nb_).reshape(nK, nb_)
             dr, db = np.nonzero(C)
             jx = bins[db] + 0.25 * np.random.default_rng(k).uniform(0.2, 0.8, len(db))
-            draw_xs(a_, jx, C[dr, db], col[k], zorder=2.5, alpha=0.12)
+            draw_xs(a_, jx, C[dr, db], PANEL_BLUE, zorder=2.5, alpha=0.12)
             cmax = max(cmax, int(C.max()) if C.size else 0)
         a_.set_ylim(0.7, max(3.0, cmax * 3.0))
         a_.yaxis.set_major_locator(LogLocator(base=10))
@@ -690,17 +694,17 @@ def main():
         a_.xaxis.set_major_formatter(xf)
         a_.tick_params(labelbottom=True)                 # every panel shows its axis's values
         a_.set_title(title, loc='left', fontsize=7.2, color=INK, pad=3, linespacing=1.3)
-    leg2 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3, alpha=0.4 if ons is not None else 1.0) for c in few),
+    leg2 = [(Patch(facecolor=PANEL_BLUE, edgecolor=MUTED, linewidth=0.3, alpha=0.4 if ons is not None else 1.0),
              f'ruptures crossing the {unit}, by posterior mean rate')]
     if ons is not None:
-        leg2.append((tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+        leg2.append((Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(PANEL_BLUE)),
                      f'those on in each of the {nK:,} kept draws, by their rates in it'))
     for ref in refs:
         leg2.append((Patch(facecolor='none', edgecolor=ref['ink'], linewidth=0.9, linestyle=ref['ls']),
                      f'the same ruptures by {ref["label"]}\'s rates'))
     figures(out2, draw_rates, 2 + len(refs), f'Rupture rates of each {each}{ordered}',
             f'The ruptures crossing each {unit} of {os.path.basename(out)}, counted by their posterior mean rates'
-            + ''.join(f' and by {ref["label"]}\'s' for ref in refs) + '; panels in that figure\'s order and colours',
+            + ''.join(f' and by {ref["label"]}\'s' for ref in refs) + '; panels in that figure\'s order',
             leg2, note2, 'ruptures', 'log10 rate (per year)' if refs else 'log10 posterior mean rate (per year)',
             lines2)
 
@@ -790,7 +794,7 @@ def main():
     def draw_magnitudes(a_, k):
         """Column k's ruptures' posterior mean rates (and the reference's) summed by magnitude bin."""
         top = max(float(s_[k].max()) for s_ in mfd)
-        if ons is not None:                              # the kept draws as x's, the mean as a circle in the column's colour
+        if ons is not None:                              # the kept draws as x's, the mean as a circle (PANEL_BLUE)
             D_ = dm[k]
             pos_d = D_[D_ > 0]
             top = max(top, float(pos_d.max()) if pos_d.size else 0.0)
@@ -802,15 +806,15 @@ def main():
             a_.text(edges[0] + 0.03, (z_lo * z_hi) ** 0.5, '0', fontsize=6, color=MUTED, va='center', ha='left')
             for b in np.flatnonzero(has[k]):
                 if z0[k][b] > 0:                         # opacity: the share of draws without an event
-                    a_.fill_between(edges[b:b + 2], z_lo, z_hi, color=col[k], alpha=float(z0[k][b]), lw=0, zorder=2)
+                    a_.fill_between(edges[b:b + 2], z_lo, z_hi, color=PANEL_BLUE, alpha=float(z0[k][b]), lw=0, zorder=2)
             dr, db = np.nonzero(D_ > 0)
             jx = edges[db] + mw * np.random.default_rng(k).uniform(0.15, 0.85, len(db))
-            draw_xs(a_, jx, D_[dr, db], col[k], zorder=2.5, alpha=0.2)
+            draw_xs(a_, jx, D_[dr, db], PANEL_BLUE, zorder=2.5, alpha=0.2)
             mm_ = mfd[0][k]
             cen = 0.5 * (edges[:-1] + edges[1:])
-            a_.scatter(cen[mm_ > 0], mm_[mm_ > 0], s=18, color=col[k], edgecolors=INK, linewidths=0.8, zorder=4)
+            a_.scatter(cen[mm_ > 0], mm_[mm_ > 0], s=18, color=PANEL_BLUE, edgecolors=INK, linewidths=0.8, zorder=4)
         else:
-            a_.bar(edges[:-1], mfd[0][k], width=mw, align='edge', color=col[k], edgecolor=MUTED, linewidth=0.3, zorder=2)
+            a_.bar(edges[:-1], mfd[0][k], width=mw, align='edge', color=PANEL_BLUE, edgecolor=MUTED, linewidth=0.3, zorder=2)
             a_.set_yscale('log', nonpositive='clip')
             if top > 0:                                  # at most six decades, down from the panel's largest
                 pos = np.concatenate([s_[k][s_[k] > 0] for s_ in mfd])
@@ -829,13 +833,13 @@ def main():
         a_.tick_params(labelbottom=True)                 # every panel shows its axis's values
         a_.set_title(title, loc='left', fontsize=7.2, color=INK, pad=3, linespacing=1.3)
     if ons is not None:
-        leg3 = [(tuple(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(c)) for c in few),
+        leg3 = [(Line2D([], [], ls='none', marker='x', ms=4, mew=0.8, color=darker(PANEL_BLUE)),
                  f'each of the {nK:,} kept draws: the {unit}\'s ruptures\' rates summed by magnitude bin'),
-                (tuple(Line2D([], [], ls='none', marker='o', ms=4.6, mfc=c, mec=INK, mew=0.8) for c in few),
+                (Line2D([], [], ls='none', marker='o', ms=4.6, mfc=PANEL_BLUE, mec=INK, mew=0.8),
                  'their posterior mean'),
-                (tuple(Patch(facecolor=c, edgecolor='none', alpha=0.6) for c in few), '0 strip: share of draws with none')]
+                (Patch(facecolor=PANEL_BLUE, edgecolor='none', alpha=0.6), '0 strip: share of draws with none')]
     else:
-        leg3 = [(tuple(Patch(facecolor=c, edgecolor=MUTED, linewidth=0.3) for c in few), f'the {unit}\'s ruptures\' '
+        leg3 = [(Patch(facecolor=PANEL_BLUE, edgecolor=MUTED, linewidth=0.3), f'the {unit}\'s ruptures\' '
                  'posterior mean rates, summed by magnitude bin')]
     for ref in refs:
         leg3.append((Patch(facecolor='none', edgecolor=ref['ink'], linewidth=0.9, linestyle=ref['ls']),
@@ -843,7 +847,7 @@ def main():
     figures(out3, draw_magnitudes, 3 if len(refs) <= 1 else 3 + len(refs), f'Rupture rates of each {each} by magnitude{ordered}',
             f'The ruptures crossing each {unit} of {os.path.basename(out)}: their posterior mean rates'
             + ''.join(f' and {ref["label"]}\'s' for ref in refs) + ' summed by magnitude bin; panels in that figure\'s '
-            'order and colours', leg3, note3, 'rate per year', 'magnitude', lines3)
+            'order', leg3, note3, 'rate per year', 'magnitude', lines3)
 
 
 if __name__ == '__main__':

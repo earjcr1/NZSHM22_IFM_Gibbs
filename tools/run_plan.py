@@ -214,8 +214,9 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
         return S_, b_, th
 
     def meets(r):
-        S_, b_, _ = lengths(r)
-        return all(K * (S_ - b_) / tau[m] >= REPLICATE_SAFETY * nd[m] for m in tau)
+        S_, b_, th_ = lengths(r)
+        kept_ = K * (S_ // th_ - b_ // th_)            # no more effective draws than draws kept (2026-11-25)
+        return all(min(K * (S_ - b_) / tau[m], kept_) >= REPLICATE_SAFETY * nd[m] for m in tau)
     reps = next((r for r in range(REPLICATES_MAX, 1, -1) if lengths(r)[0] >= REPLICATE_MIN and meets(r)), 1)
     S, burn, thin = lengths(reps)
     short = afford(reps, thin) < MIN_SWEEPS
@@ -246,7 +247,9 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
                  + (f'; its settings differ in {", ".join(ref_diff)}, so these are rough' if ref_diff else '; the same model settings'))
         for m, lab in METRICS:
             if m in tau:
-                pred[m] = K * (S - burn) / tau[m]
+                pred[m] = min(K * (S - burn) / tau[m], K * (S // thin - burn // thin))   # at most the draws kept:
+                # the 480-minute run (thin 42) was predicted 151,613 effective draws for 95% of ruptures and got
+                # 19,518, of 24,184 kept (2026-11-25, the user's go-ahead)
         miss = [m for m in pred if pred[m] < nd[m]]
         L.append(f'   effective draws per replicate, predicted against TARGETS {targets!r}: '
                  + '; '.join(f'{lab} {pred[m]:,.0f} ({nd[m]:,.0f} needed)' for m, lab in METRICS if m in pred)
