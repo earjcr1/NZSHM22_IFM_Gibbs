@@ -129,7 +129,7 @@ The next three figures show the posterior’s fit to each data type. Each colour
 
 ![Figure 6](example/output_figs/fig_rate_magnitude.png)
 
-*Figure 6.* Posterior: each rupture’s posterior mean rate against its magnitude bin (dashed: the slab floor; means below the axis, 0 included, on it), each bin’s target (black line) and total of the means (orange dot), and NZSHM22_InversionSolution-630k’s bin totals (black squares). Faint x’s: each kept draw’s bin totals. Lower panel: each bin’s total over its target. `fig_rate_magnitude.png`
+*Figure 6.* Posterior: each rupture’s posterior mean rate against its magnitude bin (dashed: the slab floor; means below the axis, 0 included, on it), each bin’s target (black line) and total of the means (blue dot), and NZSHM22_InversionSolution-630k’s bin totals (black squares). Faint x’s: each kept draw’s bin totals. Lower panel: each bin’s total over its target. `fig_rate_magnitude.png`
 
 ![Figure 7](example/output_figs/fig_slip_rates.png)
 
