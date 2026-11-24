@@ -1130,10 +1130,10 @@ def main():
     figure('fig_targets_slip.png', 'Slip-rate targets. For each fault section, at the inputs\u2019 target (the x axis, 0.8 '
            'SlipRate), ' + (f'the wide grey bar is the NZ Community Fault Model\u2019s SR_min to SR_max for its fault, times the '
                             f'slip-rate factor {float(_gc.group(1)):g} as this run\u2019s distributions are, ' if _gc else
-           'the wide grey bar is the 16\u201384% range of a Gaussian read from the rupture set\u2019s fault_sections.geojson, '
+           'the wide grey bar is the 2.3\u201397.7% range of a Gaussian read from the rupture set\u2019s fault_sections.geojson, '
            f'mean 0.8 SlipRate and sd {old_k:g} SlipRateStdDev (the 0.8 on the mean only'
            + ('; NZSHM22\u2019s inversion inputs, as here' if old_k == 2 else '; NZSHM22\u2019s inversion inputs use 2')
-           + '), ') + 'and the coloured bar the 16\u201384% range of the distribution this run '
+           + '), ') + 'and the coloured bar the 2.3\u201397.7% range of the distribution this run '
            'scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same '
            'colours. ' + ('Here that is each fault\u2019s exact timeframe-corrected density (MISFIT_SLIP \'exact\'): the modes '
            'stay close to the inputs\u2019 targets, and the ranges are lopsided, long above, and never reach zero; the slip-rate factor scales the whole distribution.' if exact_slip else
@@ -1202,10 +1202,10 @@ def main():
                     f'{m_s.group(3)})' if m_s else '') + '. ') if ssum else ''))
 
     figure('fig_targets_paleo.png', 'Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs\u2019 '
-           'Gaussian in rate (bestEstimate \u00b1 its one-sigma sd) and the coloured bar the 15.9\u201384.1% range of the '
-           'site\u2019s recurrence-interval PDF, as rates, which the paleo misfit in years scores it by. Both are centred on '
-           'bestEstimate; the PDF reaches further below it and less far above, the skew of a recurrence interval seen in '
-           'rate, and never below zero.', FW)
+           'Gaussian in rate (bestEstimate \u00b1 twice its one-sigma sd, 2.3\u201397.7%) and the coloured bar the 2.3\u201397.7% '
+           'range of the site\u2019s recurrence-interval PDF (its two-sigma bounds), as rates, which the paleo misfit in years '
+           'scores it by. Both are centred on bestEstimate (the PDF\u2019s mode in years); the PDF is lopsided, the skew of a '
+           'recurrence interval seen in rate, and never reaches zero, where several of the Gaussians do.', FW)
     figure('fig_targets_mfd.png', 'The magnitude bins. Left, per bin: the total Gutenberg\u2013Richter MFD and NZSHM22\u2019s '
            'partitioning of it (the truly off-fault and the sub-seismogenic on-fault MFDs), the supra-seismogenic target '
            'that remains (cru_D\u2019s, black) with NZSHM22\u2019s \u00b11\u03c3 (blue), and MFD_GR\u2019s PDF for each bin '

@@ -10,13 +10,14 @@ fig_targets_slip.png: each fault section's slip rate, in mm/yr, linear and log p
   x axis is the inputs' target, NZSHM22's Gaussian: 0.8 SlipRate from the rupture set's fault_sections.geojson, its sd
   2 SlipRateStdDev (--old-sd K: K SlipRateStdDev) (or 0.8 SlipRate where that is 0; the inputs' 0.8 on the target only). At each section, a wide grey
   bar is the CFM's SR_min to SR_max (each subsection its parent fault's line of NZ_CFM_v1_0.csv), times the slip-rate
-  factor as the run's distributions are (--grey gaussian: that Gaussian's 16-84% range instead); a coloured bar is the same range of the distribution
+  factor as the run's distributions are (--grey gaussian: that Gaussian's 2.3-97.7% range instead); a coloured bar is the 2.3-97.7% range of the distribution
   this run scores the section by, read from the cleaned problem (with the CFM's slip rates, a split normal with its own
-  sd each side, timeframe-corrected with CFM_TIMEFRAME, the slip-rate factor on the whole distribution: its 15.9-84.1%
-  points), with a dot at its mode. Colours as in fig_slip_rates.png (cru_common.neighbour_colours along the targets).
+  sd each side, timeframe-corrected with CFM_TIMEFRAME, the slip-rate factor on the whole distribution: its 2.275-97.725%
+  points; 15.9-84.1% until 2026-11-25), with a dot at its mode (with MISFIT_SLIP 'exact', the exact density's own,
+  not the split normal's, which only anchors each row's weighting). Colours as in fig_slip_rates.png (cru_common.neighbour_colours along the targets).
 fig_targets_paleo.png: each paleo site's rate per year, the same two panels. The x axis is bestEstimate, the inputs'
-  Gaussian's mean, its sd the site's ONE_SIGMA stdDev (grey); the coloured bar is the site's recurrence-interval PDF
-  (paleo_constraint_data.json: its ONE_SIGMA bounds, the 15.9% and 84.1% points, as rates), which MISFIT_PALEO 'years'
+  Gaussian's mean, its sd the site's ONE_SIGMA stdDev (grey: +-2 sd, 2.3-97.7%); the coloured bar is the site's
+  recurrence-interval PDF (paleo_constraint_data.json: its TWO_SIGMA bounds, the 2.275% and 97.725% points, as rates), which MISFIT_PALEO 'years'
   scores the site by. Both are centred on bestEstimate (the PDF's mode in years is at 1/bestEstimate), so the
   difference is the spread.
 fig_targets_mfd.png: the magnitude bins (MFD_GR's figure): per bin and cumulative, from M6.5, the total GR and its
@@ -52,8 +53,8 @@ def _axes_style(ax):
 
 
 def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, sub, out, what, item='section',
-                old_label='inputs (NZSHM22): Gaussian, 16–84%'):
-    """Two panels, linear and log: per item, the inputs' 16-84% range (grey, wide) and the run's (coloured), at the
+                old_label='inputs (NZSHM22): Gaussian, 2.3–97.7%', rng='2.3–97.7%', centre='this run: mode'):
+    """Two panels, linear and log: per item, the inputs' range (grey, wide) and the run's (coloured), at the
     inputs' target x; a dot at the run's centre; the 1:1 line."""
     import matplotlib
     matplotlib.use('Agg')
@@ -68,8 +69,8 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
         bottom = lo_log if log else 0.0
         clip = lambda v: np.maximum(v, bottom)
         ax.vlines(x, clip(old_lo), old_hi, color=OLD, lw=4.2, alpha=0.55, zorder=2, capstyle='butt', label=old_label)
-        ax.vlines(x, clip(new_lo), new_hi, colors=colours, lw=1.3, zorder=3, label=f'this run: {what}, 16–84%')
-        ax.scatter(x, new_c, s=14, c=colours, edgecolors='#7d7c76', linewidths=0.4, zorder=4, label='this run: centre')
+        ax.vlines(x, clip(new_lo), new_hi, colors=colours, lw=1.3, zorder=3, label=f'this run: {what}, {rng}')
+        ax.scatter(x, new_c, s=14, c=colours, edgecolors='#7d7c76', linewidths=0.4, zorder=4, label=centre)
         ax.plot([bottom if log else 0, hi], [bottom if log else 0, hi], color=INK2, lw=0.8, ls=(0, (4, 3)), zorder=1,
                 label='1:1 (the inputs’ target)')
         if log:
@@ -82,8 +83,8 @@ def pair_figure(x, old_lo, old_hi, new_c, new_lo, new_hi, colours, unit, title, 
         ax.set_title('log' if log else 'linear', color=INK, fontsize=10.5, loc='left', fontweight='bold')
     h = [Line2D([], [], color=OLD, lw=5, alpha=0.7), Line2D([], [], color=INK2, lw=1.3),
          Line2D([], [], marker='o', ls='', mfc=MUTED, mec='#7d7c76', ms=5), Line2D([], [], color=INK2, lw=0.8, ls=(0, (4, 3)))]
-    l_ = [old_label, f'this run: {what}, 16–84% (colour: {item}, as in the fit figures)',
-          'this run: centre', '1:1 (the inputs\u2019 target)']
+    l_ = [old_label, f'this run: {what}, {rng} (colour: {item}, as in the fit figures)',
+          centre, '1:1 (the inputs\u2019 target)']
     fig.suptitle(title, x=0.06, y=0.985, ha='left', color=INK, fontsize=12, fontweight='bold')
     sub = '\n'.join(textwrap.fill(p_, 150) for p_ in sub.split('\n'))
     fig.text(0.06, 0.94, sub, color=INK2, fontsize=8.4, ha='left', va='top', linespacing=1.35)
@@ -132,13 +133,15 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0, grey='cfm'):
         g_lo = mean_s(np.array([fac * cfm_[q][1] for q in par_]))
         g_hi = mean_s(np.array([fac * cfm_[q][2] for q in par_]))
     else:
-        g_lo, g_hi = om - os_, om + os_
-    n16, n84 = sn_quantile(ts, sl, sh, 0.158655), sn_quantile(ts, sl, sh, 0.841345)
+        g_lo, g_hi = om - 2 * os_, om + 2 * os_
+    n16, n84 = sn_quantile(ts, sl, sh, 0.02275), sn_quantile(ts, sl, sh, 0.97725)   # 2.275-97.725% (16-84% until 2026-11-25)
+    cen = ts                                             # the dot: the split normal's mode
     exact = str(cfg.get('misfit_slip')) == 'exact' and P.get('slip_pdf_key') is not None
-    if exact:                                            # MISFIT_SLIP 'exact': the exact corrected density's points
-        from cru_common import slip_pdf_quantiles
-        q_ = slip_pdf_quantiles(P, rows, [0.158655, 0.841345])
-        n16, n84 = mean_s(q_[0]), mean_s(q_[1])
+    if exact:                                            # MISFIT_SLIP 'exact': the exact corrected density's points and its
+        from cru_common import slip_pdf_modes, slip_pdf_quantiles   # own mode (the split normal's only anchors each
+        q_ = slip_pdf_quantiles(P, rows, [0.02275, 0.97725])         # row's weighting: for very lopsided faults it can
+        n16, n84 = mean_s(q_[0]), mean_s(q_[1])                      # sit outside the density's range, 2026-11-25)
+        cen = mean_s(slip_pdf_modes(P, rows))
     col = neighbour_colours(ts, MARK_BLUES_CYCLE)
     cfm = bool(cfg.get('cfm_sliprates', True))
     tf = bool(cfg.get('cfm_timeframe'))
@@ -151,25 +154,25 @@ def slip_figure(P, rd, cfg, outdir, slip_block='S', old_k=2.0, grey='cfm'):
                 f'only' + ('' if old_k == 2 else '; NZSHM22’s inputs use 2') + ')')
     sub_txt = (f'{S} fault sections at the inputs’ target (0.8 SlipRate). {grey_txt}. Coloured: this run’s {what}, the '
                f'slip-rate factor {fac:g} on the whole distribution (MISFIT_SLIP {cfg.get("misfit_slip", "linear")!r}). '
-               f'Median ratios: centre over the inputs’ target {med(ts[om > 0] / om[om > 0]):.2f}; 16–84% width over the '
+               f'Median ratios: mode over the inputs’ target {med(cen[om > 0] / om[om > 0]):.2f}; 2.3–97.7% width over the '
                + (f'CFM’s range {med((n84 - n16)[gw > 0] / gw[gw > 0]):.2f}' if grey == 'cfm' else
-                  f'Gaussian’s {med((n84 - n16)[om > 0] / (2 * os_[om > 0])):.2f}') + '. Ranges below 0 stop at the log panel’s axis.')
+                  f'Gaussian’s {med((n84 - n16)[om > 0] / (4 * os_[om > 0])):.2f}') + '. Ranges below 0 stop at the log panel’s axis.')
     out = os.path.join(outdir, 'fig_targets_slip.png')
-    pair_figure(om, g_lo, g_hi, ts, n16, n84, col, 'mm/yr',
+    pair_figure(om, g_lo, g_hi, cen, n16, n84, col, 'mm/yr',
                 'Slip-rate targets: ' + ('the CFM’s ranges' if grey == 'cfm' else 'the inputs’ Gaussians') + ' and this run’s',
                 sub_txt, out, what, old_label=(f'CFM: SR_min to SR_max, × {fac:g}' if grey == 'cfm'
-                                               else 'inputs (NZSHM22): Gaussian, 16–84%'))
+                                               else 'inputs (NZSHM22): Gaussian, 2.3–97.7%'))
     with open(out[:-4] + '.txt', 'w') as f_:
         f_.write(f'slip-rate targets per section (mm/yr): grey {grey}' + (f' (the CFM\'s SR_min to SR_max, times {fac:g})' if grey == 'cfm' else '')
                  + f'; the inputs\' Gaussian (mean, sd; from the rupture set\'s fault_sections.geojson, '
-                 f'mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev); this run\'s ({what}: mode, sd below, sd above, 15.9% and 84.1% '
-                 f'points)\n')
+                 f'mean 0.8 SlipRate, sd {old_k:g} SlipRateStdDev); this run\'s ({what}: its mode, the split normal\'s mode, sd '
+                 f'below, sd above, and the 2.275% and 97.725% points)\n')
         f_.write(f'{"section":>7s} {"rows":>9s} {"in mean":>8s} {"in sd":>7s} {"grey lo":>8s} {"grey hi":>8s} {"mode":>8s} '
-                 f'{"sd lo":>7s} {"sd hi":>7s} {"16%":>8s} {"84%":>8s}\n')
+                 f'{"sn mode":>8s} {"sd lo":>7s} {"sd hi":>7s} {"2.3%":>8s} {"97.7%":>8s}\n')
         for s in range(S):
             r_ = orig[sec == s]
             f_.write(f'{s:7d} {f"{r_.min()}-{r_.max()}" if len(r_) > 1 else str(r_[0]):>9s} {om[s]:8.3f} {os_[s]:7.3f} '
-                     f'{g_lo[s]:8.3f} {g_hi[s]:8.3f} '
+                     f'{g_lo[s]:8.3f} {g_hi[s]:8.3f} {cen[s]:8.3f} '
                      f'{ts[s]:8.3f} {sl[s]:7.3f} {sh[s]:7.3f} {n16[s]:8.3f} {n84[s]:8.3f}\n')
     return out
 
@@ -185,13 +188,14 @@ def paleo_figure(P, rd, cfg, outdir, slip_block='S', bins_block='MFD'):
     pm = cfg.get('misfit_paleo') or {'years': 'years', 'gaussian': 'rate'}.get(cfg.get('paleo_misfit'), '?')
     med = lambda v: float(np.median(v))
     sub_txt = (f'{len(sites)} paleo sites (paleo_constraint_data.json). Grey: the Gaussian in rate the inputs give, bestEstimate '
-               f'± its ONE_SIGMA sd. Coloured: the site’s recurrence-interval PDF, its ONE_SIGMA bounds (15.9–84.1%) as rates, '
-               f'which MISFIT_PALEO ’years’ scores it by (this run: {pm!r}). Both centred on bestEstimate. Median ratios, '
-               f'PDF / Gaussian: lower half-width {med((best - q[:, 1]) / sd):.2f}, upper {med((q[:, 2] - best) / sd):.2f}.')
+               f'± twice its ONE_SIGMA sd (2.3–97.7%). Coloured: the site’s recurrence-interval PDF, its TWO_SIGMA bounds '
+               f'(2.3–97.7%) as rates, which MISFIT_PALEO ’years’ scores it by (this run: {pm!r}). Both centred on bestEstimate. '
+               f'Median ratios, PDF / Gaussian: lower half-width {med((best - q[:, 0]) / (2 * sd)):.2f}, upper '
+               f'{med((q[:, 3] - best) / (2 * sd)):.2f}.')
     out = os.path.join(outdir, 'fig_targets_paleo.png')
-    pair_figure(best, best - sd, best + sd, best, q[:, 1], q[:, 2], col, 'events per year',
+    pair_figure(best, best - 2 * sd, best + 2 * sd, best, q[:, 0], q[:, 3], col, 'events per year',
                 'Paleo-rate targets: the inputs’ Gaussians and the sites’ own PDFs', sub_txt, out,
-                'recurrence-interval PDF', item='site')
+                'recurrence-interval PDF', item='site', centre='bestEstimate (the PDF’s mode in years)')
     with open(out[:-4] + '.txt', 'w') as f_:
         f_.write('paleo-rate targets per site (per year): the inputs\' Gaussian (bestEstimate, sd) and the site\'s PDF (its 2.3, '
                  '15.9, 84.1 and 97.7% points)\n')
@@ -303,7 +307,7 @@ def main():
                     help='the slip figure\'s Gaussian (with --grey gaussian, and in its table): sd K SlipRateStdDev (default 2, as NZSHM22\'s inversion inputs have it; 1: SlipRateStdDev itself as 1 sd)')
     ap.add_argument('--grey', default='cfm', choices=['cfm', 'gaussian'],
                     help='the slip figure\'s grey bars: the CFM\'s SR_min to SR_max times the slip-rate factor (cfm, the default '
-                         'since 2026-11-25) or the inputs\' Gaussian\'s 16-84%% (gaussian)')
+                         'since 2026-11-25) or the inputs\' Gaussian\'s 2.3-97.7%% (gaussian)')
     a = ap.parse_args()
     cfg = run_config(a.config, a.problem) or {}
     rd = find_rupture_set(a.ruptures or cfg.get('rupture_dir') or '')

@@ -331,6 +331,20 @@ def slip_pdf_quantiles(P, rows, ps):
     return out
 
 
+def slip_pdf_modes(P, rows):
+    """--slip-misfit exact: each slip-rate row's exact corrected density's mode, in mm/yr with the slip-rate factor in it
+    (the smallest -2 ln p on its table's grid); NaN for a row without a density."""
+    out = np.full(len(rows), np.nan)
+    if P.get('slip_pdf_key') is None:
+        return out
+    key = np.asarray(P['slip_pdf_key'])[np.asarray(rows)]
+    off, y0, h, g = np.asarray(P['slip_pdf_off'], np.int64), P['slip_pdf_y0'], P['slip_pdf_h'], P['slip_pdf_g']
+    f = float(P['slip_pdf_f'])
+    for k in np.unique(key[key >= 0]):
+        out[key == k] = (y0[k] + h[k] * np.argmin(np.asarray(g[off[k]:off[k + 1]], float))) * f
+    return out
+
+
 def split_terms(P, rows, res, tabs=None):
     """Each residual's term in the misfit (on chi2's scale times sigma^2): the split normal's weight x res^2
     (split_weights), or, with tabs (slip_pdf_tables' tables, --slip-misfit exact), the row's tabulated exact misfit. rows:

@@ -269,6 +269,13 @@ gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-
 swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
 viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
 (n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
+plot_targets.py (2026-11-25, the user's requests): fig_targets_slip's grey bars are the CFM's SR_min to SR_max times the
+slip-rate factor (--grey cfm; --grey gaussian the old one), both targets figures show 2.275-97.725% ranges (16-84% before),
+and with MISFIT_SLIP 'exact' the slip dot is the exact density's own mode (cru_common.slip_pdf_modes, the argmin of
+-2 ln p), not the split normal's: that one only anchors each row's weighting, and for lopsided faults it can sit
+outside the density's range (27 sections below the 16% point; Mascarin, CFM 0.1/0.05/3.3, and Rangitikei Offshore 1,
+0.7/0.2/10, far above the 84% point). The likelihood reads the tables and is unaffected, but MISFIT_SLIP 'linear'
+scores those two faults by that poor split normal. The table gains the mode and the split normal's mode (sn mode).
 Split/merge moves (2026-11-24, gibbs.py --split-merge N [--split-merge-scale C]; the command line only: no gain for the slow bins at 630k, so not in the notebook, the user's choice).
 
 Where the pieces are:

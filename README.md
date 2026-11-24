@@ -81,7 +81,7 @@ Cleaning (`preliminaries.py`) turns the raw system into the problem the sampler 
 
 ![Figure 1](example/output_figs/fig_targets_slip.png)
 
-*Figure 1.* Slip-rate targets. For each fault section, at the inputs’ target (the x axis, 0.8 SlipRate), the wide grey bar is the NZ Community Fault Model’s SR_min to SR_max for its fault, times the slip-rate factor 0.8 as this run’s distributions are, and the coloured bar the 16–84% range of the distribution this run scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same colours. Here that is each fault’s exact timeframe-corrected density (MISFIT_SLIP 'exact'): the modes stay close to the inputs’ targets, and the ranges are lopsided, long above, and never reach zero; the slip-rate factor scales the whole distribution. `fig_targets_slip.png`
+*Figure 1.* Slip-rate targets. For each fault section, at the inputs’ target (the x axis, 0.8 SlipRate), the wide grey bar is the NZ Community Fault Model’s SR_min to SR_max for its fault, times the slip-rate factor 0.8 as this run’s distributions are, and the coloured bar the 2.3–97.7% range of the distribution this run scores the section by, with a dot at its mode; linear and log axes, as in the fit figures, and the same colours. Here that is each fault’s exact timeframe-corrected density (MISFIT_SLIP 'exact'): the modes stay close to the inputs’ targets, and the ranges are lopsided, long above, and never reach zero; the slip-rate factor scales the whole distribution. `fig_targets_slip.png`
 
 **How each slip rate is scored (MISFIT_SLIP ‘exact’).** Each fault’s slip rate enters the likelihood through its whole timeframe-corrected distribution, not a fitted shape, built in four steps. 
 1. **The CFM’s numbers.** The NZ Community Fault Model gives each fault SR_pref, SR_min and SR_max. Following Coffey et al. (accepted, BSSA), a Gaussian is fitted to the bounds alone: centred at the midpoint of SR_min and SR_max, with an sd of their width / 3.92, and its negative part set to zero. SR_pref does not set the centre; it only decides whether a fault counts as periodic (1 mm/yr or more) or aperiodic. 
@@ -93,7 +93,7 @@ Cleaning (`preliminaries.py`) turns the raw system into the problem the sampler 
 
 ![Figure 2](example/output_figs/fig_targets_paleo.png)
 
-*Figure 2.* Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs’ Gaussian in rate (bestEstimate ± its one-sigma sd) and the coloured bar the 15.9–84.1% range of the site’s recurrence-interval PDF, as rates, which the paleo misfit in years scores it by. Both are centred on bestEstimate; the PDF reaches further below it and less far above, the skew of a recurrence interval seen in rate, and never below zero. `fig_targets_paleo.png`
+*Figure 2.* Paleo-rate targets. For each site, at its bestEstimate, the grey bar is the inputs’ Gaussian in rate (bestEstimate ± twice its one-sigma sd, 2.3–97.7%) and the coloured bar the 2.3–97.7% range of the site’s recurrence-interval PDF (its two-sigma bounds), as rates, which the paleo misfit in years scores it by. Both are centred on bestEstimate (the PDF’s mode in years); the PDF is lopsided, the skew of a recurrence interval seen in rate, and never reaches zero, where several of the Gaussians do. `fig_targets_paleo.png`
 
 ![Figure 3](example/output_figs/fig_targets_mfd.png)
 
