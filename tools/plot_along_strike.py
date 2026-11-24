@@ -19,9 +19,9 @@ value, along_strike.csv. x: longitude, or latitude for a fault whose subsections
   2. paleo-visible participation rate: each rupture weighted by UCERF3's probability that a site at the subsection's
      middle would see it (rupture_set_inputs.paleo_visibility, as the paleo rows weight them), with the paleo sites on
      the fault (paleo_misfit.paleo_data: their best estimates, ONE_SIGMA bounds as thick bars, TWO_SIGMA as thin);
-  3. slip rate (mm/yr): the CFM's SR_pref (unscaled), the run's target (the slip-rate factor in it) and its 2.275% and
-     97.725% points as grey lines (the fault's exact corrected density with MISFIT_SLIP 'exact', its split normal
-     otherwise; a band until 2026-11-25), and the posterior
+  3. slip rate (mm/yr): the run's target (the slip-rate factor in it; medium grey) and its 2.275% and
+     97.725% points as light grey dashed lines (the fault's exact corrected density with MISFIT_SLIP 'exact', its split normal
+     otherwise; a band until 2026-11-25; the CFM's SR_pref, unscaled, until 2026-11-25 and still in the table), and the posterior
      slip rate (each rupture's slip on the subsection, plate_rate.rupture_matrix, times its rate);
   4. the magnitudes of the ruptures through each subsection: its posterior mean participation rate in each magnitude bin
      of 0.1 (colour, log scale), and its rate-weighted median magnitude (a line).
@@ -46,8 +46,9 @@ SOL, BAND = MARK_BLUES[3], MARK_BLUES[0]                  # the posterior: a dar
 DENS = MARK_BLUES[1]                                       # the kept draws' density shading (2026-11-25, the user's request)
 NB_DENS = 60                                               # its bins in log10 over each panel's range
 HEAT = mark_blues_cmap()                         # the heat maps: the same blues, continuous
-TGT, TGT_BAND = '#1b7f79', '#bfe3df'              # the target (teal) and, until 2026-11-25, its range's band
-TGT_RANGE = '#898781'                             # the target's 2.275% and 97.725% points: grey lines (since 2026-11-25)
+TGT, TGT_BAND = '#6e6d69', '#bfe3df'              # the target, medium grey (teal until 2026-11-25), and its old range band
+TGT_RANGE = '#b4b3ad'                             # the target's 2.275% and 97.725% points: light grey dashed lines (2026-11-25)
+TGT_RANGE_LS = (0, (4, 2.5))
 PLO, PHI = 0.022750131948179195, 1 - 0.022750131948179195
 
 
@@ -314,11 +315,11 @@ def main():
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 3. slip rate
         ax = axs[2]
-        steps(ax, np.where(np.isfinite(tlo[ss]), np.maximum(tlo[ss], 1e-6), np.nan), colors=TGT_RANGE, lw=1.1, zorder=2)
-        steps(ax, thi[ss], colors=TGT_RANGE, lw=1.1, zorder=2)
+        steps(ax, np.where(np.isfinite(tlo[ss]), np.maximum(tlo[ss], 1e-6), np.nan), colors=TGT_RANGE, lw=1.2,
+              linestyles=TGT_RANGE_LS, zorder=2)
+        steps(ax, thi[ss], colors=TGT_RANGE, lw=1.2, linestyles=TGT_RANGE_LS, zorder=2)
         if 'slip' in lohi:
             band(ax, lohi['slip'][r])
-        steps(ax, sr_pref[ss], colors=INK, lw=1.0, linestyles=(0, (1, 1.2)), zorder=2)
         steps(ax, t[ss], colors=TGT, lw=1.6, zorder=2)
         steps(ax, V['slip'][r], colors=SOL, lw=2.0, zorder=3)
         for rf in refs:
@@ -326,10 +327,10 @@ def main():
         ax.set_yscale('log')
         ax.set_ylabel('slip rate (mm/yr)', color=INK2, fontsize=9.5)
         what = 'exact corrected density' if exact else 'split normal'
-        h = [Line2D([], [], color=INK, lw=1, ls=(0, (1, 1.2))), Line2D([], [], color=TGT, lw=1.6), Line2D([], [], color=TGT_RANGE, lw=1.1),
+        h = [Line2D([], [], color=TGT, lw=1.6), Line2D([], [], color=TGT_RANGE, lw=1.2, ls=TGT_RANGE_LS),
              Line2D([], [], color=SOL, lw=2)] + ([Patch(color=DENS, alpha=0.6)] if 'slip' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs]
-        l_ = ['CFM SR_pref', 'target (× slip-rate factor)', f'target 2.275% and 97.725% ({what})', 'posterior mean'] \
+        l_ = ['target (× slip-rate factor)', f'target 2.275% and 97.725% ({what})', 'posterior mean'] \
             + (['kept draws, shaded by density'] if 'slip' in lohi else []) + [rf['label'] for rf in refs]
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 4. magnitudes

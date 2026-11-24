@@ -278,7 +278,8 @@ worse than random equal-weight sets (percentiles 88-100) but at chance against r
 (24-94): the weights cost the distributions what the calibration buys the means. plot_along_strike.py (same day,
 the user's request): the kept draws shaded by density in panels 1-3 (each subsection's column in log10, its own
 scale, DENS = MARK_BLUES[1]) instead of the 2.275-97.725% band; the target's 2.275%/97.725% as grey lines; the
-summary shows Akatore and Alpine: George to Jacksons (Alpine: Jacksons to Kaniere before). fig_targets_mfd.png (2026-11-25, the user's request): each NZSHM22 inversion the run refers to (workflow_config.json's
+summary shows Alpine: George to Jacksons, then Akatore (Alpine: Jacksons to Kaniere before); the slip panel's
+target medium grey, its 2.275%/97.725% light grey dashed, no CFM SR_pref line (still in along_strike.csv). fig_targets_mfd.png (2026-11-25, the user's request): each NZSHM22 inversion the run refers to (workflow_config.json's
 references, or --mfd-reference SOLUTION, at most two; plot_targets.mfd_references) drawn as its 16-84%, its stored
 supra target +-1 sigma at its own uncertainty scalar (black x0.1, red x1, REF_INKS); none: the run's recipe sigma in
 black; MFD_GR's bands GR_BLUE #0060c0 (alpha 0.13 / 0.30), the references' lines 0.8 wide; one legend below both panels. plot_targets.py (2026-11-25, the user's requests): fig_targets_slip's grey bars are the CFM's SR_min to SR_max times the

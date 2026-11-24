@@ -521,7 +521,7 @@ def main():
             'nnls/fig_paleo_rates_nnls.png', 'fig_targets_slip.png', 'fig_targets_paleo.png', 'fig_targets_mfd.png'] + [f'{a.prior}/{f}' for f in (
                 'fig_rate_magnitude.png', 'fig_slip_rates.png', 'fig_paleo_rates.png',
                 'fig_slip_sections_ruptures_by_magnitude_1.png', 'fig_slip_sections_ruptures_by_magnitude_2.png',
-                'along_strike/Akatore.png', 'along_strike/Alpine_George_to_Jacksons.png')]
+                'along_strike/Alpine_George_to_Jacksons.png', 'along_strike/Akatore.png')]
     present = [f for f in FIGS if os.path.exists(os.path.join(RUN, f))
                and os.path.basename(f) not in a.skip_figs]
     for f in FIGS:
@@ -1472,8 +1472,8 @@ def main():
         figure(fig_ss[4], 'Rupture rates by magnitude, second part.', LW * 0.86, max_h=lmax - 1.4 * cm)
         story += [NextPageTemplate('portrait'), PageBreak()]
 
-    _as = f'{a.prior}/along_strike/Akatore.png'                      # an isolated fault (2026-11-25, the user's choice;
-    _as2 = f'{a.prior}/along_strike/Alpine_George_to_Jacksons.png'    # Alpine: Jacksons to Kaniere before)
+    _as = f'{a.prior}/along_strike/Alpine_George_to_Jacksons.png'    # a well-connected fault, then an isolated one (2026-11-25,
+    _as2 = f'{a.prior}/along_strike/Akatore.png'                      # the user's choice; Alpine: Jacksons to Kaniere before)
     if os.path.isdir(os.path.join(RUN, a.prior, 'along_strike')):
         n_as = len([f for f in os.listdir(os.path.join(RUN, a.prior, 'along_strike')) if f.endswith('.png')])
         para('<b>Along strike.</b> ' + tt('plot_along_strike.py') + f' draws each of the {n_as} named faults along its '
@@ -1484,23 +1484,23 @@ def main():
              'rate of every rupture through the subsection, and of those of M \u2265 7 and M \u2265 8; the paleo-visible '
              'participation rate, each rupture weighted by UCERF3\u2019s probability that a site at the subsection\u2019s '
              'middle would record it (as the paleo rows weight them), with the fault\u2019s paleo sites (best estimate, 1\u03c3 '
-             'and 2\u03c3); the slip rate, with the CFM\u2019s SR_pref, the run\u2019s target and its 2.275% and 97.725% points, '
+             'and 2\u03c3); the slip rate, with the run\u2019s target and its 2.275% and 97.725% points, '
              'and the posterior; and the magnitudes of the ruptures through each subsection: its posterior mean '
              'participation rate in each 0.1-magnitude bin, in colour on a log scale (each column the subsection\u2019s '
              'participation MFD), with its rate-weighted median magnitude. Panels 1\u20133 show the posterior mean as a line '
              'and the kept draws shaded by density (each subsection\u2019s column darker where more draws fall, on its own '
              'scale), with the reference solutions dash-dotted. '
-             + (fref(_as) + ' is Akatore, which shares ruptures with only 5 other sections, and ' + fref(_as2) + ' the Alpine '
-                'Fault\u2019s George-to-Jacksons section, which shares them with 92; ' if _as in num and _as2 in num else '')
+             + (fref(_as) + ' is the Alpine Fault\u2019s George-to-Jacksons section, which shares ruptures with 92 other '
+                'sections, and ' + fref(_as2) + ' Akatore, which shares them with only 5; ' if _as in num and _as2 in num else '')
              + 'the rest are in ' + tt(f'{a.prior}/along_strike/') + ' (one PNG per fault and along_strike.csv, every '
              'value per subsection).')
         _cap = (' From the top: participation rate (all ruptures, M \u2265 7, M \u2265 8), paleo-visible participation '
-                'rate with the paleo sites, slip rate (CFM SR_pref, the target and its 2.275% and 97.725% points in grey, '
+                'rate with the paleo sites, slip rate (the target in grey and its 2.275% and 97.725% points dashed, '
                 'the posterior), each with the kept draws shaded by density, and the magnitudes of the ruptures through each '
                 'subsection (participation rate per 0.1-magnitude bin, and the median magnitude).')
-        figure(_as, 'Along strike: Akatore, sharing ruptures with 5 other sections.' + _cap, FW * 0.75, max_h=22 * cm)
-        figure(_as2, 'Along strike: the Alpine Fault, George to Jacksons, sharing ruptures with 92 other sections.' + _cap,
+        figure(_as, 'Along strike: the Alpine Fault, George to Jacksons, sharing ruptures with 92 other sections.' + _cap,
                FW * 0.75, max_h=22 * cm)
+        figure(_as2, 'Along strike: Akatore, sharing ruptures with 5 other sections.' + _cap, FW * 0.75, max_h=22 * cm)
 
     head(f'{SN["opensha"]}. Output for OpenSHA')
     para(f'{tt("make_solution.py")} writes the posterior-mean rates as an OpenSHA fault-system solution\u2019s rates file '
