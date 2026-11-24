@@ -1436,8 +1436,8 @@ X_MARK = dict(marker='x', ls='none', ms=2.6, mew=0.4, alpha=0.15, rasterized=Tru
 # 1,000), so that a mark's cloud has the same overall weight whatever KEPT_DRAWS is: the alphas given (X_MARK's and the
 # figures' own) are for X_REF_DRAWS draws, scaled by X_REF_DRAWS / N (N from kept_draws), at least X_MIN_ALPHA (rounding
 # to 8-bit colour loses fainter ones).
-X_REF_DRAWS, X_MIN_ALPHA = 1250, 0.004                # 1,250: 1.25 x the first scaling's (1,000), a little
-                                                      # darker (2026-11-25, the user's requests: 1,500 briefly)
+X_REF_DRAWS, X_MIN_ALPHA = 1000, 0.004                # 1,000: the first scaling's again
+                                                      # (2026-11-25, the user's requests: 1,500, 1,250 and 1,100 briefly)
 _X_KEPT = [None]
 
 
@@ -1474,13 +1474,6 @@ MARK_BLUES = ('#73bdcd', '#48a2cc', '#267eba', '#085ca4', '#083876')
 MARK_BLUES_CYCLE = tuple(MARK_BLUES[i] for i in (0, 3, 1, 4, 2))
 # all 9 averaged classes, light to dark: the continuous scale of the along-strike heat maps (mark_blues_cmap)
 MARK_BLUES_9 = ('#f7fcf8', '#dfefe9', '#c9e3da', '#a3d3cb', '#73bdcd', '#48a2cc', '#267eba', '#085ca4', '#083876')
-
-
-# ColorBrewer's Blues, its darkest 6 of 9 classes (light to dark): the slip-rate, paleo and targets figures' marks again since
-# 2026-11-25 (the user's choice; MARK_BLUES there earlier the same day, and these from 2026-11-23 before that)
-BLUES6 = ('#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b')
-# ... light and dark alternating, as before
-BLUES6_CYCLE = tuple(BLUES6[i] for i in (0, 3, 1, 4, 2, 5))
 
 
 def mark_blues_cmap():
