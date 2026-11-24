@@ -673,6 +673,12 @@ exploratory 100/200/1.01, production 1000/2000/1.01, precise 10000/20000/1.005) 
 thin 8, and TARGETS 'exploratory'). FIGURE_SETTINGS RUN_MINUTES ('240 (16x56,000)'; older runs 'preset ...'); summary PDF
 RUN_MINUTES and TARGETS rows (older runs PRESET), the prediction beside the achieved draws; RUN_NAME _{RUN_MINUTES}min.
 630k very conservative run: tau 37 / 73 / ~2,100 sweeps -> 'production' ~245 min on 4 threads.
+Infeasible polished starts redrawn (2026-11-24, the user's go-ahead): a 120-min run's start 4 (seed 80668435) polished
+to 127 rates on and a total rate of 0 (762 rows predicted at 0, 3 monotonic pairs broken), and gibbs.py's calibration
+refused it, stopping the notebook. dispersed_starts.py now checks each polished start as the sampler would (rates below
+the slab floor off; every data row predicted above zero; with --mfd-monotonic every pair within its ratio) and redraws a
+failing one from the prior (its own stream, SeedSequence([seed, 7, 1000 + attempt])) and polishes it again, up to 3
+redraws, then stops with a message; first draws unchanged, so existing seeds give the same starts.
 DISPERSED_STARTS (True, 2026-11-17, the user's choice: randomized fits, one per chain, noise x2): dispersed_starts.py writes
 starts.npy (chains x kept cols): rows 0..7 randomized_nnls.ensemble(noise=2) NNLS fits, rows 8..15 prior draws (--prior-share 0.5:
 per bin pi ~ U(0,1), on w.p. pi, log-uniform 2 floor..R_j, bin scaled to R_j); none from the unperturbed NNLS fit; each then

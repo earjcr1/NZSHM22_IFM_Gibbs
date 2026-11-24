@@ -130,7 +130,10 @@ def main():
             vgr = np.linspace(v_lo, v_hi, 4001)
             pv = np.exp(lpv(vgr) - np.max(lpv(vgr)))
             tau_ln = a.mfd_gr_tau * np.log(10.0)
-        for q, ss in enumerate(np.random.SeedSequence([a.seed, 7]).spawn(n_prior)):
+        streams = np.random.SeedSequence([a.seed, 7]).spawn(n_prior)
+
+        def prior_draw(q, attempt=0):              # attempt 0: the streams as before; a redraw: its own stream
+            ss = streams[q] if attempt == 0 else np.random.SeedSequence([a.seed, 7, 1000 + attempt]).spawn(n_prior)[q]
             g = np.random.default_rng(ss)
             x = np.zeros(n)
             if joint:                                    # this start's G-R curve, and a residual of steps of tau about it
@@ -147,7 +150,9 @@ def main():
                     on[g.integers(len(mem))] = True
                 r = np.exp(g.uniform(lf, np.log(R), int(on.sum())))
                 x[mem[on]] = r * (R / r.sum())
-            X[n_fit + q] = x
+            return x
+        for q in range(n_prior):
+            X[n_fit + q] = prior_draw(q)
     chi = lambda x: float(np.sum((G @ x - d) ** 2)) / sigma ** 2
     chi_fit = [chi(x) for x in X]
     t_fits = time.time() - t0
@@ -166,13 +171,52 @@ def main():
             f_ = os.path.join(tmp, f'fit{k + 1:02d}.npz')
             np.savez(f_, mean=full)
             jobs.append((k, os.path.abspath(a.problem), f_, os.path.join(tmp, f'start{k + 1:02d}'), fit_args, stops))
+        # a polished start the sampler would refuse (2026-11-24: a start drained to a total rate of 0, 127 rates on, stopped
+        # a run's calibration): the sampler's own tests, with the rates below the slab floor off as it sets them, are that
+        # every data row (the slip rates, the paleo sites, the bins) is predicted above zero and, with --mfd-monotonic, no
+        # bin above its lower neighbour beyond its ratio; a start that fails is redrawn from the prior and polished again
+        mono_ = mfd_monotonic(P, a.bins_block) if '--mfd-monotonic' in fit_args else None
+
+        def infeasible(x):
+            xs = np.where(x >= a.floor * (1.0 - 1e-9), x, 0.0)
+            zero = int(np.sum(~(G @ xs > 0.0)))
+            broken = 0
+            if mono_ is not None:
+                tot = np.array([xs[m].sum() for m in mono_['members']])
+                broken = sum(1 for (k_, k1_), rho in zip(mono_['pairs'], mono_['rhos']) if tot[k1_] > rho * tot[k_] * (1 + 1e-6))
+            return zero, broken
+
+        attempt = [0] * a.chains
+        todo = list(range(a.chains))
         with ThreadPoolExecutor(a.workers) as pool:
-            for k, m_full, f1, sec, it_, why in pool.map(polish, jobs):
-                X[k] = m_full[keep_c]
-                mis[k] = f1
-                its[k] = f'{it_} ({why})'
-                print(f'   start {k + 1:2d} ({kind[k]}) polished: misfit as fitted {f1:.1f}, {it_} iterations, {why} '
-                      f'({sec:.0f} s)', flush=True)
+            while todo:
+                for k, m_full, f1, sec, it_, why in pool.map(polish, [jobs[k] for k in todo]):
+                    X[k] = m_full[keep_c]
+                    mis[k] = f1
+                    its[k] = f'{it_} ({why})'
+                    print(f'   start {k + 1:2d} ({kind[k]}) polished: misfit as fitted {f1:.1f}, {it_} iterations, {why} '
+                          f'({sec:.0f} s)', flush=True)
+                redo = []
+                for k in todo:
+                    zero, broken = infeasible(X[k])
+                    if not (zero or broken):
+                        continue
+                    if kind[k] != 'prior' or attempt[k] >= 3:
+                        raise SystemExit(f'start {k + 1}: still infeasible after {attempt[k] + 1} draws ({zero} rows predicted '
+                                         f'at 0, {broken} pairs of bins breaking the monotonic MFD); try another --seed')
+                    attempt[k] += 1
+                    x = prior_draw(k - n_fit, attempt[k])
+                    X[k], chi_fit[k] = x, chi(x)
+                    full = np.zeros(n_raw)
+                    full[keep_c] = x
+                    np.savez(jobs[k][2], mean=full)
+                    print(f'   start {k + 1:2d}: infeasible after the polish ({zero} rows predicted at 0, {broken} pairs of '
+                          f'bins breaking the monotonic MFD): redrawn from the prior (draw {attempt[k] + 1}) and polished '
+                          'again', flush=True)
+                    redo.append(k)
+                todo = redo
+        if any(attempt):
+            its = [t + (f'; draw {attempt[k] + 1}' if attempt[k] else '') for k, t in enumerate(its)]
         shutil.rmtree(tmp, ignore_errors=True)
     floor = a.floor
     on0 = None if base is None else base > floor         # cleaning's NNLS fit, if it made one: a reference only
