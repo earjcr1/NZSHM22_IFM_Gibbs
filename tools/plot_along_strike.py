@@ -7,7 +7,7 @@ panels, and with the magnitudes of the ruptures in their place).
                                 [--outdir DIR] [--faults NAME,NAME,...] [--reference RATES[:LABEL]] (up to twice)
 
 VECTORS: the run's rate vectors (<prior folder>/rate_vectors.npz): the posterior mean's rate of every rupture of the
-rupture set; the kept draws (<prior folder>/main_rep*_kept.npy, select_draws.py's) give each value's 2.275-97.725% range.
+rupture set; the kept draws (<prior folder>/main_rep*_kept.npy, select_draws.py's) give each value's distribution.
 --ruptures: the OpenSHA rupture set (fault_sections.geojson, indices.csv, properties.csv, average_slips.csv,
 named_faults.json); --named: another named-faults file (fault name -> its parent fault sections' IDs).
 
@@ -19,13 +19,15 @@ value, along_strike.csv. x: longitude, or latitude for a fault whose subsections
   2. paleo-visible participation rate: each rupture weighted by UCERF3's probability that a site at the subsection's
      middle would see it (rupture_set_inputs.paleo_visibility, as the paleo rows weight them), with the paleo sites on
      the fault (paleo_misfit.paleo_data: their best estimates, ONE_SIGMA bounds as thick bars, TWO_SIGMA as thin);
-  3. slip rate (mm/yr): the CFM's SR_pref (unscaled), the run's target (the slip-rate factor in it) and its 2.275-97.725%
-     range (the fault's exact corrected density with MISFIT_SLIP 'exact', its split normal otherwise), and the posterior
+  3. slip rate (mm/yr): the CFM's SR_pref (unscaled), the run's target (the slip-rate factor in it) and its 2.275% and
+     97.725% points as grey lines (the fault's exact corrected density with MISFIT_SLIP 'exact', its split normal
+     otherwise; a band until 2026-11-25), and the posterior
      slip rate (each rupture's slip on the subsection, plate_rate.rupture_matrix, times its rate);
   4. the magnitudes of the ruptures through each subsection: its posterior mean participation rate in each magnitude bin
      of 0.1 (colour, log scale), and its rate-weighted median magnitude (a line).
-Panels 1-3: the posterior mean (a line) and the kept draws' 2.275-97.725% (a band); each --reference (NZSHM22 solutions,
-dashed, in the fit figures' inks) as a line.
+Panels 1-3: the posterior mean (a line) and the kept draws shaded by density (since 2026-11-25, the user's request; their
+2.275-97.725% as a band before): each subsection's column binned in log10 over the fault's 1-99% of values, darker
+where more draws fall, on its own scale; each --reference (NZSHM22 solutions, dashed, in the fit figures' inks) as a line.
 """
 import argparse
 import csv
@@ -41,8 +43,11 @@ from cru_common import MARK_BLUES, mark_blues_cmap, REF_INKS, find_rupture_set, 
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
 SOL, BAND = MARK_BLUES[3], MARK_BLUES[0]                  # the posterior: a dark blue line over a light blue band
+DENS = MARK_BLUES[1]                                       # the kept draws' density shading (2026-11-25, the user's request)
+NB_DENS = 60                                               # its bins in log10 over each panel's range
 HEAT = mark_blues_cmap()                         # the heat maps: the same blues, continuous
-TGT, TGT_BAND = '#1b7f79', '#bfe3df'              # the target and its range (teal)
+TGT, TGT_BAND = '#1b7f79', '#bfe3df'              # the target (teal) and, until 2026-11-25, its range's band
+TGT_RANGE = '#898781'                             # the target's 2.275% and 97.725% points: grey lines (since 2026-11-25)
 PLO, PHI = 0.022750131948179195, 1 - 0.022750131948179195
 
 
@@ -183,7 +188,7 @@ def main():
         if kept_files:
             for k_, v_ in acc.items():
                 v_ = np.concatenate(v_, axis=1)
-                lohi[k_] = (np.percentile(v_, 100 * PLO, axis=1), np.percentile(v_, 100 * PHI, axis=1))
+                lohi[k_] = v_                               # subsections x kept draws, shaded by density
     refs = []
     for k, spec in enumerate(a.reference or []):
         path, label = spec, None
@@ -230,9 +235,30 @@ def main():
             y = np.asarray(y, float)
             ax.hlines(y, x0, x1, **kw)
 
-        def band(ax, lo, hi):
-            for a_, b_, l_, h_ in zip(x0, x1, lo, hi):
-                ax.fill_between([a_, b_], [l_, l_], [h_, h_], color=BAND, alpha=0.75, lw=0, zorder=1)
+        def band(ax, D):
+            """The kept draws' values (D: these subsections x draws) shaded by density in log10, each subsection's
+            column on its own scale (its most common value darkest); draws outside the 1-99% of the fault's
+            values, and zeros, are left out."""
+            from matplotlib.collections import PolyCollection
+            from matplotlib.colors import to_rgb
+            pos = D[D > 0]
+            if not len(pos):
+                return
+            lo, hi = np.percentile(pos, 1.0), np.percentile(pos, 99.0)
+            hi = max(hi, lo * 1.01)
+            ye = np.logspace(np.log10(lo), np.log10(hi), NB_DENS + 1)
+            rgb = to_rgb(DENS)
+            polys, cols = [], []
+            for a_, b_, d_ in zip(x0, x1, D):
+                h_, _ = np.histogram(d_[d_ > 0], ye)
+                if h_.max() == 0:
+                    continue
+                for k_ in np.flatnonzero(h_):
+                    polys.append([(a_, ye[k_]), (b_, ye[k_]), (b_, ye[k_ + 1]), (a_, ye[k_ + 1])])
+                    cols.append((*rgb, 0.9 * h_[k_] / h_.max()))
+            ax.add_collection(PolyCollection(polys, facecolors=cols, edgecolors='none', zorder=1))
+            ax.update_datalim([(x0.min(), lo), (x1.max(), hi)])
+            ax.autoscale_view()
 
         for ax in axs:
             ax.set_facecolor(SURFACE)
@@ -244,7 +270,7 @@ def main():
         # 1. participation
         ax = axs[0]
         if 'part' in lohi:
-            band(ax, lohi['part'][0][r], lohi['part'][1][r])
+            band(ax, lohi['part'][r])
         steps(ax, V['part'][r], colors=SOL, lw=2.0, zorder=3)
         steps(ax, V['m7'][r], colors=SOL, lw=1.4, linestyles=(0, (4, 2)), zorder=3)
         steps(ax, V['m8'][r], colors=SOL, lw=1.4, linestyles=(0, (1, 1.5)), zorder=3)
@@ -253,15 +279,15 @@ def main():
         ax.set_yscale('log')
         ax.set_ylabel('participation rate (per year)', color=INK2, fontsize=9.5)
         h = [Line2D([], [], color=SOL, lw=2), Line2D([], [], color=SOL, lw=1.4, ls=(0, (4, 2))),
-             Line2D([], [], color=SOL, lw=1.4, ls=(0, (1, 1.5)))] + ([Patch(color=BAND)] if 'part' in lohi else []) \
+             Line2D([], [], color=SOL, lw=1.4, ls=(0, (1, 1.5)))] + ([Patch(color=DENS, alpha=0.6)] if 'part' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs]
-        l_ = ['posterior mean: all (supra-seis)', 'M ≥ 7', 'M ≥ 8'] + (['all: kept draws 2.275–97.725%'] if 'part' in lohi else []) \
+        l_ = ['posterior mean: all (supra-seis)', 'M ≥ 7', 'M ≥ 8'] + (['all: kept draws, shaded by density'] if 'part' in lohi else []) \
             + [f'{rf["label"]}: all' for rf in refs]
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 2. paleo-visible
         ax = axs[1]
         if 'vis' in lohi:
-            band(ax, lohi['vis'][0][r], lohi['vis'][1][r])
+            band(ax, lohi['vis'][r])
         steps(ax, V['vis'][r], colors=SOL, lw=2.0, zorder=3)
         for rf in refs:
             steps(ax, rf['v']['vis'][r], colors=rf['ink'], lw=1.0, linestyles=(0, (6, 2, 1, 2)), zorder=4)
@@ -280,19 +306,18 @@ def main():
                 n_site += 1
         ax.set_yscale('log')
         ax.set_ylabel('paleo-visible participation rate (per year)', color=INK2, fontsize=9.5)
-        h = [Line2D([], [], color=SOL, lw=2)] + ([Patch(color=BAND)] if 'vis' in lohi else []) \
+        h = [Line2D([], [], color=SOL, lw=2)] + ([Patch(color=DENS, alpha=0.6)] if 'vis' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs] \
             + ([Line2D([], [], marker='o', mfc='white', mec=INK, ls='-', color=INK, lw=2)] if n_site else [])
-        l_ = ['posterior mean (UCERF3 visibility)'] + (['kept draws 2.275–97.725%'] if 'vis' in lohi else []) \
+        l_ = ['posterior mean (UCERF3 visibility)'] + (['kept draws, shaded by density'] if 'vis' in lohi else []) \
             + [rf['label'] for rf in refs] + (['paleo sites: best estimate, 1σ (thick), 2σ (thin)'] if n_site else [])
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 3. slip rate
         ax = axs[2]
-        for a_, b_, l_, h_ in zip(x0, x1, tlo[ss], thi[ss]):
-            if np.isfinite(l_):
-                ax.fill_between([a_, b_], [max(l_, 1e-6)] * 2, [h_] * 2, color=TGT_BAND, alpha=0.8, lw=0, zorder=0)
+        steps(ax, np.where(np.isfinite(tlo[ss]), np.maximum(tlo[ss], 1e-6), np.nan), colors=TGT_RANGE, lw=1.1, zorder=2)
+        steps(ax, thi[ss], colors=TGT_RANGE, lw=1.1, zorder=2)
         if 'slip' in lohi:
-            band(ax, lohi['slip'][0][r], lohi['slip'][1][r])
+            band(ax, lohi['slip'][r])
         steps(ax, sr_pref[ss], colors=INK, lw=1.0, linestyles=(0, (1, 1.2)), zorder=2)
         steps(ax, t[ss], colors=TGT, lw=1.6, zorder=2)
         steps(ax, V['slip'][r], colors=SOL, lw=2.0, zorder=3)
@@ -301,11 +326,11 @@ def main():
         ax.set_yscale('log')
         ax.set_ylabel('slip rate (mm/yr)', color=INK2, fontsize=9.5)
         what = 'exact corrected density' if exact else 'split normal'
-        h = [Line2D([], [], color=INK, lw=1, ls=(0, (1, 1.2))), Line2D([], [], color=TGT, lw=1.6), Patch(color=TGT_BAND),
-             Line2D([], [], color=SOL, lw=2)] + ([Patch(color=BAND)] if 'slip' in lohi else []) \
+        h = [Line2D([], [], color=INK, lw=1, ls=(0, (1, 1.2))), Line2D([], [], color=TGT, lw=1.6), Line2D([], [], color=TGT_RANGE, lw=1.1),
+             Line2D([], [], color=SOL, lw=2)] + ([Patch(color=DENS, alpha=0.6)] if 'slip' in lohi else []) \
             + [Line2D([], [], color=rf['ink'], lw=1, ls=(0, (6, 2, 1, 2))) for rf in refs]
-        l_ = ['CFM SR_pref', 'target (× slip-rate factor)', f'target 2.275–97.725% ({what})', 'posterior mean'] \
-            + (['kept draws 2.275–97.725%'] if 'slip' in lohi else []) + [rf['label'] for rf in refs]
+        l_ = ['CFM SR_pref', 'target (× slip-rate factor)', f'target 2.275% and 97.725% ({what})', 'posterior mean'] \
+            + (['kept draws, shaded by density'] if 'slip' in lohi else []) + [rf['label'] for rf in refs]
         ax.legend(h, l_, fontsize=7.6, frameon=True, facecolor=SURFACE, edgecolor='none', framealpha=0.85, ncol=2, loc='lower left', labelcolor=INK2)
         # 4. magnitudes
         ax = axs[3]

@@ -269,7 +269,16 @@ gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-
 swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
 viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
 (n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
-fig_targets_mfd.png (2026-11-25, the user's request): each NZSHM22 inversion the run refers to (workflow_config.json's
+compare_reps.py (2026-11-25, the user's request; command line only, not in the notebook): the representatives'
+weighted distributions against the kept draws' (KS and W1/sd per total, bin, subsection and named fault; energy
+distance in standardized log10 for subsections and bins; the faults' and bins' correlation matrices), each against
+--n-null random sets of K kept draws, with equal weights and with the representatives' weights shuffled; writes
+compare_reps_report.txt / .png / .npz beside the rate vectors. 480-min run: 64 representatives, effective 49.3;
+worse than random equal-weight sets (percentiles 88-100) but at chance against random sets with weights as uneven
+(24-94): the weights cost the distributions what the calibration buys the means. plot_along_strike.py (same day,
+the user's request): the kept draws shaded by density in panels 1-3 (each subsection's column in log10, its own
+scale, DENS = MARK_BLUES[1]) instead of the 2.275-97.725% band; the target's 2.275%/97.725% as grey lines; the
+summary shows Akatore and Alpine: George to Jacksons (Alpine: Jacksons to Kaniere before). fig_targets_mfd.png (2026-11-25, the user's request): each NZSHM22 inversion the run refers to (workflow_config.json's
 references, or --mfd-reference SOLUTION, at most two; plot_targets.mfd_references) drawn as its 16-84%, its stored
 supra target +-1 sigma at its own uncertainty scalar (black x0.1, red x1, REF_INKS); none: the run's recipe sigma in
 black; MFD_GR's bands GR_BLUE #0060c0 (alpha 0.13 / 0.30), the references' lines 0.8 wide; one legend below both panels. plot_targets.py (2026-11-25, the user's requests): fig_targets_slip's grey bars are the CFM's SR_min to SR_max times the
