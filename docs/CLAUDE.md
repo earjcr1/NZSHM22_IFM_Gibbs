@@ -255,6 +255,15 @@ lw_change and lw_swap (the curve terms' and the log band's exact changes) iterat
 (LWP/LWQ, built for col_lwsums) when it exists, in place of every entry of the column(s); lw_swap merges the two columns'
 lists. The same rows in the same order: bit-identical at 630k; no measurable speed-up (the curve terms' own work, logs and
 table lookups, dominates; the 10% `sample` gave lw_change is that work, not the scan) (2026-11-24, the user's request).
+Per-decision screening tried twice and dropped (2026-11-24): a bound from per-chain block maxima of |slope| (64 row
+blocks, each column's sum of |G| per block, ~8 blocks a column) settles 66-76% of off decisions without the column pass
+and skips 44-58% of group passes, bit-identical; but at 630k ('between', 8 chains, 4 threads) both versions were no faster
+or slower (screen+g-test: 0.249/0.254 vs 0.242/0.248; lean, X test only, early exit at the top of the chain's update:
+0.256/0.247 vs 0.236/0.238 s/sweep). A noinline profile (-g, helpers un-inlined, 18% slower) split the kernel's compute:
+gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-rupture fallbacks), the column pass 20%,
+swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
+viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
+(n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
 Off-bounds fallback with early stopping (2026-11-24, the user's go-ahead after scoping): sp_bounds(QI, C_row, HO);
 _off_bounds_qi also builds C_row (each row's C_j, inflated as QI) and HO (int32, each column's likelihood entries in order of
 G_ji^2 C_j, largest first; ~15 s and 4 bytes per nonzero at 630k, built in sample() before t0). In the bq branch, when the
