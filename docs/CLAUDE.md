@@ -272,7 +272,7 @@ viable: a bound over the whole slab up to the bin's top is near 1. Steady-state 
 fig_targets_mfd.png (2026-11-25, the user's request): each NZSHM22 inversion the run refers to (workflow_config.json's
 references, or --mfd-reference SOLUTION, at most two; plot_targets.mfd_references) drawn as its 16-84%, its stored
 supra target +-1 sigma at its own uncertainty scalar (black x0.1, red x1, REF_INKS); none: the run's recipe sigma in
-black; MFD_GR's bands GR_BLUE #0060c0 (alpha 0.13 / 0.30); one legend below both panels. plot_targets.py (2026-11-25, the user's requests): fig_targets_slip's grey bars are the CFM's SR_min to SR_max times the
+black; MFD_GR's bands GR_BLUE #0060c0 (alpha 0.13 / 0.30), the references' lines 0.8 wide; one legend below both panels. plot_targets.py (2026-11-25, the user's requests): fig_targets_slip's grey bars are the CFM's SR_min to SR_max times the
 slip-rate factor (--grey cfm; --grey gaussian the old one), both targets figures show 2.275-97.725% ranges (16-84% before),
 and with MISFIT_SLIP 'exact' the slip dot is the exact density's own mode (cru_common.slip_pdf_modes, the argmin of
 -2 ln p), not the split normal's: that one only anchors each row's weighting, and for lopsided faults it can sit

@@ -299,14 +299,14 @@ def mfd_figure(rd, cfg, outdir, n_mc=200000, seed=1, refs=None):
             ax.fill_between(xo, qi[0], qi[4], color=GR_BLUE, alpha=0.13, lw=0, label='MFD_GR bin PDF 2.3–97.7%', zorder=3)
             ax.fill_between(xo, qi[1], qi[3], color=GR_BLUE, alpha=0.30, lw=0, label='MFD_GR bin PDF 16–84%', zorder=3)
             for r_ in refs:
-                ax.plot(xo, r_['R'][on] + r_['sig'][on], color=r_['ink'], lw=1.4, zorder=4, label=f'{r_["label"]}: 16–84% (±1σ)')
-                ax.plot(xo, pos(r_['R'][on] - r_['sig'][on]), color=r_['ink'], lw=1.4, zorder=4)
+                ax.plot(xo, r_['R'][on] + r_['sig'][on], color=r_['ink'], lw=0.8, zorder=4, label=f'{r_["label"]}: 16–84% (±1σ)')
+                ax.plot(xo, pos(r_['R'][on] - r_['sig'][on]), color=r_['ink'], lw=0.8, zorder=4)
             ax.plot(xo, R[on], color=INK2, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, label='supra-seismogenic target', zorder=5)
         else:
             ax.fill_between(xo, qc[1][on], qc[3][on], color=GR_BLUE, alpha=0.30, lw=0, zorder=3)
             for r_ in refs:
-                ax.plot(xo, r_['Rc'][on] + r_['sdc'][on], color=r_['ink'], lw=1.4, zorder=4)
-                ax.plot(xo, pos(r_['Rc'][on] - r_['sdc'][on]), color=r_['ink'], lw=1.4, zorder=4)
+                ax.plot(xo, r_['Rc'][on] + r_['sdc'][on], color=r_['ink'], lw=0.8, zorder=4)
+                ax.plot(xo, pos(r_['Rc'][on] - r_['sdc'][on]), color=r_['ink'], lw=0.8, zorder=4)
             ax.plot(xo, Rc[on], color=INK2, lw=2, marker='o', ms=4.5, mec=SURFACE, mew=1, zorder=5)
         ax.set_yscale('log')
         ax.set_xlim(6.45, X[on].max() + 0.1)
