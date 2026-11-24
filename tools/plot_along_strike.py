@@ -37,10 +37,11 @@ import re
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import BLUES6, REF_INKS, find_rupture_set, load_problem, load_rates
+from cru_common import MARK_BLUES, mark_blues_cmap, REF_INKS, find_rupture_set, load_problem, load_rates
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
-SOL, BAND = BLUES6[4], BLUES6[0]                  # the posterior: a dark blue line over a light blue band
+SOL, BAND = MARK_BLUES[3], MARK_BLUES[0]                  # the posterior: a dark blue line over a light blue band
+HEAT = mark_blues_cmap()                         # the heat maps: the same blues, continuous
 TGT, TGT_BAND = '#1b7f79', '#bfe3df'              # the target and its range (teal)
 PLO, PHI = 0.022750131948179195, 1 - 0.022750131948179195
 
@@ -316,7 +317,7 @@ def main():
         for j, (a_, b_) in enumerate(zip(x0, x1)):
             for b in have:
                 if M[b, j] > 0:
-                    ax.fill_between([a_, b_], [edges[b]] * 2, [edges[b + 1]] * 2, color=plt.cm.Blues(norm(M[b, j])), lw=0)
+                    ax.fill_between([a_, b_], [edges[b]] * 2, [edges[b + 1]] * 2, color=HEAT(norm(M[b, j])), lw=0)
         mids = 0.5 * (edges[:-1] + edges[1:])
         med = []
         for j in range(len(ss)):
@@ -330,7 +331,7 @@ def main():
         ax.set_ylim(mlo, mhi)
         ax.set_ylabel('magnitude of the ruptures through it', color=INK2, fontsize=9.5)
         if norm is not None:
-            sm = plt.cm.ScalarMappable(cmap='Blues', norm=norm)
+            sm = plt.cm.ScalarMappable(cmap=HEAT, norm=norm)
             cb = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.2, fraction=0.05, aspect=40)
             cb.set_label('posterior mean participation rate in each 0.1-magnitude bin (per year)', color=INK2, fontsize=8.5)
             cb.ax.tick_params(labelsize=7.5, colors=MUTED, labelcolor=INK2)

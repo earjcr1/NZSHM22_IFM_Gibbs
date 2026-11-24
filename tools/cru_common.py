@@ -1374,7 +1374,9 @@ def kept_draws(z):
     figures draw them one by one, as x's (draw_xs)."""
     if 'kept' not in z.files or 'kept_index' not in z.files:
         return None, None
-    return z['kept'], np.asarray(z['kept_index'])
+    idx = np.asarray(z['kept_index'])
+    _X_KEPT[0] = len(idx)                                # draw_xs fades each x by 1 / this many (X_REF_DRAWS: as set)
+    return z['kept'], idx
 
 
 def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=None):
@@ -1416,6 +1418,12 @@ def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=Non
 # Each kept draw as an x, in its mark's colour darkened a little (the palest blues are light), faint, so that
 # where the draws gather shows as the densest part; rasterized, since there are thousands per mark.
 X_MARK = dict(marker='x', ls='none', ms=2.6, mew=0.4, alpha=0.15, rasterized=True)
+# Each x's opacity goes as 1 / the number of kept draws (2026-11-25, the user's request: 5,120 draws drew far denser than
+# 1,000), so that a mark's cloud has the same overall weight whatever KEPT_DRAWS is: the alphas given (X_MARK's and the
+# figures' own) are for X_REF_DRAWS draws, scaled by X_REF_DRAWS / N (N from kept_draws), at least X_MIN_ALPHA (rounding
+# to 8-bit colour loses fainter ones).
+X_REF_DRAWS, X_MIN_ALPHA = 1000, 0.004
+_X_KEPT = [None]
 
 
 def darker(c, f=0.75):
@@ -1429,6 +1437,8 @@ def draw_xs(ax, x, y, colours, zorder=2.2, **kw):
     for all, or one per point), darkened; one call per colour."""
     x, y = np.ravel(x), np.ravel(y)
     style = {**X_MARK, **kw}
+    if _X_KEPT[0]:                                       # faded as 1 / the number of kept draws (X_REF_DRAWS)
+        style['alpha'] = max(X_MIN_ALPHA, style['alpha'] * X_REF_DRAWS / _X_KEPT[0])
     if isinstance(colours, str) or np.ndim(colours) == 1 and len(colours) in (3, 4) and not isinstance(colours[0], str):
         ax.plot(x, y, color=darker(colours), zorder=zorder, **style)
         return
@@ -1440,19 +1450,28 @@ def draw_xs(ax, x, y, colours, zorder=2.2, **kw):
 
 
 
-# The colours that tell neighbouring marks apart, in every figure: ColorBrewer's Blues, the darkest 6 of its 9 classes
-# (light to dark; the user's choice, 2026-11-23: before, RdYlBu's 6 classes in the slip-rate, paleo and target figures and
-# Tableau's Color Blind 10 in the slip-sections figure)
-BLUES6 = ('#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b')
+# The colours that tell neighbouring marks apart, in every figure (2026-11-25, the user's choice): ColorBrewer's Blues and
+# GnBu (9 classes each) averaged class by class in RGB, the darkest 5 of the 9 (light to dark). Before: Blues' darkest 6
+# (2026-11-23), RdYlBu's 6 classes in the slip-rate, paleo and target figures and Tableau's Color Blind 10 in the
+# slip-sections figure
+MARK_BLUES = ('#73bdcd', '#48a2cc', '#267eba', '#085ca4', '#083876')
 # ... in an order alternating light and dark, so that neighbours along the targets differ by at least two shades
-BLUES6_CYCLE = tuple(BLUES6[i] for i in (0, 3, 1, 4, 2, 5))
+MARK_BLUES_CYCLE = tuple(MARK_BLUES[i] for i in (0, 3, 1, 4, 2))
+# all 9 averaged classes, light to dark: the continuous scale of the along-strike heat maps (mark_blues_cmap)
+MARK_BLUES_9 = ('#f7fcf8', '#dfefe9', '#c9e3da', '#a3d3cb', '#73bdcd', '#48a2cc', '#267eba', '#085ca4', '#083876')
+
+
+def mark_blues_cmap():
+    """The averaged Blues and GnBu as a continuous colormap (light to dark)."""
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list('blues_gnbu', MARK_BLUES_9)
 
 
 def neighbour_colours(x, palette=None):
-    """One colour per mark, cycling through a palette (BLUES6_CYCLE by default) along x (equal x
+    """One colour per mark, cycling through a palette (MARK_BLUES_CYCLE by default) along x (equal x
     in their given order), so that marks next to each other never share a colour. The colours only tell neighbours
     apart; they follow the inputs (x), so a mark keeps its colour in every model's figure."""
-    pal = BLUES6_CYCLE if palette is None else palette
+    pal = MARK_BLUES_CYCLE if palette is None else palette
     rank = np.empty(len(x), int)
     rank[np.argsort(np.asarray(x, np.float64), kind='stable')] = np.arange(len(x))
     return np.array(pal)[rank % len(pal)]

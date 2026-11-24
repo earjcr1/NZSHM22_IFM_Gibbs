@@ -35,7 +35,7 @@ sections takes the mean over its subsections of each in its own section's units,
 Marks, per column: the target (a black line) and the band within one uncertainty of it (grey; a named fault whose
 sections all lie within one uncertainty of their targets lies inside it); the posterior 16-84% range (a thick bar),
 2.5-97.5% range (a thin line), median (a dark tick across the bar) and mean (a dot), in a colour unlike its neighbours'
-from ColorBrewer's Blues, its darkest 6 of 9 classes, outlined in grey (cru_common.BLUES6_CYCLE and neighbour_colours: the
+from ColorBrewer's Blues and GnBu averaged, the darkest 5 of 9 classes, outlined in grey (cru_common.MARK_BLUES_CYCLE and neighbour_colours: the
 colours only tell neighbouring columns apart); and the reference model's value (an open black square, beside it).
 Values below the axis, including 0, sit on its bottom edge as triangles, and a range that reaches the bottom continues
 to 0. Below, the share of draws in which no rupture crossing the column is on (its prediction exactly 0), and the
@@ -90,7 +90,7 @@ import textwrap
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import (BLUES6, BLUES6_CYCLE, darker, draw_xs, figure_legend, kept_draws, kept_predictions, legend_above,
+from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, darker, draw_xs, figure_legend, kept_draws, kept_predictions, legend_above,
                         legend_height, load_problem, magnitude_bins, neighbour_colours, reference_list,
                         run_predictions, run_settings, settings_lines, slip_sections)
 
@@ -381,7 +381,7 @@ def main():
 
     N = len(pick)
     x = np.arange(N, dtype=np.float64)
-    col = neighbour_colours(x, BLUES6_CYCLE)
+    col = neighbour_colours(x, MARK_BLUES_CYCLE)
     tsel = tg[pick]
     big = [tsel + 1.0, ym] + ([q[4]] if q is not None else []) + [ref['ys'] for ref in refs]
     hi = 1.5 * max(float(np.max(v)) for v in big)
@@ -408,7 +408,7 @@ def main():
     tab = settings_lines(settings, int((fig_w - 1.4) / 0.062500)) if settings else None
     thin = [pe.Stroke(linewidth=1.3, foreground=MUTED), pe.Normal()]     # outlines: the pale colours stand out
     thick = [pe.Stroke(linewidth=4.6, foreground=MUTED), pe.Normal()]
-    few = BLUES6[0], BLUES6[3], BLUES6[5]               # the legend shows a few of the colours
+    few = MARK_BLUES[0], MARK_BLUES[2], MARK_BLUES[4]               # the legend shows a few of the colours
     handles = [(tuple(Line2D([], [], ls='none', marker='o', ms=4.9, mfc=c, mec=INK if Xk is not None else MUTED,
                              mew=0.7 if Xk is not None else 0.45) for c in few), 'posterior mean' if q is not None else 'value')]
     if Xk is not None:
