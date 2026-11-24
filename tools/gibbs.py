@@ -184,7 +184,9 @@ static inline double sp_d(double e, double l, double h) {
    remainder). Each chain's slopes f_j'(e_j) are kept current (gibbs_run's DS), so a column's pass is one dot product
    per chain, and the exact change (table lookups) is computed only when the bounds leave the decision open. */
 static const double *SPB_QI = NULL;
-void sp_bounds(const double *qi) { SPB_QI = qi; }
+static const double *SPB_C = NULL;     /* each row's C_j (as in SPB_QI) */
+static const int32_t *SPB_HO = NULL;   /* each column's likelihood entries, heaviest (G_ji^2 C_j) first: positions in data */
+void sp_bounds(const double *qi, const double *c, const int32_t *ho) { SPB_QI = qi; SPB_C = c; SPB_HO = ho; }
 /* the split misfit's log likelihood at m (lbctx's sp fields): concave in m, a Gaussian on each side of each row's target
    (with --slip-misfit exact's tables, each row's term quasiconvex in m instead: lb_floor) */
 static double sp_lik(const lbctx *c, double m) {
@@ -1106,7 +1108,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         for (int64_t k0 = 0; k0 < K; k0 += 4) {
             const int64_t kg = K - k0 < 4 ? K - k0 : 4;
             double dt[4] = {0.0, 0.0, 0.0, 0.0}, S1[4] = {0.0}, S2[4] = {0.0}, S3[4] = {0.0};
-            double mpre[4] = {0.0}, DQ[4] = {0.0}, uq[4] = {0.0, 0.0, 0.0, 0.0}, DQL[4] = {0.0}, DQH[4] = {0.0};
+            double mpre[4] = {0.0}, DQ[4] = {0.0}, uq[4] = {0.0, 0.0, 0.0, 0.0}, DQL[4] = {0.0}, DQH[4] = {0.0}, SQV[4] = {0.0};
             int pre[4] = {0, 0, 0, 0};
             if (SL2 && pkind == 3 && !empty) {        /* --cfm slip rates: each off chain's slab draw first (its draws in
                                                          the same order as below), then its exact change in one pass */
@@ -1136,6 +1138,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     double *dg[4], sq[4];
                     for (int64_t q = 0; q < 4; q++) dg[q] = DS + (k0 + (q < kg ? q : 0)) * N;
                     col_sdots(data, indices, p0, pe, dg, U ? ug : NULL, sq, uq);
+                    for (int64_t q = 0; q < 4; q++) SQV[q] = sq[q];
                     if (AC) {
                         if (LWP) col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                         else col_dots_lw(kg, data, indices, p0, pe, rg, ag, dt, S1, S2, S3);
@@ -1271,7 +1274,37 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             g = lr - (log(uu) - log1p(-uu));
                             if (xhi + dhi < g) on = 1; else if (xlo + dlo >= g) on = 0;
                         }
-                        if (on < 0) {
+                        if (on < 0 && SPB_HO && WC) {
+                            /* the exact change heaviest rows first, each row's new term less its cached one (WC), with
+                               the rest still bounded by their slopes and curvatures (2026-11-24): checked after 1, 2, 4,
+                               8, ... rows, stopping once the decision is settled (most fallbacks are switched on far
+                               above the threshold, their change dominated by a few rows); otherwise the whole change */
+                            const double f2 = 1.0 / (2.0 * s2);
+                            const double *dsk = DS + k * N, *wck = WC + k * N;
+                            double ex = U ? m * (2.0 * uq[q] + m * NSS[i]) : 0.0, sl = SQV[q], cv = SPB_QI[i];
+                            const double w0 = fabs(m * SQV[q]) + m * m * SPB_QI[i];
+                            const int64_t ne = pe - p0;
+                            int64_t next = 1;
+                            for (int64_t t = 0; t < ne; t++) {
+                                const int64_t p = SPB_HO[p0 + t];
+                                const int32_t j = indices[p];
+                                const double gg = data[p];
+                                ex += sp_w2(r[j] + gg * m, SL2[j], SH2[j]) - wck[j];
+                                sl -= gg * dsk[j];
+                                cv -= 0.5 * gg * gg * SPB_C[j];
+                                if (t + 1 == next && t + 1 < ne) {
+                                    next *= 2;
+                                    const double a = m * sl, b = m * m * (cv > 0.0 ? cv : 0.0);
+                                    const double w = 1e-9 * (fabs(ex) + fabs(a) + b + w0) + 1e-300;
+                                    if ((ex + a + b + w) * f2 + dhi < g) { on = 1; break; }
+                                    if ((ex + a - b - w) * f2 + dlo >= g) { on = 0; break; }
+                                }
+                            }
+                            if (on < 0) {
+                                xl = ex * f2;
+                                if (xl + dhi < g) on = 1; else if (xl + dlo >= g) on = 0;
+                            }
+                        } else if (on < 0) {
                             xl = sp_change(data, indices, p0, pe, r, SL2, SH2, -xi, m - xi, U ? uq[q] : 0.0,
                                            U ? NSS[i] : 0.0) / (2.0 * s2);
                             if (xl + dhi < g) on = 1; else if (xl + dlo >= g) on = 0;
@@ -1747,7 +1780,7 @@ def build_kernel():
     L.sp_tables.argtypes = [P] * 5
     L.sp_tables.restype = None
     L.ss_collapse.argtypes = [I, D, D, P]
-    L.sp_bounds.argtypes = [P]
+    L.sp_bounds.argtypes = [P, P, P]
     L.sp_bounds.restype = None
     L.ss_collapse.restype = None
     L.kernel_consts.restype = None
@@ -1973,7 +2006,10 @@ def _sp_ptrs(T):
             tab['FD'] = np.ascontiguousarray(np.column_stack([tab['F'], tab['D'] * hpt]).ravel())
         L.sp_tables(_ptr(tab['E0']), _ptr(tab['IH']), _ptr(tab['H']), tab['OFF'].ctypes.data, _ptr(tab['FD']))
     qi = _off_bounds_qi(T)
-    L.sp_bounds(None if qi is None else _ptr(qi))
+    if qi is None:
+        L.sp_bounds(None, None, None)
+    else:
+        L.sp_bounds(_ptr(qi), _ptr(T.split['C_row']), T.split['HO'].ctypes.data)
     if getattr(T, 'split', None) is None:
         return None, None
     return _ptr(T.split['L2']), _ptr(T.split['H2'])
@@ -2016,6 +2052,19 @@ def _off_bounds_qi(T):
         use = np.arange(len(col)) < np.asarray(pf)[col]
     qi = np.bincount(col[use], weights=0.5 * T.data[use] ** 2 * C[T.indices[use]], minlength=T.n)
     sp_['QI'] = np.ascontiguousarray(qi * (1.0 + 1e-12))
+    sp_['C_row'] = np.ascontiguousarray(C * (1.0 + 1e-12))   # the kernel's C_j, inflated as QI is
+    # each column's likelihood entries (the first ones, rows sorted) in order of G_ji^2 C_j, largest first: the order of
+    # the exact pass with early stopping; positions in data (int32), the other entries unused; in chunks of columns
+    HO = np.zeros(len(T.data), np.int32)
+    ip = np.asarray(T.indptr)
+    for c0 in range(0, T.n, 50_000):            # in chunks of whole columns
+        c1 = min(c0 + 50_000, T.n)
+        pc = np.arange(ip[c0], ip[c1])
+        pc = pc[use[pc]]
+        if len(pc):
+            key = T.data[pc] ** 2 * C[T.indices[pc]]
+            HO[pc] = pc[np.lexsort((-key, col[pc]))]
+    sp_['HO'] = HO
     return sp_['QI']
 
 
@@ -2929,7 +2978,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         KD['X'] = (np.lib.format.open_memmap(f'{out}_kept.npy', 'w+', np.float32, (len(order), T.n)) if out
                    else np.zeros((len(order), T.n), np.float32))
     KC = kernel_consts(lib, T) if backend == 'c' else None   # the kernel's per-rupture constants, once per run
-    t0 = time.time()
+    if backend == 'c':
+        _off_bounds_qi(T)                                # --off-bounds' sums and column order (~15 s at 630k): set-up,
+    t0 = time.time()                                     # not sampling
     he = thin if ((H is None and SS is None) or not hyper_every) else max(1, min(int(hyper_every), thin))
     if collapse and not (T.mstep is not None and T.mstep.get('joint')):   # --collapse: nothing to draw between sweeps, so
         he = thin                                                         # the kernel runs each recording interval whole

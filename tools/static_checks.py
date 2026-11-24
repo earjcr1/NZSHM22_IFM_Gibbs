@@ -318,10 +318,11 @@ check("ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 
       "its exact tests (selftest_collapse, the collapsed spike-and-slab, cross-bin swaps and exact misfit) in the self-test sets")
 check("ap.add_argument('--no-off-bounds', action='store_true'" in src['gibbs.py'] and 'void sp_bounds(' in src['gibbs.py']
       and '\ndef _off_bounds_qi(' in src['gibbs.py'] and 'static void col_sdots(' in src['gibbs.py']
-      and "ap.add_argument('--swap-fraction', type=float, default=1.0" in src['gibbs.py'] and 'L.sp_bounds.argtypes = [P]' in src['gibbs.py'],
+      and "ap.add_argument('--swap-fraction', type=float, default=1.0" in src['gibbs.py'] and 'L.sp_bounds.argtypes = [P, P, P]' in src['gibbs.py']
+      and "sp_['HO'] = HO" in src['gibbs.py'] and 'const int64_t p = SPB_HO[p0 + t];' in src['gibbs.py'],
       "gibbs.py (2026-11-24): an off rupture's on/off decision from bounds on its change (each chain's rows' slopes and their "
       "terms' largest second derivatives), exact only where they leave it open (--no-off-bounds to time it; the same decisions, "
-      "bit-identical); --swap-fraction F, each pair proposed in a pass with probability F (default 1)")
+      "bit-identical); where they do not, the exact change heaviest rows first with early stopping (SPB_HO); --swap-fraction F, each pair proposed in a pass with probability F (default 1)")
 
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and not re.findall(r'^CFM_SLIPRATES = ', cells[0][1], re.M)

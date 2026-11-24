@@ -251,6 +251,14 @@ gain for the slow bins.
 A swap pass visiting only the pairs with a rupture on (a heap through each rupture's pairs; bit-identical) was tried and
 removed: at 630k the on ruptures' pairs are most of the 13.6M, and the heap cost 1.058 s/sweep against the full pass's 0.387.
 swap_run skips the columns' dot products (ci, cj) under SL2 (split or exact misfit): only the Gaussian formula uses them.
+Off-bounds fallback with early stopping (2026-11-24, the user's go-ahead after scoping): sp_bounds(QI, C_row, HO);
+_off_bounds_qi also builds C_row (each row's C_j, inflated as QI) and HO (int32, each column's likelihood entries in order of
+G_ji^2 C_j, largest first; ~15 s and 4 bytes per nonzero at 630k, built in sample() before t0). In the bq branch, when the
+bounds leave the decision open, the exact change is summed heaviest rows first as sp_w2(r + G m) - WC (one lookup a row), the
+rest bounded by their slopes and C (sl = SQV - processed, cv = QI - processed), checked after 1, 2, 4, 8, ... rows, stopping
+once settled. Scoping at 630k ('between'): 18% of off decisions fell back (64 entries a column), 68% of them ending off, 58%
+above the threshold by >10, the margin m^2 QI >10 in 91%; exact top-K rows settled 4/9/16/28/45% at K = 1/2/4/8/16; local
+curvature alone 27% (not built: a table scan per row). Bit-identical to before at 630k ('all'); 0.33 -> 0.28 s per sweep.
 Thread race fixed 2026-11-24: sweeps_c/swaps_c built the shared pointers (_pm_ptr's struct, _sp_ptrs' interleaved table FD and
 off-bounds QI, _st_ptr) inside each thread's call, so on a run's first call two threads could each build a cache and the first
 copy be freed while its kernel read it; identical 4-thread runs differed from their first draw. Now built once before the
