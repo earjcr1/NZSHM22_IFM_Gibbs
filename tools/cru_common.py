@@ -1422,8 +1422,8 @@ X_MARK = dict(marker='x', ls='none', ms=2.6, mew=0.4, alpha=0.15, rasterized=Tru
 # 1,000), so that a mark's cloud has the same overall weight whatever KEPT_DRAWS is: the alphas given (X_MARK's and the
 # figures' own) are for X_REF_DRAWS draws, scaled by X_REF_DRAWS / N (N from kept_draws), at least X_MIN_ALPHA (rounding
 # to 8-bit colour loses fainter ones).
-X_REF_DRAWS, X_MIN_ALPHA = 1500, 0.004                # 1,500: 1.5 x the first scaling's (1,000), a little
-                                                      # darker (2026-11-25, the user's request)
+X_REF_DRAWS, X_MIN_ALPHA = 1250, 0.004                # 1,250: 1.25 x the first scaling's (1,000), a little
+                                                      # darker (2026-11-25, the user's requests: 1,500 briefly)
 _X_KEPT = [None]
 
 
