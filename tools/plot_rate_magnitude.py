@@ -72,9 +72,9 @@ from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predic
                         gr_curves, gr_joint_misfit, gr_run_draws)
 
 SURFACE, INK, INK2, MUTED, GRID, AXIS, BAND = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7', '#ebeae5'
-BLUE, ORANGE = '#2a78d6', '#08519c'          # the ruptures' blue; the bin totals dark blue (ColorBrewer Blues' second darkest,
-                                             # the user's choice, 2026-11-23: darker than the rupture cloud, apart from the
-                                             # references' black and red; '#eb6834', orange, before)
+BLUE, ORANGE = '#0080df', '#0080df'          # the ruptures and the bin totals, one blue, rgb(0, 128, 223) (the user's choice,
+                                             # 2026-11-25; before: '#2a78d6' and the bin totals '#08519c', ColorBrewer Blues'
+                                             # second darkest, from 2026-11-23; '#eb6834', orange, before that)
 REF = INK                                    # the reference model's marks: black, apart from every series colour
 CURVE = '#2f9e78'                            # MFD_GR_TAU: the drawn G-R curves (median line, 16-84% band)
 MINUS = '−'

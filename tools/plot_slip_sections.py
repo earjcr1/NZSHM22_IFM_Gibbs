@@ -100,8 +100,8 @@ BARS = '#a9a8a1'                                 # the lower panels' bars: conte
 QS = (2.5, 16.0, 50.0, 84.0, 97.5)               # the posterior points drawn and tabulated
 
 
-PANEL_BLUE = '#08519c'   # the rupture figures' one colour: the MFD figure's dark blue (the user's choice, 2026-11-25;
-                         # before, each panel its section's colour from MARK_BLUES_CYCLE)
+PANEL_BLUE = '#0080df'   # the rupture figures' one colour, rgb(0, 128, 223), as the MFD figure's (the user's choice,
+                         # 2026-11-25; #08519c for an hour; before, each panel its section's colour from MARK_BLUES_CYCLE)
 
 
 def parse_set(s):
