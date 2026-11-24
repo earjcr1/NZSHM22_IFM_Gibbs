@@ -140,10 +140,12 @@ check(re.findall(r'^RUN_MINUTES = (\S+)', cells[0][1], re.M) == ['240'] and re.f
       and "sh('gibbs.py', *gibbs_args(f'main_rep{r}', replicate_seed(r), P))" in NBALL
       and "json.dump(T, open('timings.json', 'w'), indent=1)" in STEPS and 'write_timings()' in cells[-1][1]
       and 'convergence_summary.json' in src['check_convergence.py']
-      and not any("'--slab'" in c for _, c in cells),
+      and not any("'--slab'" in c for _, c in cells)
+      and re.findall(r'^MARGIN = (\S+)', _pl, re.M) == ['0.0'] and re.findall(r'^CHAINS_PER_THREAD = (\S+)', _pl, re.M) == ['2']
+      and re.findall(r'^RHAT_SWEEPS = (\S+)', _pl, re.M) == ['90'],
       "notebook RUN_MINUTES = 240 and TARGETS = 'production' (2026-11-17, in place of the presets): the runs planned just before "
-      'sampling (run_plan.py: the time spent, sh() measured, calibration runs at two recording rates, the latest run\'s post-processing, 10% margin; '
-      '4 chains per thread, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
+      'sampling (run_plan.py: the time spent, sh() measured, calibration runs at two recording rates, the latest run\'s post-processing, no margin (10% until 2026-11-24); '
+      '2 chains per thread (4 until 2026-11-24), at least 90 autocorrelation times of the bins\' fractions on after burn-in, burn-in 5,000 or 20%, ~3,000 kept draws, replicates only if each is predicted at 1.5 x TARGETS; unrecorded settings of older runs at their old defaults), with a '
       'prediction from the latest run in DATA_DIR; tests fix RUN_PLAN (run_config); timings.json and convergence_summary.json '
       'for later plans; the other priors are gibbs.py options')
 check(re.findall(r'^DISPERSED_STARTS = (\S+)', src['run_config.py'], re.M) == ['True']
@@ -290,8 +292,8 @@ check([re.findall(rf'^MISFIT_{g_} = (\S+)', cells[0][1], re.M) for g_ in ('SLIP'
       "out in; slip and MFD 'linear', 'log10', 'half', paleo 'rate', 'years', 'half'), recorded with their common setting or 'mixed' and each group's mode (cru_common.MISFIT_MODES, misfit_settings) and passed to gibbs.py --slip-misfit, "
       '--mfd-misfit and --paleo-misfit, with exact tests of each group\'s log and half modes in the full self-test set and '
       'block_fit.py scoring each group as the run did')
-check('void sp_tables(' in src['gibbs.py'] and 'static double spt_f(' in src['gibbs.py'] and 'if (c->sp && SPT_F)' in src['gibbs.py']
-      and src['gibbs.py'].count('ok &= selftest_exact(') == 2 and src['gibbs.py'].count('ok &= selftest_sum_pdf()') == 2
+check('void sp_tables(' in src['gibbs.py'] and 'static inline double spt_f(' in src['gibbs.py'] and 'if (c->sp && SPT_FD)' in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_exact(') == 4 and src['gibbs.py'].count('ok &= selftest_sum_pdf()') == 2
       and '\ndef slip_pdf_tables(' in src['cru_common.py'] and '\ndef slip_sum_pdf_tables(' in src['cru_common.py']
       and '\ndef quasiconvex_table(' in src['cru_common.py'] and '\ndef slip_pdfs(' in src['cfm_sliprates.py']
       and '\ndef pdf_table(' in src['timeframe_sliprates.py'] and "'exact': 'exact'" in src['run_config.py']
@@ -300,6 +302,20 @@ check('void sp_tables(' in src['gibbs.py'] and 'static double spt_f(' in src['gi
       "density, -2 ln p tabulated (data/cfm_timeframe_sliprates_pdfs.npz via cleaning's slip_pdf_*), weighted as its split normal "
       "would be, and with SLIP_SUM each cross-section by its parents' densities convolved; the kernel reads tables for rows with "
       "L2 < 0, its slice floor quasiconvex; self-tests selftest_exact and selftest_sum_pdf in both lists; block_fit scores the same")
+
+check("ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 'drawn']" in src['gibbs.py']
+      and 'void ss_collapse(' in src['gibbs.py'] and 'static inline double ssc_odds(' in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_collapse(') == 2 and 'ok &= selftest_spikeslab(collapse=True)' in src['gibbs.py']
+      and src['gibbs.py'].count('ok &= selftest_crossswap(') == 4 and "'--fractions-on'" not in ''.join(c for c in [NBALL]),
+      "gibbs.py --fractions-on (2026-11-24): 'drawn' (the default) or 'collapsed' (each bin's fraction on integrated out, the "
+      "counts kept in the kernel and the swaps across bins carrying their ratio; drawn given the counts only to record them); "
+      "its exact tests (selftest_collapse, the collapsed spike-and-slab, cross-bin swaps and exact misfit) in the self-test sets")
+check("ap.add_argument('--no-off-bounds', action='store_true'" in src['gibbs.py'] and 'void sp_bounds(' in src['gibbs.py']
+      and '\ndef _off_bounds_qi(' in src['gibbs.py'] and 'static void col_sdots(' in src['gibbs.py']
+      and "ap.add_argument('--swap-fraction', type=float, default=1.0" in src['gibbs.py'] and 'L.sp_bounds.argtypes = [P]' in src['gibbs.py'],
+      "gibbs.py (2026-11-24): an off rupture's on/off decision from bounds on its change (each chain's rows' slopes and their "
+      "terms' largest second derivatives), exact only where they leave it open (--no-off-bounds to time it; the same decisions, "
+      "bit-identical); --swap-fraction F, each pair proposed in a pass with probability F (default 1)")
 
 check(re.findall(r'^CFM_SLIPRATES = (\S+)', src['run_config.py'], re.M) == ['True'] and 'cfm_sliprates' in _cfg_keys
       and not re.findall(r'^CFM_SLIPRATES = ', cells[0][1], re.M)

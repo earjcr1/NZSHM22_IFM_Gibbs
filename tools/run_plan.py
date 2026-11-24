@@ -5,12 +5,16 @@ the user's request; they replace the presets 'quick', 'conservative' and 'very_c
 RUN_MINUTES is the whole notebook's length. The notebook plans the spike-and-slab runs just before sampling, when the
 cleaning and the best fit have run and their time is known:
   1. the time already spent (every script the notebook ran, sh()) and the post-processing still to come (the latest run's
-     record in DATA_DIR, timings.json, or else as long as the time spent) come off the budget first, with a 10% margin;
+     record in DATA_DIR, timings.json, or else as long as the time spent) come off the budget first, with a MARGIN (none since
+     2026-11-24, the user's choice: the plan of the 300-minute run of that day was right to half a minute; 10% before);
   2. two short calibration runs of gibbs.py (CALIB_SWEEPS sweeps each, with the run's own settings and chains, recording
      a draw every CALIB_THINS sweeps) measure the time per sweep, split into a part per sweep and a part per recorded draw
      (t = a + b / thin: the running summaries and swap moves come once per recorded draw, which costs a great deal at
      630,000 ruptures), and the setup that every run pays;
-  3. chains = CHAINS_PER_THREAD x THREADS (the kernel updates chains in groups of four per thread);
+  3. chains = CHAINS_PER_THREAD x THREADS (2 per thread since 2026-11-24, 4 before: the run's verdict turns on R-hat of
+     the bins' fractions on, which needs long chains rather than many (below); at 630,000 ruptures 8 chains on 4 threads
+     take 0.535 s a sweep against 16 chains' 0.979, so each chain gets 1.83 times the sweeps for 8% fewer chain-sweeps;
+     the efficiency cores do not help: 8 chains on 8 threads, 0.571 s);
   4. replicates: 1, unless each of several would still get REPLICATE_MIN sweeps and (with a prediction) still be
      predicted to reach REPLICATE_SAFETY times TARGETS' effective draws (at most REPLICATES_MAX): the verdict is each
      replicate's, so splitting a budget that one replicate needs whole would only turn a PASS into CHECKs, and the
@@ -35,8 +39,11 @@ TARGETS = {'exploratory': (100, 200, 1.01),          # the quick preset's target
            'production': (1000, 2000, 1.01),         # the conservative preset's
            'precise': (10000, 20000, 1.005)}         # the very conservative preset's
 PRESET_TARGETS = {'quick': 'exploratory', 'conservative': 'production', 'very_conservative': 'precise'}   # older runs
-MARGIN = 0.10                 # of RUN_MINUTES, kept free
-CHAINS_PER_THREAD = 4
+MARGIN = 0.0                  # of RUN_MINUTES, kept free (0.10 until 2026-11-24; none since, the user's choice: a run may go a little over)
+CHAINS_PER_THREAD = 2         # (4 until 2026-11-24)
+RHAT_SWEEPS = 90              # sweeps per chain after burn-in, in autocorrelation times of the bins' fractions on, that R-hat
+                              # of a bin's fraction on needs to stay below 1.01: R-hat - 1 was about 0.9 tau / n in the
+                              # 600-minute split run (1.014 at n / tau = 63) and the 300-minute exact run (1.056 at 17.6)
 BURN_MAX, BURN_FRAC = 5000, 0.2
 DRAWS_PER_CHAIN = 3000
 REPLICATE_MIN, REPLICATES_MAX = 50000, 1   # one replicate (2026-11-17, the user's choice): the chains' dispersed starts
@@ -246,11 +253,16 @@ def plan(minutes, threads, cost, spent_s, post_s, targets, ref=None, ref_diff=No
                  + (' -> enough for PASS; R-hat is not predicted, and a short run can still miss it' if not miss
                     else ' -> expect CHECK'))
         x = max(nd[m] * tau[m] / K for m in pred)
+        if 'ess_pi_min' in tau:                          # R-hat of the bins' fractions on: chains long enough, whatever K
+            x = max(x, RHAT_SWEEPS * tau['ess_pi_min'])
         S_need = x + BURN_MAX if x * BURN_FRAC / (1 - BURN_FRAC) >= BURN_MAX else x / (1 - BURN_FRAC)
         th_need = max(1, int(round((S_need - burn_of(S_need)) / DRAWS_PER_CHAIN)))
         need_min = (spent_s + post_s + setup_s + S_need * sec(th_need)) / (1 - MARGIN) / 60
-        L.append(f'   TARGETS {targets!r} would need about {S_need:,.0f} sweeps per chain with {K} chains: RUN_MINUTES about '
-                 f'{need_min:,.0f}' + (' (this plan should suffice)' if not miss else ''))
+        rh = (1.0 + 0.9 * tau['ess_pi_min'] / max(S - burn, 1)) if 'ess_pi_min' in tau else None
+        L.append(f'   TARGETS {targets!r} would need about {S_need:,.0f} sweeps per chain with {K} chains (effective draws, and '
+                 f'R-hat of the bins\' fractions on, which needs about {RHAT_SWEEPS} of their autocorrelation times per chain): '
+                 f'RUN_MINUTES about {need_min:,.0f}' + (' (this plan should suffice)' if not miss and (rh is None or rh < 1.01) else '')
+                 + (f'; R-hat of a bin\'s fraction on predicted about {rh:.3f} with this plan' if rh else ''))
     else:
         L.append('   no earlier run in DATA_DIR with a convergence report, so no prediction of the verdict')
     return dict(chains=K, sweeps=int(S), burn=int(burn), thin=int(thin), hyper_every=1, replicates=int(reps),

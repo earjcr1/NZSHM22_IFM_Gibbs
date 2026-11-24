@@ -124,22 +124,37 @@ typedef struct { int pk; double m0, mu, inv2s2, zmin, zmax, zlo, zhi, k, ku, lp0
    it. Each table is quasiconvex in the residual (falling, then rising: a unimodal density's -2 ln p, its slopes limited
    so the interpolant is monotone on each side; cru_common.slip_pdf_tables checks it). Set by sp_tables before each
    kernel call; read-only during it. */
-static const double *SPT_E0 = NULL, *SPT_IH = NULL, *SPT_F = NULL, *SPT_D = NULL;
+static const double *SPT_E0 = NULL, *SPT_IH = NULL, *SPT_H = NULL, *SPT_FD = NULL;
 static const int64_t *SPT_OFF = NULL;
-void sp_tables(const double *e0, const double *ih, const int64_t *off, const double *F, const double *D) {
-    SPT_E0 = e0; SPT_IH = ih; SPT_OFF = off; SPT_F = F; SPT_D = D;
+/* FD: each point's value and slope times the step, interleaved (F_k, h D_k), so a lookup reads one stretch of memory;
+   H: each table's step (no division per lookup) */
+void sp_tables(const double *e0, const double *ih, const double *hh, const int64_t *off, const double *fd) {
+    SPT_E0 = e0; SPT_IH = ih; SPT_H = hh; SPT_OFF = off; SPT_FD = fd;
 }
-static double spt_f(int64_t t, double e) {
+/* --collapse (since 2026-11-24): spike-and-slab's fractions on integrated out. Each bin's fraction on is Beta(SSC_A, SSC_B)
+   a priori, so with it integrated out a rupture is on, given the others, with prior odds (SSC_A + c) / (SSC_B + n_b - 1 - c),
+   c the other ruptures on in its bin (n_b of them): the counts move freely, where drawing the fraction from the count and
+   the count given the fraction moved each only a little at a time. Each chain's counts (CNT) are kept current. */
+static int SSC_ON = 0;
+static double SSC_A = 1.0, SSC_B = 1.0;
+static const double *SSC_NB = NULL;
+void ss_collapse(int64_t on, double a, double b, const double *nb) { SSC_ON = (int)on; SSC_A = a; SSC_B = b; SSC_NB = nb; }
+static inline double ssc_odds(const int64_t *cn, int64_t b, int on_now) {   /* the prior odds of on, given the others */
+    const double c = (double)(cn[b] - (on_now ? 1 : 0));
+    return (SSC_A + c) / (SSC_B + SSC_NB[b] - 1.0 - c);
+}
+static inline double spt_f(int64_t t, double e) {
     const int64_t o = SPT_OFF[t], ng = SPT_OFF[t + 1] - o;
-    const double *F = SPT_F + o, *D = SPT_D + o, ih = SPT_IH[t], h = 1.0 / ih, e0 = SPT_E0[t];
-    const double x = (e - e0) * ih;
-    if (!(x > 0.0)) return F[0] + D[0] * (e - e0);
-    if (x >= (double)(ng - 1)) return F[ng - 1] + D[ng - 1] * (e - (e0 + h * (double)(ng - 1)));
-    int64_t k = (int64_t)x;
-    if (k > ng - 2) k = ng - 2;
+    const double *P = SPT_FD + 2 * o, e0 = SPT_E0[t];
+    const double x = (e - e0) * SPT_IH[t];
+    if (!(x > 0.0)) return P[0] + P[1] * x;                       /* continued linearly: F_0 + D_0 (e - e0) */
+    const double xe = (double)(ng - 1);
+    if (x >= xe) return P[2 * ng - 2] + P[2 * ng - 1] * (x - xe);
+    const int64_t k = (int64_t)x;
+    const double *q = P + 2 * k;
     const double s = x - (double)k, s2 = s * s, s3 = s2 * s;
-    return (2.0 * s3 - 3.0 * s2 + 1.0) * F[k] + (s3 - 2.0 * s2 + s) * h * D[k] + (-2.0 * s3 + 3.0 * s2) * F[k + 1]
-           + (s3 - s2) * h * D[k + 1];
+    return (2.0 * s3 - 3.0 * s2 + 1.0) * q[0] + (s3 - 2.0 * s2 + s) * q[1] + (-2.0 * s3 + 3.0 * s2) * q[2]
+           + (s3 - s2) * q[3];
 }
 /* w(e) e^2 with w = l below 0 and h above, without a branch (the sign of a residual is unpredictable):
    ((h + l) e^2 + (h - l) e |e|) / 2; or, with l < 0 (--slip-misfit exact), the row's table at e */
@@ -147,6 +162,29 @@ static inline double sp_w2(double e, double l, double h) {
     if (l < 0.0) return spt_f((int64_t)(-l) - 1, e);
     return 0.5 * ((h + l) * e * e + (h - l) * e * fabs(e));
 }
+/* sp_w2's slope in e: the table's interpolant's derivative (continued linearly), or 2 w e */
+static inline double spt_d(int64_t t, double e) {
+    const int64_t o = SPT_OFF[t], ng = SPT_OFF[t + 1] - o;
+    const double *P = SPT_FD + 2 * o, ih = SPT_IH[t];
+    const double x = (e - SPT_E0[t]) * ih;
+    if (!(x > 0.0)) return P[1] * ih;
+    const double xe = (double)(ng - 1);
+    if (x >= xe) return P[2 * ng - 1] * ih;
+    const int64_t k = (int64_t)x; const double *q = P + 2 * k; const double s = x - (double)k, s2 = s * s;
+    return ((6.0 * s2 - 6.0 * s) * q[0] + (3.0 * s2 - 4.0 * s + 1.0) * q[1] + (6.0 * s - 6.0 * s2) * q[2]
+            + (3.0 * s2 - 2.0 * s) * q[3]) * ih;
+}
+static inline double sp_d(double e, double l, double h) {
+    if (l < 0.0) return spt_d((int64_t)(-l) - 1, e);
+    return 2.0 * (e > 0.0 ? h : l) * e;
+}
+/* Bounds for an off rupture's change (since 2026-11-24, --off-bounds): with each row's term f_j, |f_j''| <= C_j
+   everywhere (a table's largest over its cubic pieces, 0 on its linear continuations; 2 max(l, h) for a split normal),
+   switching on at m changes sum f_j by m sum G_ji f_j'(e_j) +- m^2 SPB_QI[i], SPB_QI[i] = sum G_ji^2 C_j / 2 (Taylor's
+   remainder). Each chain's slopes f_j'(e_j) are kept current (gibbs_run's DS), so a column's pass is one dot product
+   per chain, and the exact change (table lookups) is computed only when the bounds leave the decision open. */
+static const double *SPB_QI = NULL;
+void sp_bounds(const double *qi) { SPB_QI = qi; }
 /* the split misfit's log likelihood at m (lbctx's sp fields): concave in m, a Gaussian on each side of each row's target
    (with --slip-misfit exact's tables, each row's term quasiconvex in m instead: lb_floor) */
 static double sp_lik(const lbctx *c, double m) {
@@ -182,7 +220,7 @@ static inline double lb_ld(const lbctx *c, double z) {
    rounding of lb_ld itself (about 1e-15 of it): wherever the bound exceeds y, so does every evaluation of lb_ld. */
 static double lb_floor(const lbctx *c, double za, double zb) {
     const double ma = fmax(exp(za) * (1.0 - 1e-12) - 1e-300, 0.0), mb = exp(zb) * (1.0 + 1e-12) + 1e-300;
-    if (c->sp && SPT_F) {   /* --slip-misfit exact: each row's term quasiconvex in m (a unimodal density's misfit, or the
+    if (c->sp && SPT_FD) {   /* --slip-misfit exact: each row's term quasiconvex in m (a unimodal density's misfit, or the
                                split normal's convex one, of an affine e(m)), so on [ma, mb] at most its larger end's; the
                                folded summed slip rates' convex quadratic too: their sum is at most the sum of those */
         const double da = ma - c->sxi, db = mb - c->sxi;
@@ -499,6 +537,28 @@ static inline void col_udots(int64_t kg, const double *data, const int32_t *indi
     else
         for (int64_t p = p0; p < p1; p++) d0 += data[p] * u0[indices[p]];
     uq[0] = d0; uq[1] = d1; uq[2] = d2; uq[3] = d3;
+}
+/* --off-bounds: for 4 chains (the group's, repeated where it has fewer), each one's sum over the column's (likelihood)
+   entries of G_ji DS_j, its rows' slopes, and, with u, of G_ji U_j (col_udots's), in one pass */
+static void col_sdots(const double *data, const int32_t *indices, int64_t p0, int64_t p1, double *const *d,
+                      double *const *u, double *sq, double *uq) {
+    double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+    const double *d0 = d[0], *d1 = d[1], *d2 = d[2], *d3 = d[3];
+    if (u) {
+        double b0 = 0.0, b1 = 0.0, b2 = 0.0, b3 = 0.0;
+        const double *u0 = u[0], *u1 = u[1], *u2 = u[2], *u3 = u[3];
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            a0 += g * d0[j]; a1 += g * d1[j]; a2 += g * d2[j]; a3 += g * d3[j];
+            b0 += g * u0[j]; b1 += g * u1[j]; b2 += g * u2[j]; b3 += g * u3[j];
+        }
+        uq[0] = b0; uq[1] = b1; uq[2] = b2; uq[3] = b3;
+    } else
+        for (int64_t p = p0; p < p1; p++) {
+            const double g = data[p]; const int32_t j = indices[p];
+            a0 += g * d0[j]; a1 += g * d1[j]; a2 += g * d2[j]; a3 += g * d3[j];
+        }
+    sq[0] = a0; sq[1] = a1; sq[2] = a2; sq[3] = a3;
 }
 /* --cfm slip rates: for each off chain q (pre[q]) of a group, the split misfit's change if it switched on at mq[q], DQ[q],
    in one pass over the column; with the soft band (A), also its bound sums s1, s2, s3 (col_dots_lw's). One function per
@@ -978,12 +1038,26 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 for (int64_t t = SSP[sr]; t < SSP[sr + 1]; t++) U[k * N + SSJ[t]] += SSV[t] * rs;
             }
     }
+    const int COL = SSC_ON && pkind == 3 && CNT;   /* --collapse: each chain's counts, current from the start */
+    if (COL)
+        for (int64_t k = 0; k < K; k++) {
+            int64_t *cn = CNT + k * SB;
+            const double *x = X + k * n;
+            for (int64_t b = 0; b < SB; b++) cn[b] = 0;
+            for (int64_t i = 0; i < n; i++) if (x[i] > 0.0) cn[SBIN[i]]++;
+        }
     double *WC = NULL;                             /* --cfm slip rates: each chain's rows' current split-misfit terms,
                                                       sp_w2 of their residuals, so a column pass computes only the new ones */
     if (SL2) {
         WC = (double *)malloc(sizeof(double) * (size_t)K * (size_t)N);
         for (int64_t k = 0; k < K; k++)
             for (int64_t j = 0; j < N; j++) WC[k * N + j] = sp_w2(R[k * N + j], SL2[j], SH2[j]);
+    }
+    double *DS = NULL;                             /* --off-bounds: each chain's rows' slopes, sp_d of their residuals */
+    if (SL2 && pkind == 3 && SPB_QI) {
+        DS = (double *)malloc(sizeof(double) * (size_t)K * (size_t)N);
+        for (int64_t k = 0; k < K; k++)
+            for (int64_t j = 0; j < N; j++) DS[k * N + j] = sp_d(R[k * N + j], SL2[j], SH2[j]);
     }
     rw4 *RW = NULL;                                /* --cfm slip rates: each full group of 4 chains' rows interleaved (rw4),
                                                       read by the split pass, written wherever R, WC or U change */
@@ -1032,7 +1106,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
         for (int64_t k0 = 0; k0 < K; k0 += 4) {
             const int64_t kg = K - k0 < 4 ? K - k0 : 4;
             double dt[4] = {0.0, 0.0, 0.0, 0.0}, S1[4] = {0.0}, S2[4] = {0.0}, S3[4] = {0.0};
-            double mpre[4] = {0.0}, DQ[4] = {0.0}, uq[4] = {0.0, 0.0, 0.0, 0.0};
+            double mpre[4] = {0.0}, DQ[4] = {0.0}, uq[4] = {0.0, 0.0, 0.0, 0.0}, DQL[4] = {0.0}, DQH[4] = {0.0};
             int pre[4] = {0, 0, 0, 0};
             if (SL2 && pkind == 3 && !empty) {        /* --cfm slip rates: each off chain's slab draw first (its draws in
                                                          the same order as below), then its exact change in one pass */
@@ -1058,7 +1132,21 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                 double *ug[4];                /* --slip-sum folded: each chain's U */
                 for (int64_t q = 0; q < 4; q++) ug[q] = U ? U + (k0 + (q < kg ? q : 0)) * N : NULL;
                 /* G_i.U summed in the split pass itself, whichever of its branches runs (no second pass over the column) */
-                if (RW && kg == 4 && (!AC || LWP)) {   /* a full group without the bound sums in the pass: the copy */
+                if (DS) {                     /* --off-bounds: the slopes' sums, and the change's bounds (below) */
+                    double *dg[4], sq[4];
+                    for (int64_t q = 0; q < 4; q++) dg[q] = DS + (k0 + (q < kg ? q : 0)) * N;
+                    col_sdots(data, indices, p0, pe, dg, U ? ug : NULL, sq, uq);
+                    if (AC) {
+                        if (LWP) col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
+                        else col_dots_lw(kg, data, indices, p0, pe, rg, ag, dt, S1, S2, S3);
+                    }
+                    for (int64_t q = 0; q < kg; q++) {
+                        if (!pre[q]) continue;
+                        const double m = mpre[q], a = m * sq[q], b = m * m * SPB_QI[i];
+                        const double w = 1e-9 * (fabs(a) + b) + 1e-300, uc = U ? m * (2.0 * uq[q] + m * NSS[i]) : 0.0;
+                        DQL[q] = a - b - w + uc; DQH[q] = a + b + w + uc;
+                    }
+                } else if (RW && kg == 4 && (!AC || LWP)) {   /* a full group without the bound sums in the pass: the copy */
                     col_split4i(data, indices, p0, pe, RW + (k0 / 4) * N, SLH, pre, mpre, DQ, S1, S2, S3, U != NULL, uq);
                     if (AC) col_lwsums(kg, data, indices, LWQ, LWP[i], LWP[i + 1], ag, S1, S2, S3);
                 } else if (AC && LWP) {       /* the bound sums over the weighted rows only (col_lwsums) */
@@ -1140,14 +1228,65 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                     }
                     /* on or off given m: log odds = log(pi/(1-pi)) + log L(m) - log L(0); with the rupture switched off
                        the residual is r0 = r - x_i G_i, so G_i.r0 = dot - x_i ||G_i||^2 */
-                    double lr = LOD[k * SB + SBIN[i]];   /* log odds of the fraction on in the rupture's group */
+                    const double odd0 = COL ? ssc_odds(CNT + k * SB, SBIN[i], xi > 0.0) : (ODD ? ODD[k * SB + SBIN[i]] : 0.0);
+                    double lr = COL ? log(odd0) : LOD[k * SB + SBIN[i]];   /* the prior's log odds of on (--collapse:
+                                                                                     from the counts; else the fraction's) */
                     double xl = 0.0;          /* the likelihood's part of the log odds, lr - LOD */
-                    if (!empty && SL2) {      /* --cfm slip rates: the split misfit's change, exactly */
+                    const int bq = !empty && SL2 && DS && pre[q];   /* --off-bounds: xl only bounded so far */
+                    if (bq) {
+                    } else if (!empty && SL2) {   /* --cfm slip rates: the split misfit's change, exactly */
                         xl = (pre[q] ? DQ[q] : sp_change(data, indices, p0, pe, r, SL2, SH2, -xi, m - xi,
                                                          U ? uq[q] : 0.0, U ? NSS[i] : 0.0)) / (2.0 * s2);
                         lr -= xl;
                     } else if (!empty) { const double d0 = dot - xi * aa; xl = (2.0 * m * d0 + m * m * aa) / (2.0 * s2); lr -= xl; }
-                    if ((LW || ST) && !empty) {
+                    if (bq) {
+                        /* --off-bounds, an off chain: on when xl + dp < g = lr - logit(u), dp the soft band's penalty (if
+                           any). xl lies in [xlo, xhi] (the slopes' bounds) and dp in [dlo, dhi] (the band's), so most
+                           decisions are settled without the exact change, many without logarithms; otherwise xl, and then
+                           if need be dp, is computed exactly. One uniform, as below: the same decisions */
+                        const double uu = unif(s);
+                        const double xlo = DQL[q] / (2.0 * s2), xhi = DQH[q] / (2.0 * s2);
+                        double dlo = 0.0, dhi = 0.0;
+                        if (LW || ST) {
+                            const double sm1 = m * S1[q], mm = m * m;
+                            dlo = sm1 - mm * S3[q]; dhi = sm1 + mm * S2[q];
+                            dlo -= 1e-9 * (fabs(dlo) + 1e-12); dhi += 1e-9 * (fabs(dhi) + 1e-12);
+                            if (ST && ST->bx[i] >= 0) {
+                                const int64_t b = ST->bx[i];
+                                const double y = r[ST->row[b]] + ST->dy[b];
+                                double flo, fhi;
+                                st_bounds(ST, LAM + k * ST->NB, HH + k * ST->NB, b, ST->gx[i] * m / y, &flo, &fhi);
+                                dlo += flo; dhi += fhi;
+                            }
+                        }
+                        int on = -1;
+                        const double X = -xlo - dlo;   /* on needs u < odds exp(-xl - dp) <= odds exp(X) */
+                        if (X <= 1.0) {
+                            const double E = X <= 0.0 ? 1.0 + X + 0.5 * X * X : 1.0 + X + X * X;
+                            const double od = (COL || ODD) ? odd0 : exp(lr);
+                            if (uu >= od * E * (1.0 + 1e-9)) on = 0;
+                        }
+                        double g = 0.0;
+                        if (on < 0) {
+                            g = lr - (log(uu) - log1p(-uu));
+                            if (xhi + dhi < g) on = 1; else if (xlo + dlo >= g) on = 0;
+                        }
+                        if (on < 0) {
+                            xl = sp_change(data, indices, p0, pe, r, SL2, SH2, -xi, m - xi, U ? uq[q] : 0.0,
+                                           U ? NSS[i] : 0.0) / (2.0 * s2);
+                            if (xl + dhi < g) on = 1; else if (xl + dlo >= g) on = 0;
+                        }
+                        if (on < 0) {
+                            double dp = LW ? lw_change(data, indices, p0, pe, r, DY, LW, LWL, LD, -xi, m - xi, PM) : 0.0;
+                            if (ST && ST->bx[i] >= 0) {
+                                const int64_t b = ST->bx[i];
+                                const double y = r[ST->row[b]] + ST->dy[b];
+                                dp = pen_add(dp, st_change(ST, HH + k * ST->NB, b, y - ST->gx[i] * xi, y + ST->gx[i] * (m - xi)));
+                            }
+                            on = xl + dp < g;
+                        }
+                        xn = on ? m : 0.0;
+                    } else if ((LW || ST) && !empty) {
                         /* --log-band: the soft band's penalty on at m against off, dp, exactly in the log odds: on with
                            probability 1 / (1 + exp(-(lr - dp))), that is, when dp < lr - logit(u) (off impossible if a
                            penalized row would then be predicted at 0). For an off rupture, bounds on dp from the column's sums
@@ -1175,7 +1314,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             const double X = -xl - dlo;
                             if (X <= 1.0) {
                                 const double E = X <= 0.0 ? 1.0 + X + 0.5 * X * X : 1.0 + X + X * X;
-                                if (uu >= ODD[k * SB + SBIN[i]] * E * (1.0 + 1e-9)) on = 0;
+                                if (uu >= odd0 * E * (1.0 + 1e-9)) on = 0;
                             }
                             if (on < 0) {
                                 g = lr - (log(uu) - log1p(-uu)); have_g = 1;
@@ -1258,6 +1397,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                         for (int64_t p = p0; p < pe; p++) {
                             const int32_t j = indices[p];
                             WC[k * N + j] = sp_w2(r[j], SL2[j], SH2[j]);
+                            if (DS) DS[k * N + j] = sp_d(r[j], SL2[j], SH2[j]);
                             if (rw) rw[j].w[qk] = WC[k * N + j];
                         }
                     if (ST && ST->bx[i] >= 0) {   /* --mfd-step-sd: the bin's ln prediction and the others' cross terms */
@@ -1277,6 +1417,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
                             }
                         }
                 }
+                if (COL && ((xi > 0.0) != (xn > 0.0))) CNT[k * SB + SBIN[i]] += xn > 0.0 ? 1 : -1;
                 x[i] = xn;
             }
         }
@@ -1284,6 +1425,7 @@ void gibbs_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int
     }
     free(AC); free(ODD); free(LAM); free(HH);
     free(WC);
+    free(DS);
     free(U);
     free(RW);
     free(SLH);
@@ -1373,7 +1515,7 @@ static double ss_on_lp(int64_t i, double m, const double *LODk, const int64_t *S
     memset(&c, 0, sizeof c);
     c.pk = 3; c.zlo = ZLO ? ZLO[i] : zlo; c.zhi = zhi; c.k = 0.0; c.ku = KU ? KU[i] : 0.0; c.gam = gam;
     const double p = lb_prior(&c, z);
-    return p == -INFINITY ? -INFINITY : LODk[SBIN[i]] + p - log(SC[4 * i] + SC[4 * i + 1]);
+    return p == -INFINITY ? -INFINITY : (LODk ? LODk[SBIN[i]] : 0.0) + p - log(SC[4 * i] + SC[4 * i + 1]);
 }
 
 void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
@@ -1382,8 +1524,11 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
               const double *RLO, const double *RHI, const double *LW, const double *LWL, const double *LD, const double *DY,
               const pmctx *PM, const double *SL2, const double *SH2, const stctx *ST,
               const int64_t *SBIN, int64_t SB, const double *LOD, const double *ZLO, const double *KU, const double *LLO,
-              const double *LHI, const double *SC, double zlo, double zhi, double gam)
+              const double *LHI, const double *SC, double zlo, double zhi, double gam, int64_t *CNT, double frac)
 {
+    /* frac < 1 (--swap-fraction): each pass proposes each pair with probability frac, independently (geometric skips
+       through the list), a random choice made apart from the state, so each pass is still a valid move */
+    const double lq = frac < 1.0 ? log1p(-frac) : 0.0;
     /* SBIN (or NULL): spike-and-slab's bin of each rupture; a pair in different bins (--swap-cos-cross) adds the prior's
        ratio, which is 1 within a bin (the same fraction on and slab), so same-bin swaps are as before */
     const double s2 = sigma * sigma;
@@ -1394,7 +1539,8 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
         uint64_t *s = rng + 4 * k;
         int64_t acc = 0;
         if (ST) st_fill(ST, r, lam, hh, k);
-        for (int64_t q = 0; q < npair; q++) {
+        for (int64_t q = frac < 1.0 ? (int64_t)floor(log(1.0 - unif(s)) / lq) : 0; q < npair;
+             q += 1 + (frac < 1.0 ? (int64_t)floor(log(1.0 - unif(s)) / lq) : 0)) {
             const int64_t i = pi[q], j = pj[q];
             const double mi = x[i], mj = x[j];
             if (mi == mj) continue;
@@ -1406,12 +1552,18 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
                                     : 2.0 * dl * (ci - cj) + dl * dl * (csq[i] + csq[j] - 2.0 * gij[q]);
             double dlp = -dl * (beta[i] - beta[j]) - (LW ? lw_swap(indptr, indices, data, i, j, dl, r, DY, LW, LWL, LD, PM) : 0.0);
             if (SBIN && SBIN[i] != SBIN[j]) {     /* --swap-cos-cross: x_i = mj and x_j = mi against x_i = mi and x_j = mj */
-                const double *LODk = LOD + k * SB;
+                const int col = SSC_ON && CNT;    /* --collapse: the counts' ratio in place of the fractions on */
+                const double *LODk = col ? NULL : LOD + k * SB;
                 const double af = ss_on_lp(i, mj, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam)
                                   + ss_on_lp(j, mi, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
                 const double bf = ss_on_lp(i, mi, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam)
                                   + ss_on_lp(j, mj, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
                 dlp = (af == -INFINITY || !(bf > -INFINITY)) ? -INFINITY : dlp + (af - bf);
+                if (col && (mi > 0.0) != (mj > 0.0)) {   /* one on moves to the other's bin: off in bin a, on in bin b */
+                    const int64_t *cn = CNT + k * SB;
+                    const int64_t ba = mi > 0.0 ? SBIN[i] : SBIN[j], bb = mi > 0.0 ? SBIN[j] : SBIN[i];
+                    dlp += log(ssc_odds(cn, bb, 0)) - log(ssc_odds(cn, ba, 1));
+                }
             }
             const int64_t bi = ST ? ST->bx[i] : -1, bj = ST ? ST->bx[j] : -1;
             if (ST && (bi >= 0 || bj >= 0)) {     /* --mfd-step-sd: its change, the one or two bins moved */
@@ -1446,6 +1598,11 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
                 for (int64_t p = indptr[i]; p < indptr[i + 1]; p++) r[indices[p]] += data[p] * dl;
                 for (int64_t p = indptr[j]; p < indptr[j + 1]; p++) r[indices[p]] -= data[p] * dl;
                 x[i] = mj; x[j] = mi; acc++;
+                if (SSC_ON && CNT && SBIN && SBIN[i] != SBIN[j] && (mi > 0.0) != (mj > 0.0)) {
+                    int64_t *cn = CNT + k * SB;
+                    cn[SBIN[i]] += mj > 0.0 ? 1 : -1;
+                    cn[SBIN[j]] += mi > 0.0 ? 1 : -1;
+                }
                 if (ST) {                     /* --mfd-step-sd: the moved bins' ln predictions and cross terms */
                     if (bi >= 0) st_update(ST, lam, hh, bi, r[ST->row[bi]] + ST->dy[bi]);
                     if (bj >= 0 && bj != bi) st_update(ST, lam, hh, bj, r[ST->row[bj]] + ST->dy[bj]);
@@ -1575,8 +1732,8 @@ def build_kernel():
         try:
             subprocess.run(cmd, check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError) as e:
-            print(f'[gibbs] could not compile C kernel ({e}); using NumPy backend', file=sys.stderr)
-            return None
+            raise SystemExit(f'[gibbs] could not compile the C kernel: {getattr(e, "stderr", b"")!r:.2000}'
+                             if isinstance(e, subprocess.CalledProcessError) else f'[gibbs] could not compile the C kernel ({e})')
     L = ctypes.CDLL(lib)
     P = ctypes.c_void_p
     I, D = ctypes.c_int64, ctypes.c_double
@@ -1586,8 +1743,12 @@ def build_kernel():
     L.kernel_consts.argtypes = [I, P, P, D, D, P, P, D, P, P, P]
     L.sp_tables.argtypes = [P] * 5
     L.sp_tables.restype = None
+    L.ss_collapse.argtypes = [I, D, D, P]
+    L.sp_bounds.argtypes = [P]
+    L.sp_bounds.restype = None
+    L.ss_collapse.restype = None
     L.kernel_consts.restype = None
-    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3
+    L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3 + [P, D]
     L.swap_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
@@ -1801,10 +1962,58 @@ def _sp_ptrs(T):
     if tab is None:
         L.sp_tables(None, None, None, None, None)
     else:
-        L.sp_tables(_ptr(tab['E0']), _ptr(tab['IH']), tab['OFF'].ctypes.data, _ptr(tab['F']), _ptr(tab['D']))
+        if 'FD' not in tab or len(tab['FD']) != 2 * len(tab['F']):   # the kernel's layout: values and step-scaled slopes
+            hh = 1.0 / tab['IH']                                       # interleaved, and each table's step
+            off = np.asarray(tab['OFF'], np.int64)
+            hpt = np.repeat(hh, np.diff(off))
+            tab['H'] = np.ascontiguousarray(hh)
+            tab['FD'] = np.ascontiguousarray(np.column_stack([tab['F'], tab['D'] * hpt]).ravel())
+        L.sp_tables(_ptr(tab['E0']), _ptr(tab['IH']), _ptr(tab['H']), tab['OFF'].ctypes.data, _ptr(tab['FD']))
+    qi = _off_bounds_qi(T)
+    L.sp_bounds(None if qi is None else _ptr(qi))
     if getattr(T, 'split', None) is None:
         return None, None
     return _ptr(T.split['L2']), _ptr(T.split['H2'])
+
+
+def _off_bounds_qi(T):
+    """--off-bounds: each column's sum of G_ji^2 C_j / 2, C_j the largest |second derivative| of row j's term (sp_w2) in its
+    residual: over a table's cubic pieces, at their ends (where a cubic's is largest), 0 on its linear continuations;
+    2 max(l, h) for a split normal's row; over the entries the likelihood's passes read. None without the split misfit,
+    or with T.off_bounds False. Kept on T.split (so set pass_end first)."""
+    sp_ = getattr(T, 'split', None)
+    if sp_ is None or not getattr(T, 'off_bounds', True):
+        return None
+    if sp_.get('QI') is not None and len(sp_['QI']) == T.n:
+        return sp_['QI']
+    L2, H2 = np.asarray(sp_['L2'], float), np.asarray(sp_['H2'], float)
+    C = 2.0 * np.maximum(L2, H2)
+    tab = sp_.get('tab')
+    if tab is not None and (L2 < 0).any():
+        off = np.asarray(tab['OFF'], np.int64)
+        nt = len(off) - 1
+        F = np.asarray(tab['F'], float)
+        Dh = np.asarray(tab['D'], float) * np.repeat(1.0 / np.asarray(tab['IH'], float), np.diff(off))
+        seg = np.ones(len(F), bool)
+        seg[off[1:] - 1] = False                            # a segment starts at every point but each table's last
+        k = np.flatnonzero(seg)
+        p0, m0, p1, m1 = F[k], Dh[k], F[k + 1], Dh[k + 1]
+        c = np.maximum(np.abs(-6 * p0 - 4 * m0 + 6 * p1 - 2 * m1), np.abs(6 * p0 + 2 * m0 - 6 * p1 + 4 * m1))
+        t_of = np.repeat(np.arange(nt), np.diff(off))[k]
+        CT = np.zeros(nt)
+        np.maximum.at(CT, t_of, c)
+        CT *= np.asarray(tab['IH'], float) ** 2             # from the table's steps to the residual's units
+        rows = L2 < 0
+        C[rows] = CT[(-L2[rows] - 1).astype(np.int64)]
+    C = np.where(np.isfinite(C) & (C > 0), C, 0.0)
+    col = np.repeat(np.arange(T.n), np.diff(T.indptr))
+    use = np.ones(len(col), bool)                         # the entries the likelihood's passes read (column_passes' PF)
+    pf = getattr(T, 'pass_end', None)
+    if pf is not None:
+        use = np.arange(len(col)) < np.asarray(pf)[col]
+    qi = np.bincount(col[use], weights=0.5 * T.data[use] ** 2 * C[T.indices[use]], minlength=T.n)
+    sp_['QI'] = np.ascontiguousarray(qi * (1.0 + 1e-12))
+    return sp_['QI']
 
 
 def _sp_terms(T, rows, e):
@@ -1981,7 +2190,7 @@ def column_passes(T, B=None, tol=1e-12):
             'likelihood\'s passes: ' + '; '.join(parts) + ('' if fold is not None or note is None else f'; {note}'))
 
 
-def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None):
+def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
     pi, pj, gij = T.pairs
     K = X.shape[0]
     xb = T.pkind == 3 and T.ss is not None and LOD is not None and KC is not None   # spike-and-slab: the prior's ratio
@@ -2002,7 +2211,8 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None):
                      None if not xb else ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
                      None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
                      None if not xb else _ptr(KC[0]), None if not xb else _ptr(KC[1]), None if not xb else _ptr(KC[2]),
-                     T.zlo, T.zhi, T.gam)
+                     T.zlo, T.zhi, T.gam, None if CNT is None or not xb else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8),
+                     float(getattr(T, 'swap_frac', 1.0)))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2225,6 +2435,14 @@ def _lw_change_np(T, r, rows, vals, d0, d1):
     return out
 
 
+def _ss_collapsed_lod(T, x, i):
+    """--collapse: the prior's log odds of rupture i on, given the others, with its bin's fraction on integrated out."""
+    bins = T.ss['bins']
+    b = bins[i]
+    c = float(np.count_nonzero(x[bins == b] > 0) - (x[i] > 0))
+    return np.log(T.ss['a'] + c) - np.log(T.ss['b'] + T.ss['nb'][b] - 1.0 - c)
+
+
 def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
     """NumPy twin of the kernel's spike-and-slab update of rupture i in every chain."""
     p0, p1 = T.indptr[i], T.indptr[i + 1]
@@ -2263,7 +2481,7 @@ def _sweep_spikeslab_numpy(T, X, R, g, i, SM, LOD):
                     m = xi
         else:
             m = np.exp(_slab_draw_py(g, c))
-        lr = LOD[k, T.ss['bins'][i]]
+        lr = _ss_collapsed_lod(T, X[k], i) if T.ss.get('collapse') else LOD[k, T.ss['bins'][i]]
         if sp_:
             lr -= -splik(m) + splik(0.0)
         elif not empty:
@@ -2321,8 +2539,9 @@ def swaps_numpy(T, X, R, g, nacc, LOD=None):
     pi, pj, gij = T.pairs
     s2 = T.sigma ** 2
     xb = T.pkind == 3 and T.ss is not None and LOD is not None     # --swap-cos-cross: the prior's ratio across bins
+    frac = float(getattr(T, 'swap_frac', 1.0))                     # --swap-fraction: each pair proposed with this chance
     for k in range(X.shape[0]):
-        for q in range(len(pi)):
+        for q in (range(len(pi)) if frac >= 1.0 else np.flatnonzero(g.random(len(pi)) < frac)):
             i, j = pi[q], pj[q]
             mi, mj = X[k, i], X[k, j]
             if mi == mj:
@@ -2341,9 +2560,14 @@ def swaps_numpy(T, X, R, g, nacc, LOD=None):
                 dchi = 2 * dl * (R[k, ri] @ vi - R[k, rj] @ vj) + dl * dl * (T.csq[i] + T.csq[j] - 2 * gij[q])
             dlp = -dl * (T.beta[i] - T.beta[j])
             if xb and T.ss['bins'][i] != T.ss['bins'][j]:   # --swap-cos-cross: x_i = mj, x_j = mi against mi, mj
-                af = _ss_on_lp_py(T, i, mj, LOD[k]) + _ss_on_lp_py(T, j, mi, LOD[k])
-                bf = _ss_on_lp_py(T, i, mi, LOD[k]) + _ss_on_lp_py(T, j, mj, LOD[k])
+                col = T.ss.get('collapse')                  # --collapse: the counts' ratio in place of the fractions on
+                lk = np.zeros_like(LOD[k]) if col else LOD[k]
+                af = _ss_on_lp_py(T, i, mj, lk) + _ss_on_lp_py(T, j, mi, lk)
+                bf = _ss_on_lp_py(T, i, mi, lk) + _ss_on_lp_py(T, j, mj, lk)
                 dlp = -np.inf if (af == -np.inf or not bf > -np.inf) else dlp + (af - bf)
+                if col and (mi > 0) != (mj > 0):            # one on moves bins: off in its own, on in the other's
+                    a_, b_ = (i, j) if mi > 0 else (j, i)
+                    dlp += _ss_collapsed_lod(T, X[k], b_) - _ss_collapsed_lod(T, X[k], a_)
             if T.lw is not None:                         # --log-band: the soft band's change
                 rows = np.union1d(ri, rj)
                 dv = np.zeros(len(rows))
@@ -2602,6 +2826,13 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             p = np.clip(pib, 1e-300, 1.0 - 1e-16)
             LOD[:] = np.log(p) - np.log1p(-p)
         update_pi()
+    collapse = SS is not None and bool(SS.get('collapse')) and SS.get('pi') is None   # --collapse: the fractions on
+    if collapse and np.ndim(SS['a']) + np.ndim(SS['b']) > 0:                         # integrated out; drawn only to record
+        raise NotImplementedError('--collapse takes one Beta(a, b) for every bin')
+    if backend == 'c':
+        nbf = np.ascontiguousarray(SS['nb'], np.float64) if collapse else None
+        lib.ss_collapse(int(collapse), float(SS['a']) if collapse else 1.0, float(SS['b']) if collapse else 1.0,
+                        None if nbf is None else _ptr(nbf))
     n_rec = sweeps // thin
     n_burn = burn // thin
     n_keep = n_rec - n_burn
@@ -2691,6 +2922,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     KC = kernel_consts(lib, T) if backend == 'c' else None   # the kernel's per-rupture constants, once per run
     t0 = time.time()
     he = thin if ((H is None and SS is None) or not hyper_every) else max(1, min(int(hyper_every), thin))
+    if collapse and not (T.mstep is not None and T.mstep.get('joint')):   # --collapse: nothing to draw between sweeps, so
+        he = thin                                                         # the kernel runs each recording interval whole
     for rec in range(n_rec):
         done = 0
         while done < thin:                                   # hierarchical prior: hyperparameters every `he` sweeps
@@ -2700,7 +2933,7 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             else:
                 sweeps_numpy(T, X, R, g, ns, MUZ, KZ, SM, LOD)
             done += ns
-            if SS is not None:
+            if SS is not None and not collapse:
                 update_pi(counted=backend == 'c')
             if T.mstep is not None and T.mstep.get('joint'):   # --mfd-gr-tau: each chain's b and level, given its bins
                 mjoint_update(T.mstep, R, g)
@@ -2712,12 +2945,15 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                 R = T.residual(X)
         if backend == 'c':
             if swaps:
-                swaps_c(lib, T, X, R, rng, nacc, threads, LOD if SS is not None else None, KC)
+                swaps_c(lib, T, X, R, rng, nacc, threads, LOD if SS is not None else None, KC,
+                        CNT if SS is not None else None)
             if transfers:
                 transfers_c(lib, T, X, R, rng, tstats, threads)
         elif swaps:
             swaps_numpy(T, X, R, g, nacc, LOD if SS is not None else None)
         if SS is not None:
+            if collapse:                                 # the fractions on, drawn given the counts, for the record
+                update_pi()
             on = X > 0
             SM[on] = X[on]                               # an "on" rupture's slab value is its rate (swaps move rates)
             tr.setdefault('hyper_pi', np.zeros((K, n_rec, SS['B'])))[:, rec] = pib
@@ -2869,6 +3105,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                   f'pred/data scale {tr["tscale"][:, rec].mean():.3f}  ({el:.0f}s, {el / ((rec + 1) * thin):.3f}s/sweep)', flush=True)
     tr['final_X'] = X if sc is None else X * sc
     tr['seconds'] = time.time() - t0
+    if backend == 'c':
+        lib.ss_collapse(0, 1.0, 1.0, None)               # --collapse: off again, for the library's next caller
+    tr['collapse'] = bool(collapse)
     tr['swap_rate'] = nacc / max(1, n_rec * (len(T.pairs[0]) if swaps else 1)) if swaps else np.zeros(K)
     tr['transfer_stats'] = tstats       # per chain: moves made, moves involving a rate above 1e-6
     tr['monitor'] = monitor
@@ -3156,13 +3395,13 @@ def selftest_edges(backends=('c', 'numpy')):
     return ok
 
 
-def selftest_spikeslab(backends=('c', 'numpy'), gam=0.0):
+def selftest_spikeslab(backends=('c', 'numpy'), gam=0.0, collapse=False):
     """Spike-and-slab: 2 rates in one bin, with different slab floors and soft tops and the fraction on integrated out
     under Beta(1, 1); P(on) and E[log10 m | on] against exact values from enumerating the on/off states on a grid.
     gam = 1/2: the square-root slab (density m^-1/2 below the top)."""
     from scipy.special import betaln
-    print('spike-and-slab prior' + (' (square-root slab)' if gam else '') + ': P(on) and E[log10 m | on] vs exact enumeration '
-          'and grid integrals')
+    print('spike-and-slab prior' + (' (square-root slab)' if gam else '') + (' (--collapse)' if collapse else '')
+          + ': P(on) and E[log10 m | on] vs exact enumeration and grid integrals')
     Gs = sp.csc_matrix(np.array([[1.0, 0.7], [0.5, 1.0]]))
     d, sig, lo10, su, a_, b_ = np.array([0.6, 0.3]), 0.1, np.array([-3.0, -5.0]), np.array([0.05, 0.15]), 1.0, 1.0
     u = [np.linspace(l, min(8 * sv, 1.0), 2001) for l, sv in zip(lo10, su)]
@@ -3187,7 +3426,7 @@ def selftest_spikeslab(backends=('c', 'numpy'), gam=0.0):
         T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
         T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
         T.pkind = 3
-        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_, collapse=collapse)
         T.gam = gam
         K, sw = (8, 40000) if be == 'c' else (4, 4000)
         tr = sample(T, np.full((K, 2), 0.3), sw, sw // 10, 1, be, 1, 7, monitor=(0, 1), verbose=False, keep_samples=False)
@@ -3203,7 +3442,8 @@ def selftest_spikeslab(backends=('c', 'numpy'), gam=0.0):
                   f'E[log10 m | on] {uu.mean():.4f} (exact {e_u[i]:.4f}, z {zu:+.2f})')
         pi = tr['hyper_pi'][:, sw // 10:, 0]
         print(f'   {be:5s} fraction on: mean {pi.mean():.4f} (exact {(a_ + p_on[0] + p_on[1]) / (a_ + b_ + 2):.4f})')
-    print('SELFTEST (spike-and-slab' + (', square-root slab' if gam else '') + ')', 'PASSED' if ok else 'FAILED')
+    print('SELFTEST (spike-and-slab' + (', square-root slab' if gam else '') + (', --collapse' if collapse else '') + ')',
+          'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -3705,14 +3945,15 @@ def selftest_split(backends=('c', 'numpy')):
     return ok
 
 
-def selftest_exact(backends=('c', 'numpy')):
+def selftest_exact(backends=('c', 'numpy'), collapse=False, off_bounds=True):
     """--slip-misfit exact: two spike-and-slab rates and two rows scored by tabulated misfits (each row's likelihood a
     lognormal density in its prediction, sd 0.7 and 0.3 in ln: quasiconvex, not log-concave; the cubic Hermite tables the
     kernel reads, continued linearly), with swap moves, against a grid integral of the same interpolant: P(on) and
     E[log10 m | on] of each rate, and the recorded chi2 (the tables' misfit). The slice step's floor is the quasiconvex one."""
     from scipy.special import betaln
     from cru_common import hermite_eval, quasiconvex_table
-    print('exact slip misfit (--slip-misfit exact): tabulated lognormal densities, spike-and-slab with swaps vs a grid integral')
+    print('exact slip misfit (--slip-misfit exact): tabulated lognormal densities, spike-and-slab with swaps vs a grid integral'
+          + (' (--collapse)' if collapse else '') + ('' if off_bounds else ' (--no-off-bounds)'))
     ok = True
     G2 = np.array([[1.0, 0.6], [0.4, 1.0]])
     d2, sig = np.array([0.05, 0.04]), 0.02
@@ -3758,7 +3999,8 @@ def selftest_exact(backends=('c', 'numpy')):
         T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
         T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
         T.pkind = 3
-        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_)
+        T.ss = dict(bins=np.zeros(2, np.int64), B=1, nb=np.array([2.0]), a=a_, b=b_, collapse=collapse)
+        T.off_bounds = off_bounds
         T.split = dict(L2=np.ascontiguousarray([-1.0, -2.0]), H2=np.ascontiguousarray([-1.0, -2.0]),
                        tab={k_: np.ascontiguousarray(v_) for k_, v_ in tab.items()})
         K, sw = (8, 40000) if be == 'c' else (4, 4000)
@@ -3781,7 +4023,8 @@ def selftest_exact(backends=('c', 'numpy')):
         chi_ = mis(m_[:, 0], m_[:, 1]) / sig ** 2
         ok &= bool(np.allclose(np.sort(chi_), np.sort(tr['chi2'][:, sw // 10:].ravel()), rtol=1e-6, atol=1e-9))
     _sp_ptrs(Target(sp.csc_matrix(G2), d2, sig, 0.0, 10.0))   # the kernel's tables cleared
-    print('SELFTEST (exact slip misfit)', 'PASSED' if ok else 'FAILED')
+    print('SELFTEST (exact slip misfit' + (', --collapse' if collapse else '') + ('' if off_bounds else ', --no-off-bounds') + ')',
+          'PASSED' if ok else 'FAILED')
     return ok
 
 
@@ -3826,12 +4069,13 @@ def selftest_sum_pdf():
     return ok
 
 
-def selftest_crossswap(backends=('c', 'numpy')):
+def selftest_crossswap(backends=('c', 'numpy'), collapse=False, swap_frac=1.0):
     """--swap-cos-cross: swaps between two spike-and-slab rates in different bins (their own fractions on, Beta(1, 1), and
     their own slabs: floors 1e-4 and 10^-2.5, soft tops 0.05 and 0.3 decades wide), near-duplicate columns (cosine 0.998)
     so that swaps are often accepted, against a grid integral: P(on) and E[log10 m | on] of each rate. Without the prior's
     ratio in the acceptance the swaps would favour neither slab, and the answers would be off."""
-    print('cross-bin swaps (--swap-cos-cross): spike-and-slab in two bins with swaps vs a grid integral')
+    print('cross-bin swaps (--swap-cos-cross): spike-and-slab in two bins with swaps vs a grid integral'
+          + (' (--collapse)' if collapse else '') + (f' (--swap-fraction {swap_frac:g})' if swap_frac < 1 else ''))
     ok = True
     G2 = np.array([[1.0, 0.95], [0.3, 0.35]])
     d2, sig = np.array([0.05, 0.016]), 0.01
@@ -3863,7 +4107,8 @@ def selftest_crossswap(backends=('c', 'numpy')):
         T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
         T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (su * LN10) ** 2))
         T.pkind = 3
-        T.ss = dict(bins=np.array([0, 1], np.int64), B=2, nb=np.array([1.0, 1.0]), a=1.0, b=1.0)
+        T.ss = dict(bins=np.array([0, 1], np.int64), B=2, nb=np.array([1.0, 1.0]), a=1.0, b=1.0, collapse=collapse)
+        T.swap_frac = swap_frac
         K, sw = (8, 40000) if be == 'c' else (4, 4000)
         tr = sample(T, np.tile([0.03, 0.02], (K, 1)), sw, sw // 10, 1, be, 1, 41, monitor=(0, 1), verbose=False,
                     keep_samples=False, swaps=True)
@@ -3877,8 +4122,54 @@ def selftest_crossswap(backends=('c', 'numpy')):
             ok &= abs(zp) < 4 and abs(zu) < 4
             print(f'   {be:5s} rate {i}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 m | on] {uu.mean():.4f} '
                   f'(exact {e_u[i]:.4f}, z {zu:+.2f}); swap acceptance {tr["swap_rate"].mean():.2f}')
-        ok &= bool(tr['swap_rate'].mean() > 0.05)          # the swaps must take part for the test to mean anything
-    print('SELFTEST (cross-bin swaps)', 'PASSED' if ok else 'FAILED')
+        ok &= bool(tr['swap_rate'].mean() > 0.05 * swap_frac)   # the swaps must take part for the test to mean anything
+    print('SELFTEST (cross-bin swaps' + (', --collapse' if collapse else '') + ')', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
+
+
+def selftest_collapse(backends=('c', 'numpy')):
+    """--collapse: four rates in two bins of two, nearly no data (the prior alone), a U-shaped Beta(0.2, 0.2) on each bin's
+    fraction on (all on or all off favoured: P(2 on, 0 on) 0.18 against P(1, 1) 0.02), and swaps across the bins, which move a rupture on from one bin to the other: the number on in each bin
+    against the beta-binomial's exact distribution, P(c) = C(2, c) B(a + c, b + 2 - c) / B(a, b), with the fractions on
+    integrated out and drawn; and the recorded fractions' mean against its exact value. A swap that left out the counts'
+    ratio would spread the ruptures on evenly between the bins (checked: with it left out, two on in one bin given two
+    on in all has probability 0.03, not 0.95)."""
+    from scipy.special import betaln, comb
+    print('collapsed fractions on (--collapse): counts per bin under the prior alone, with swaps across bins, vs the '
+          'beta-binomial')
+    ok = True
+    a_, b_ = 0.2, 0.2
+    pc = np.array([comb(2, c) * np.exp(betaln(a_ + c, b_ + 2 - c) - betaln(a_, b_)) for c in range(3)])
+    G = np.array([[1e-6, 2e-6, 1.5e-6, 1e-6]])
+    pi_, pj_ = np.array([0, 1]), np.array([2, 2])   # not all four pairs: with them, a pass of swaps that were always
+                                                    # accepted would carry two on in one bin to two on in the other
+    for be in backends:
+        for col in (True, False):
+            T = Target(sp.csc_matrix(G), np.zeros(1), 1.0, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0),
+                       pairs=(pi_, pj_, np.array([G[:, i] @ G[:, j] for i, j in zip(pi_, pj_)])))
+            T.zlo_vec = np.full(4, -3.0 * LN10)
+            T.ku_vec = np.full(4, 1.0 / (2.0 * (0.1 * LN10) ** 2))
+            T.pkind = 3
+            T.ss = dict(bins=np.array([0, 0, 1, 1], np.int64), B=2, nb=np.array([2.0, 2.0]), a=a_, b=b_, collapse=col)
+            K, sw = (8, 20000) if be == 'c' else (4, 1500)
+            tr = sample(T, np.tile([0.03, 0.0, 0.0, 0.0], (K, 1)), sw, sw // 10, 1, be, 1, 53, monitor=(0, 1, 2, 3),
+                        verbose=False, keep_samples=False, swaps=True)
+            Mo = tr['mon'][:, sw // 10:, :] > 0
+            line = []
+            for b in range(2):
+                cb = Mo[:, :, 2 * b:2 * b + 2].sum(2)
+                for c in range(3):
+                    ind = (cb == c).astype(float)
+                    z = (ind.mean() - pc[c]) / np.sqrt(pc[c] * (1 - pc[c]) / max(ess(ind), 1.0))
+                    ok &= abs(z) < 4
+                    line.append(f'{ind.mean():.3f} (z {z:+.1f})')
+            pim = tr['hyper_pi'][:, sw // 10:, :].mean()
+            ok &= abs(pim - a_ / (a_ + b_)) < 0.02
+            ok &= bool(tr['swap_rate'].mean() > 0.02)
+            print(f'   {be:5s} {"collapsed" if col else "drawn    "}: P(0, 1, 2 on) bin 0 {", ".join(line[:3])}; bin 1 '
+                  f'{", ".join(line[3:])} (exact {pc[0]:.3f}, {pc[1]:.3f}, {pc[2]:.3f}); fraction on {pim:.3f} '
+                  f'(exact {a_ / (a_ + b_):.3f}); swap acceptance {tr["swap_rate"].mean():.2f}')
+    print('SELFTEST (collapsed fractions on)', 'PASSED' if ok else 'FAILED')
     return bool(ok)
 
 
@@ -4908,6 +5199,22 @@ def main():
     ap.add_argument('--rupture-set', default=None,
                     help='--plate-rate and --slip-sum: the OpenSHA rupture set of these inputs (a solution folder, or its '
                          'ruptures/), for the faults\' traces, rakes and dips and the ruptures\' sections and average slips')
+    ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 'drawn'],
+                    help='spike-and-slab: each bin\'s fraction on, Beta(a, b) a priori, \'drawn\' (each sweep, from its Beta '
+                         'posterior given the bin\'s count on, and each rupture switched on or off given it) or '
+                         '\'collapsed\' (integrated out: a rupture is on, given the others in its bin, with prior odds '
+                         '(a + c) / (b + n - 1 - c), c of the other n - 1 on; the swaps across bins carry the counts\' ratio; '
+                         'the fractions are drawn given the counts only to record them, and --hyper-every does not apply). '
+                         'The same posterior either way')
+    ap.add_argument('--swap-fraction', type=float, default=1.0, metavar='F',
+                    help='swap moves: each pass proposes each pair with probability F (0 < F <= 1), a fresh random choice '
+                         'each pass, rather than every pair (1, the default): a cheaper pass, still exact')
+    ap.add_argument('--no-off-bounds', action='store_true',
+                    help='--slip-misfit exact (and the split misfits): switch every off rupture on or off from its exact '
+                         'change, a pass of table lookups over its column, rather than first from bounds on it (each chain\'s '
+                         'rows\' slopes, kept current, and their terms\' largest second derivatives), with the exact change '
+                         'only where they leave the decision open (the default since 2026-11-24). The same decisions; for '
+                         'timing')
     ap.add_argument('--swap-cos', type=float, default=0.0,
                     help='add exact swap moves between columns with cosine similarity above this (>= 0.99; from prelim_results.npz)')
     ap.add_argument('--swap-cos-cross', type=float, default=0.0, metavar='C',
@@ -4951,7 +5258,10 @@ def main():
         ok &= selftest_band()
         ok &= selftest_fold(backends=('c',))
         ok &= selftest_crossswap(backends=('c',))
+        ok &= selftest_crossswap(backends=('c',), collapse=True, swap_frac=0.5)
+        ok &= selftest_collapse(backends=('c',))
         ok &= selftest_exact(backends=('c',))
+        ok &= selftest_exact(backends=('c',), collapse=True, off_bounds=False)
         ok &= selftest_sum_pdf()
         sys.exit(0 if ok else 1)
     if a.selftest:
@@ -4967,9 +5277,13 @@ def main():
         ok &= selftest_paleo(b=0.5)
         ok &= selftest_split()
         ok &= selftest_exact()
+        ok &= selftest_exact(collapse=True, off_bounds=False)
         ok &= selftest_sum_pdf()
         ok &= selftest_groupweights()
         ok &= selftest_crossswap()
+        ok &= selftest_crossswap(collapse=True, swap_frac=0.5)
+        ok &= selftest_collapse()
+        ok &= selftest_spikeslab(collapse=True)
         ok &= selftest_mfdlog()
         ok &= selftest_mfdlog(b=0.5)
         ok &= selftest_mfdpdf()
@@ -5147,7 +5461,8 @@ def main():
         slab = 'rate uniform in sqrt(rate)' if a.slab == 'sqrt' else 'log-uniform rate'
         print(f'prior: spike-and-slab per magnitude bin: each rupture is off (rate 0) or on, with a {slab} from '
               f'the slab floor 1e{W:g} up to R_j ({Wj.min():.2f} to {Wj.max():.2f} decades; {edge}); the fraction on in '
-              f'each bin ~ Beta({ss_a:g}, {ss_b:g}), estimated')
+              f'each bin ~ Beta({ss_a:g}, {ss_b:g}), ' + ('integrated out (--fractions-on collapsed; drawn given the counts '
+              'to record them)' if a.fractions_on == 'collapsed' else 'estimated (drawn each sweep)'))
     else:
         beta = prior_rates(a.prior, n)
     from cru_common import misfit_log_weight
@@ -5222,6 +5537,8 @@ def main():
         a.slip_band = 'positive'                   # its log10 half is infinite at 0: each slip-rate prediction above zero
     fprelim = a.prelim or prelim_path(a.problem)
     pairs = None
+    if not 0.0 < a.swap_fraction <= 1.0:
+        raise SystemExit(f'--swap-fraction {a.swap_fraction:g}: give a probability in (0, 1]')
     if a.swap_cos > 0:
         pr = np.load(fprelim)
         sel = pr['dup_cos'] > a.swap_cos
@@ -5277,7 +5594,9 @@ def main():
             pairs = (pi, pj, pairs[2] * scale[pi] * scale[pj])
         print(f'swap moves: {sel.sum()} near-duplicate pairs with cosine > {a.swap_cos}'
               + (f' ({n_cross} of them across magnitude bins with cosine > {a.swap_cos_cross}, the prior\'s ratio in their '
-                 f'acceptance)' if n_cross else '') + ', one pass per recorded draw')
+                 f'acceptance)' if n_cross else '') + ', one pass per recorded draw'
+              + (f', each pair proposed in a pass with probability {a.swap_fraction:g} (--swap-fraction)'
+                 if a.swap_fraction < 1 else ''))
     dirs = dict(np.load(a.transfers)) if a.transfers else None
     if dirs is not None:
         print(f'transfer moves: {len(dirs["uu"])} directions from {a.transfers}, one pass per recorded draw')
@@ -5291,8 +5610,11 @@ def main():
         T.ku_vec = ku_vec
         if spike_mode:                               # pkind 3: x_i = 0 (off) or its slab value (on)
             T.pkind = 3
-            T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b)
+            T.ss = dict(bins=bins, B=len(rows), nb=np.bincount(bins, minlength=len(rows)).astype(float), a=ss_a, b=ss_b,
+                        collapse=a.fractions_on == 'collapsed')
+            T.off_bounds = not a.no_off_bounds
             T.gam = 0.5 if a.slab == 'sqrt' else 0.0
+    T.swap_frac = float(a.swap_fraction)
     if GW is not None:                             # DATATYPES_EQUAL: recorded on the run, the summed slip rates' weight with it
         T.group_weights, T.temper_slip_sum = GW, gw('slip')
     T.n_data = P['G'].shape[0]                     # the data rows; the balance term's rows follow them

@@ -111,7 +111,7 @@ leave-one-out checks).
 gibbs.py defaults to --prior spikeslab (spike-and-slab per magnitude bin: each rupture off, rate 0, or on, log-uniform
 from the slab floor 1e-10 up to a soft top at the bin's target rate R_j whose width is the bin's own uncertainty; the
 fraction on in each bin estimated under Beta(1, 1); spikeslab:A:TOP:a:b; --hyper-every defaults to 1 for it, so the
-fractions are redrawn every sweep). --slab sqrt (command line only; not in the notebook) was its cross-check until the
+fractions are redrawn every sweep; --fractions-on collapsed integrates them out instead, tested 2026-11-24, not the default). --slab sqrt (command line only; not in the notebook) was its cross-check until the
 user dropped it at the end of October 2026 (the request behind it had been misphrased; do not propose it as a check):
 the same with an on rupture's rate uniform in sqrt(rate), density m^-1/2 instead of 1/m; it fitted as the default does,
 and at 211k it moved the subsection event rates (REPORT.md, "Fits and the prior's lower end").
@@ -227,6 +227,19 @@ set by sp_tables from _sp_ptrs before every call); lb_floor with tables uses per
 checked quasiconvex (quasiconvex_table, Fritsch-Carlson); each fault's -2 ln p made unimodal first (timeframe_sliprates.unimodal,
 PAVA each side: the simulated factor's sampling-noise ripples, up to 0.55 for the zero-width faults). best_fit_as_fitted polishes 'exact' as 'split'. Self-tests
 selftest_exact, selftest_sum_pdf.
+Speed work of 2026-11-24 (the user agreed items #1 and #2 of the speed scoping; REPORT "The fractions on integrated out,
+tested" and "Off ruptures decided from bounds"): run_plan MARGIN 0.0, CHAINS_PER_THREAD 2, RHAT_SWEEPS 90 (sweeps >= 90 tau of
+the slowest fraction on, R-hat predicted 1 + 0.9 tau/n). Tables interleaved (SPT_FD: value and step-scaled slope side by
+side; bit-identical). --off-bounds (default; --no-off-bounds): gibbs_run keeps DS (each chain's rows' slopes, sp_d/spt_d,
+updated with WC), col_sdots gives sum G DS (and G.U), SPB_QI[i] = sum G^2 C / 2 (_off_bounds_qi, over the passes' entries,
+set by sp_bounds from _sp_ptrs); the decision block 'bq' settles ~82% at 630k, sp_change for the rest; bit-identical to
+--no-off-bounds (checked at 630k, 8 chains); 15% faster. --fractions-on collapsed (not the default: at 211k no clear tau
+gain for the slowest bin; see REPORT): ss_collapse(on, a, b, nb) global set per sample() and reset after; CNT kept by
+gibbs_run (recount at start, updated at x[i] = xn) and swap_run (new last args CNT, frac); ss_on_lp with LODk NULL;
+he = thin when collapsed (unless --mfd-gr-tau's joint step); update_pi only at recording; NumPy twin _ss_collapsed_lod.
+selftest_collapse uses pairs (0,2),(1,2) only: with all four pairs an always-accepted swap pass maps (2,0) to (0,2) and the
+test cannot see a missing count ratio. --swap-fraction F (default 1): geometric skips through the pair list per pass.
+Float32 tables tried and dropped (no gain).
 MISFIT_SLIP, MISFIT_MFD, MISFIT_PALEO (the user's request after run _1794201333): MISFIT split into one setting per group,
 slip and MFD 'linear' | 'log10' | 'half' (default), paleo 'rate' | 'years' | 'half' (the user's names), each group's mode
 from cru_common.GROUP_MISFIT_MODES (the notebook's copy _MISFIT_GROUP_MODES); MISFIT kept as their common setting as one
