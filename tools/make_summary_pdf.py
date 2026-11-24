@@ -548,6 +548,8 @@ def main():
         t = re.sub(r'<font[^>]*>(.*?)</font>', r'\1', t)
         t = t.replace('<b>', '**').replace('</b>', '**').replace('<i>', '*').replace('</i>', '*')
         t = t.replace('<super>', '<sup>').replace('</super>', '</sup>')
+        t = t.replace('<br/><br/>', '\n\n')                # a paragraph break
+        t = re.sub(r'<br/>(\d+)\. ', r'\n\1. ', t)          # a numbered list's items
         t = t.replace('<br/>• ', '\n- ').replace('<br/>', '  \n')
         if t.startswith('• '):
             t = '- ' + t[2:]
@@ -1153,11 +1155,11 @@ def main():
             else '', re.S)
         para('<b>How each slip rate is scored (MISFIT_SLIP \u2018exact\u2019).</b> Each fault\u2019s slip rate enters the '
              'likelihood through its whole timeframe-corrected distribution, not a fitted shape, built in four steps. '
-             '<b>(1) The CFM\u2019s numbers.</b> The NZ Community Fault Model gives each fault SR_pref, SR_min and SR_max. '
+             '<br/>1. <b>The CFM\u2019s numbers.</b> The NZ Community Fault Model gives each fault SR_pref, SR_min and SR_max. '
              'Following Coffey et al. (accepted, BSSA), a Gaussian is fitted to the bounds alone: centred at the midpoint of '
              'SR_min and SR_max, with an sd of their width / 3.92, and its negative part set to zero. SR_pref does not set the '
              'centre; it only decides whether a fault counts as periodic (1 mm/yr or more) or aperiodic. '
-             '<b>(2) The timeframe factor.</b> That Gaussian is multiplied by a factor, the ratio of a fault\u2019s true '
+             '<br/>2. <b>The timeframe factor.</b> That Gaussian is multiplied by a factor, the ratio of a fault\u2019s true '
              'long-term slip rate to one measured over a finite window, which captures only a few earthquakes. Its '
              'distribution comes from simulating the paper\u2019s earthquake histories (after Styron, 2019): a reference '
              'fault slipping 1 mm/yr with a mean recurrence of 1,000 years; periodic faults\u2019 times between events '
@@ -1171,12 +1173,12 @@ def main():
              '/ its recurrence interval, which the paper does not publish) is fitted so that its 97.5% point matches the '
              'paper\u2019s Table S4' + (f'; S4\u2019s medians, which do not enter that fit, are then matched to '
              f'{m_4.group(2)}\u2013{m_4.group(3)} (5\u201395% of faults)' if m_4 else '') + '. '
-             '<b>(3) The density.</b> The product\u2019s density is computed exactly, by quadrature over the factor on a fine '
+             '<br/>3. <b>The density.</b> The product\u2019s density is computed exactly, by quadrature over the factor on a fine '
              'grid of its normal score, scaled as a whole by the slip-rate factor (target and spread alike), and tabulated as '
              '\u22122 ln p on a uniform grid of slip rates: 120 points across its 16\u201384% width, from its 0.01% to its 99.99% '
              'point, continued linearly beyond. Where the simulation\u2019s sampling noise ripples a density (faults with a '
              'narrow or zero CFM range, and far tails), the table is made unimodal, the closest falling-then-rising curve. '
-             '<b>(4) Into the likelihood.</b> Each slip-rate row\u2019s residual is proportional to the slip rate\u2019s '
+             '<br/>4. <b>Into the likelihood.</b> Each slip-rate row\u2019s residual is proportional to the slip rate\u2019s '
              'difference from the row\u2019s target, and the table is weighted so that, were the density the row\u2019s '
              'split normal, its misfit would be the split normal\u2019s exactly: the template weights, a section\u2019s k '
              'rows and DATATYPES_EQUAL\u2019s weights carry over unchanged. '
@@ -1190,7 +1192,7 @@ def main():
              + (f': {m_e.group(1)} \u00b1 {m_e.group(2)} for the slip sections, in place of the Gaussian\u2019s '
                 f'{m_e.group(3)} \u00b1 {m_e.group(4)}' if m_e else '') + ' (a skewed density\u2019s expected misfit is '
              'larger than a Gaussian\u2019s 1). '
-             + (('<b>The summed slip rates.</b> With SLIP_SUM, each cross-section is scored the same way. Its target sum '
+             + (('<br/><br/><b>The summed slip rates.</b> With SLIP_SUM, each cross-section is scored the same way. Its target sum '
                  'is the sum, over its parent faults, of each one\u2019s slip rate times its subsections\u2019 projected '
                  'weights (each parent one rate, the parents independent, as the Gaussian version has them), so its density '
                  'is the convolution of their exact densities, computed by FFT (a parent too narrow for the grid enters as '
