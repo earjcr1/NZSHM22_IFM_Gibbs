@@ -264,6 +264,29 @@ gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-
 swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
 viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
 (n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
+Split/merge moves (2026-11-24, gibbs.py --split-merge N [--split-merge-scale C]; the command line only: no gain for the slow bins at 630k, so not in the notebook, the user's choice).
+
+Where the pieces are:
+- Triples: split_merge.find_triples. Each subsection gets a random 64-bit key and a set's hash is the sum of its keys mod 2^64; each prefix of A's indices.csv list, and the matching suffix, is looked up among the kept ruptures' hashes. Duplicated sets are never used as B or C. At 630k: 12.9M triples in about 25 s; main checks a sample of 100k on the slip rows (5e-16).
+- Arrays: set_split_merge sorts the triples by A (AP), with BP/BL by B and INH = A or B in some triple. LAB = ln(alpha s_A/s_B) and LAC the same, in the sampler's units.
+- Kernel: splitmerge_run, after swap_run, with helpers sm_rows (a dense dv per row with a touched list) and sm_loglik (the slip misfit's or the Gaussian's terms on rows < NLIK, the curve terms as lw_swap's, and RLO/RHI on every row).
+- Call site: sample(), after update_pi each sweep. CNT is updated on acceptance, though the next gibbs_run recounts it anyway.
+
+Why it is exact:
+- The proposal count per call is fixed. A count that depends on the state breaks invariance, so do not make it n_on-proportional.
+- RJ in z, with Jacobian 2. The deviation's sd is min(SMAX, SMC sigma/(u_A |G_A|)), a function of z_A alone.
+- The acceptance carries ln(nh/nh') and ln(s/m'), both reverse counts taken in the PROPOSED state:
+  - nh is the on ruptures in H; after a split nh' = nh + INH[C], after a merge nh' = nh - INH[C].
+  - The reverse count is >= 1, since the triple itself counts.
+- NLIK = n_fit with the column passes, N without them: the rows gibbs_run's passes score. If the summed slip rates are folded (U, Gaussian), their rows' L2 = H2 = 1 is checked, so the explicit e^2 equals the fold.
+
+Restrictions: collapsed fractions, the MFD step term (ST), transfers and the numpy backend are disallowed.
+
+Tests:
+- selftest_splitmerge('gauss' | 'curve'): 3 rates against a 3D grid (_grid3_exact). Its single triple makes the count ratios identically 1, so it cannot see count errors; only the Jacobian.
+- selftest_splitmerge_counts: 6 ruptures and 4 overlapping triples, with C sometimes outside H, under the prior alone, 120k sweeps. Pattern frequencies are compared against the beta-binomials with a 5 sd bar: the ESS of rare indicators inflates z by about 1.3x, and the correct kernel's worst was 2.5-3.5 over 3 seeds.
+- Broken copies (scratch, not kept) and their failures: Jacobian 21-36 sd, counts 12, nh 10, reverse counted in the current state 7.
+
 Off-bounds fallback with early stopping (2026-11-24, the user's go-ahead after scoping): sp_bounds(QI, C_row, HO);
 _off_bounds_qi also builds C_row (each row's C_j, inflated as QI) and HO (int32, each column's likelihood entries in order of
 G_ji^2 C_j, largest first; ~15 s and 4 bytes per nonzero at 630k, built in sample() before t0). In the bq branch, when the

@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py']
+SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py', 'split_merge.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -314,6 +314,13 @@ check(re.findall(r'^KEPT_DRAWS = (\S+)', cells[0][1], re.M) == ['1000'] and "'--
       "notebook KEPT_DRAWS = 1000 (2026-11-24, the user's request): the whole draws kept for the representatives (gibbs.py "
       "--keep-draws, with REPRESENTATIVES > 0), at least REPRESENTATIVES; about 10 x the largest number of representatives "
       "to be tried; recorded (kept_draws)")
+check('void splitmerge_run(' in src['gibbs.py'] and "ap.add_argument('--split-merge', type=int, default=0" in src['gibbs.py']
+      and "ok &= selftest_splitmerge('gauss')" in src['gibbs.py'] and "ok &= selftest_splitmerge('curve')" in src['gibbs.py']
+      and 'ok &= selftest_splitmerge_counts()' in src['gibbs.py'] and 'def find_triples(' in src['split_merge.py']
+      and 'SPLIT_MERGE' not in NBALL and "'--split-merge'" not in NBALL,
+      "split/merge moves (2026-11-24, the user's request): gibbs.py --split-merge N (the triples from split_merge.py), off "
+      "unless given; three self-tests in the full set; not in the notebook (no gain for the slow bins at 630k, the user's "
+      "choice: the command line only)")
 check("ap.add_argument('--fractions-on', default='drawn', choices=['collapsed', 'drawn']" in src['gibbs.py']
       and 'void ss_collapse(' in src['gibbs.py'] and 'static inline double ssc_odds(' in src['gibbs.py']
       and src['gibbs.py'].count('ok &= selftest_collapse(') == 2 and 'ok &= selftest_spikeslab(collapse=True)' in src['gibbs.py']

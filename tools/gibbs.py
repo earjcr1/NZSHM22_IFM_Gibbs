@@ -1660,6 +1660,200 @@ void swap_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int3
     free(lam); free(hh);
 }
 
+/* ---- split/merge moves (--split-merge, 2026-11-24): reversible-jump moves between a rupture A and two ruptures B and C
+   that together are A (B the first part of A's subsections, C the rest; split_merge.py finds them), with alpha = D_A / D_B
+   and beta = D_A / D_C (average slips), so that rate t on A, or alpha t on B and beta t on C, give every slip-rate row the
+   same prediction, and so the summed slip rates' and the plate rate's rows, which add slip-rate rows up; the paleo rows
+   and the bins differ (A's bin loses t, B's and C's gain alpha t and beta t), as the likelihood scores exactly.
+   In z = ln u (u the kernel's scaled rate), with LAB = ln(alpha s_A / s_B) and LAC = ln(beta s_A / s_C) (s the scales):
+     split (A on, B and C off): v ~ N(0, sd^2), z_B = z_A + LAB + v, z_C = z_A + LAC - v, A off;
+     merge (B and C on, A off): its inverse, v = (w_B - w_C) / 2, z_A = (w_B + w_C) / 2, w_B = z_B - LAB, w_C = z_C - LAC.
+   At v = 0 the slip-rate rows are unchanged; v lets B and C leave the exact proportion (so a merge can start from pairs
+   that are not in it). The map (z_A, v) -> (z_B, z_C) has Jacobian 2. sd = min(SMAX, SMC sigma / (u_A |G_A|)), a function
+   of z_A alone, the same both ways (v moves the slip-rate rows by about u_A |G_A| v).
+   Each proposal picks a rupture uniformly among the NH ruptures switched on that are A or B in some triple (INH), then
+   with probability 1/2 a split with it as A, uniformly among its triples with B and C off (s of them), or else a merge
+   with it as B, uniformly among its triples with C on and A off (m of them); none: no move. The target's density is in z
+   for each rupture on (ss_on_lp: the bin's log odds and the slab's normalized density in z), so a split is accepted with
+     log r = dlogL + lp(B) + lp(C) - lp(A) - ln g(v) + ln 2 + ln(NH / NH') + ln(s / m'),
+   NH' and m' counted in the proposed state (m' >= 1: the reverse merge), and a merge with the mirror image. dlogL is exact
+   over the three columns' rows: the slip misfit's terms (or the Gaussian's) on rows below NLIK, the rows gibbs_run's
+   passes score, and the curve terms on theirs; the band's limits checked on every row. A fixed number of proposals per
+   chain per call (not one that depends on the state, which would not leave the target unchanged). The triples come sorted
+   by A (AP: each rupture's, as A), with BP, BL each rupture's as B. */
+static inline double sm_sd(double zA, double csqA, double smc, double sigma, double smax)
+{
+    if (!(csqA > 0.0)) return smax;
+    const double s = smc * sigma / (exp(zA) * sqrt(csqA));
+    return s < smax ? s : smax;
+}
+/* the three columns' rows, each listed once (tl, in the order met), and each one's change dv[j] = sum_q G_jc[q] dx[q];
+   mk marks rows listed (the caller clears it through tl) */
+static int64_t sm_rows(const int64_t *indptr, const int32_t *indices, const double *data, const int64_t *c,
+                       const double *dx, double *dv, int32_t *tl, unsigned char *mk)
+{
+    int64_t nt = 0;
+    for (int q = 0; q < 3; q++)
+        for (int64_t p = indptr[c[q]]; p < indptr[c[q] + 1]; p++) {
+            const int32_t j = indices[p];
+            if (!mk[j]) { mk[j] = 1; dv[j] = 0.0; tl[nt++] = j; }
+            dv[j] += data[p] * dx[q];
+        }
+    return nt;
+}
+/* the move's change in the log likelihood over those rows (as swap_run's: the slip misfit's or Gaussian's terms on rows
+   below NLIK over 2 sigma^2, the curve terms as lw_swap's); -INFINITY if a row would leave its limits (the band) or a
+   curve row's prediction would not be above 0 */
+static double sm_loglik(int64_t nt, const int32_t *tl, const double *dv, const double *r, int64_t NLIK, double s2,
+                        const double *RLO, const double *RHI, const double *SL2, const double *SH2, const double *LW,
+                        const double *LWL, const double *LD, const double *DY, const pmctx *PM)
+{
+    double dchi = 0.0, dlw = 0.0;
+    for (int64_t t = 0; t < nt; t++) {
+        const int32_t j = tl[t];
+        const double e0 = r[j], e1 = e0 + dv[j];
+        if (RLO && (e1 < RLO[j] || e1 > RHI[j])) return -INFINITY;
+        if (j < NLIK) dchi += SL2 ? sp_w2(e1, SL2[j], SH2[j]) - sp_w2(e0, SL2[j], SH2[j]) : e1 * e1 - e0 * e0;
+        if (LW) {
+            const double w = LW[j];
+            const int32_t tt = PM ? PM->I[j] : -1;
+            if (w <= 0.0 && tt < 0) continue;
+            const double y = e0 + DY[j], y1 = y + dv[j];
+            if (!(y1 > 0.0)) return -INFINITY;
+            if (w > 0.0) {
+                const double l0 = log(y) - LD[j], l1 = log(y1) - LD[j];
+                if (!LWL) dlw += w * (l1 * l1 - l0 * l0);
+                else dlw += (l1 < 0.0 ? LWL[j] : w) * l1 * l1 - (l0 < 0.0 ? LWL[j] : w) * l0 * l0;
+            }
+            if (tt >= 0) dlw += pm_f(PM, tt, log(y1), NULL) - pm_f(PM, tt, log(y), NULL);
+        }
+    }
+    return -0.5 * dchi / s2 - dlw;
+}
+void splitmerge_run(int64_t N, int64_t n, int64_t K, const int64_t *indptr, const int32_t *indices, const double *data,
+                    const double *csq, double sigma, int64_t NLIK, const int32_t *TA, const int32_t *TB, const int32_t *TC,
+                    const double *LAB, const double *LAC, const int64_t *AP, const int64_t *BP, const int32_t *BL,
+                    const unsigned char *INH, int64_t nprop, double smc, double smax, double *X, double *R, uint64_t *rng,
+                    int64_t *STATS, const double *RLO, const double *RHI, const double *LW, const double *LWL,
+                    const double *LD, const double *DY, const pmctx *PM, const double *SL2, const double *SH2,
+                    const int64_t *SBIN, int64_t SB, const double *LOD, const double *ZLO, const double *KU,
+                    const double *LLO, const double *LHI, const double *SC, double zlo, double zhi, double gam,
+                    int64_t *CNT)
+{
+    const double s2 = sigma * sigma, LN2 = 0.69314718055994531, HL2PI = 0.91893853320467274;   /* ln 2, ln(2 pi) / 2 */
+    int64_t *onl = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));   /* the ruptures on in H, and where */
+    int64_t *pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));   /* each is in that list */
+    double *dv = (double *)malloc(sizeof(double) * (size_t)(N > 0 ? N : 1));
+    int32_t *tl = (int32_t *)malloc(sizeof(int32_t) * (size_t)(N > 0 ? N : 1));
+    unsigned char *mk = (unsigned char *)calloc((size_t)(N > 0 ? N : 1), 1);
+    for (int64_t k = 0; k < K; k++) {
+        double *x = X + k * n, *r = R + k * N;
+        uint64_t *s = rng + 4 * k;
+        const double *LODk = LOD + k * SB;
+        int64_t *cn = CNT ? CNT + k * SB : NULL, *st = STATS + 4 * k;
+        int64_t nh = 0;
+        for (int64_t i = 0; i < n; i++)
+            if (INH[i] && x[i] > 0.0) { pos[i] = nh; onl[nh++] = i; }
+        for (int64_t q = 0; q < nprop && nh > 0; q++) {   /* nh = 0: no move can change the state (none on to start from) */
+            int64_t h = (int64_t)(unif(s) * (double)nh);
+            if (h >= nh) h = nh - 1;
+            const int64_t i = onl[h];
+            const int split = unif(s) < 0.5;
+            int64_t A, B, C, t = -1, cnt = 0;
+            if (split) {                  /* i as A: its triples with B and C off */
+                for (int64_t p = AP[i]; p < AP[i + 1]; p++) if (!(x[TB[p]] > 0.0) && !(x[TC[p]] > 0.0)) cnt++;
+                if (!cnt) continue;
+                int64_t pick = (int64_t)(unif(s) * (double)cnt);
+                if (pick >= cnt) pick = cnt - 1;
+                for (int64_t p = AP[i]; p < AP[i + 1]; p++)
+                    if (!(x[TB[p]] > 0.0) && !(x[TC[p]] > 0.0) && pick-- == 0) { t = p; break; }
+                A = i; B = TB[t]; C = TC[t];
+            } else {                      /* i as B: its triples with C on and A off */
+                for (int64_t p = BP[i]; p < BP[i + 1]; p++) {
+                    const int64_t u = BL[p];
+                    if (x[TC[u]] > 0.0 && !(x[TA[u]] > 0.0)) cnt++;
+                }
+                if (!cnt) continue;
+                int64_t pick = (int64_t)(unif(s) * (double)cnt);
+                if (pick >= cnt) pick = cnt - 1;
+                for (int64_t p = BP[i]; p < BP[i + 1]; p++) {
+                    const int64_t u = BL[p];
+                    if (x[TC[u]] > 0.0 && !(x[TA[u]] > 0.0) && pick-- == 0) { t = u; break; }
+                }
+                A = TA[t]; B = i; C = TC[t];
+            }
+            double uA, uB, uC, lr;
+            if (split) {
+                st[0]++;
+                uA = x[A];
+                const double zA = log(uA), sd = sm_sd(zA, csq[A], smc, sigma, smax), v = sd * stdnorm(s);
+                const double zB = zA + LAB[t] + v, zC = zA + LAC[t] - v;
+                uB = exp(zB); uC = exp(zC);
+                if (!(uB > 0.0) || !(uC > 0.0) || !isfinite(uB) || !isfinite(uC)) continue;   /* (not in the support) */
+                const double lpB = ss_on_lp(B, uB, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                const double lpC = ss_on_lp(C, uC, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                if (lpB == -INFINITY || lpC == -INFINITY) continue;
+                const double lpA = ss_on_lp(A, uA, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                int64_t mrev = 0;             /* the reverse merge's choices: B's triples with C' on and A' off after it */
+                for (int64_t p = BP[B]; p < BP[B + 1]; p++) {
+                    const int64_t u = BL[p], a2 = TA[u], c2 = TC[u];
+                    const int onc = c2 == A ? 0 : (c2 == B || c2 == C) ? 1 : x[c2] > 0.0;
+                    const int ona = a2 == A ? 0 : (a2 == B || a2 == C) ? 1 : x[a2] > 0.0;
+                    if (onc && !ona) mrev++;
+                }
+                const int64_t nh1 = nh + (INH[C] ? 1 : 0);   /* A out, B in, C in if it is in H */
+                const double lg = -0.5 * v * v / (sd * sd) - log(sd) - HL2PI;
+                lr = lpB + lpC - lpA - lg + LN2 + log((double)nh / (double)nh1) + log((double)cnt / (double)mrev);
+            } else {
+                st[2]++;
+                uB = x[B]; uC = x[C];
+                const double wB = log(uB) - LAB[t], wC = log(uC) - LAC[t];
+                const double v = 0.5 * (wB - wC), zA = 0.5 * (wB + wC), sd = sm_sd(zA, csq[A], smc, sigma, smax);
+                uA = exp(zA);
+                if (!(uA > 0.0) || !isfinite(uA)) continue;
+                const double lpA = ss_on_lp(A, uA, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                if (lpA == -INFINITY) continue;
+                const double lpB = ss_on_lp(B, uB, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                const double lpC = ss_on_lp(C, uC, LODk, SBIN, ZLO, KU, LLO, LHI, SC, zlo, zhi, gam);
+                int64_t srev = 0;             /* the reverse split's choices: A's triples with B' and C' off after it */
+                for (int64_t p = AP[A]; p < AP[A + 1]; p++) {
+                    const int64_t b2 = TB[p], c2 = TC[p];
+                    const int onb = b2 == A ? 1 : (b2 == B || b2 == C) ? 0 : x[b2] > 0.0;
+                    const int onc = c2 == A ? 1 : (c2 == B || c2 == C) ? 0 : x[c2] > 0.0;
+                    if (!onb && !onc) srev++;
+                }
+                const int64_t nh1 = nh - (INH[C] ? 1 : 0);   /* B out, C out if it is in H, A in */
+                const double lg = -0.5 * v * v / (sd * sd) - log(sd) - HL2PI;
+                lr = lpA - lpB - lpC + lg - LN2 + log((double)nh / (double)nh1) + log((double)cnt / (double)srev);
+            }
+            const int64_t cols[3] = {A, B, C};
+            const double dx[3] = {split ? -uA : uA, split ? uB : -uB, split ? uC : -uC};
+            const int64_t nt = sm_rows(indptr, indices, data, cols, dx, dv, tl, mk);
+            const double ll = sm_loglik(nt, tl, dv, r, NLIK, s2, RLO, RHI, SL2, SH2, LW, LWL, LD, DY, PM);
+            if (ll > -INFINITY && log(unif(s)) < lr + ll) {
+                for (int64_t u = 0; u < nt; u++) r[tl[u]] += dv[tl[u]];
+                if (split) {
+                    x[A] = 0.0; x[B] = uB; x[C] = uC;
+                    { const int64_t pa = pos[A], last = onl[--nh]; onl[pa] = last; pos[last] = pa; }
+                    pos[B] = nh; onl[nh++] = B;
+                    if (INH[C]) { pos[C] = nh; onl[nh++] = C; }
+                    if (cn) { cn[SBIN[A]]--; cn[SBIN[B]]++; cn[SBIN[C]]++; }
+                    st[1]++;
+                } else {
+                    x[A] = uA; x[B] = 0.0; x[C] = 0.0;
+                    { const int64_t pb = pos[B], last = onl[--nh]; onl[pb] = last; pos[last] = pb; }
+                    if (INH[C]) { const int64_t pc = pos[C], last = onl[--nh]; onl[pc] = last; pos[last] = pc; }
+                    pos[A] = nh; onl[nh++] = A;
+                    if (cn) { cn[SBIN[A]]++; cn[SBIN[B]]--; cn[SBIN[C]]--; }
+                    st[3]++;
+                }
+            }
+            for (int64_t u = 0; u < nt; u++) mk[tl[u]] = 0;
+        }
+    }
+    free(onl); free(pos); free(dv); free(tl); free(mk);
+}
+
 /* ---- transfer moves: exact draws along fixed directions v (library from build_transfers.py).
    The line m + t v is limited by the walls m >= 0 (and m <= hi) to t in [tmin, tmax].  It is sampled in the logit
    coordinate s = log((t - tmin) / (tmax - t)), which resolves both ends logarithmically, so a draw can carry a rate
@@ -1796,6 +1990,9 @@ def build_kernel():
     L.kernel_consts.restype = None
     L.swap_run.argtypes = [I] * 3 + [P] * 4 + [I] + [P] * 4 + [D] + [P] * 6 + [P] * 4 + [P] + [P, P] + [P] + [P, I] + [P] * 6 + [D] * 3 + [P, D, P, P]
     L.swap_run.restype = None
+    L.splitmerge_run.argtypes = ([I] * 3 + [P] * 4 + [D, I] + [P] * 9 + [I, D, D] + [P] * 4 + [P] * 6 + [P] + [P, P] + [P, I]
+                                 + [P] * 6 + [D] * 3 + [P])
+    L.splitmerge_run.restype = None
     L.transfer_run.argtypes = [I] * 4 + [P] * 9 + [D, I, D, D, D] + [P] * 4
     L.transfer_run.restype = None
     _LIB = L
@@ -1838,6 +2035,7 @@ class Target:
         self.rlo = self.rhi = None                 # --band, --positive: each row's residual kept within [rlo, rhi]
         self.pass_end = None                       # column_passes: where each column's likelihood passes end (None: its end)
         self.ss_fold = None                        # column_passes: the summed slip rates' rows folded into the slip-rate rows
+        self.sm = None                             # --split-merge: the triples and settings (set_split_merge)
         if logbox is not None:
             a10, b10, se10 = map(float, logbox)
             self.pkind = 1
@@ -2282,6 +2480,73 @@ def swaps_c(lib, T, X, R, rng, nacc, threads=1, LOD=None, KC=None, CNT=None):
                      None if not xb else _ptr(KC[0]), None if not xb else _ptr(KC[1]), None if not xb else _ptr(KC[2]),
                      T.zlo, T.zhi, T.gam, None if CNT is None or not xb else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8),
                      float(getattr(T, 'swap_frac', 1.0)), *lwsub)
+    if len(groups) == 1:
+        work(groups[0])
+    else:
+        th = [threading.Thread(target=work, args=(g,)) for g in groups]
+        [t.start() for t in th]
+        [t.join() for t in th]
+
+
+def set_split_merge(T, TA, TB, TC, lab, lac, nprop, scale=1.0, smax=1.0):
+    """--split-merge: the kernel's arrays for the moves (splitmerge_run) on T.sm: the triples (A, B, C) as columns of T, with
+    LAB = ln(alpha s_A / s_B) and LAC = ln(beta s_A / s_C) in the sampler's units (alpha = D_A / D_B, beta = D_A / D_C, s
+    the columns' scales), sorted by A (AP: each column's triples as A), each column's as B (BP, BL), and the columns that
+    are A or B in any (INH); nprop proposals per chain per sweep, the deviation's sd scale (SMC) and cap (SMAX)."""
+    TA, TB, TC = (np.asarray(v, np.int64) for v in (TA, TB, TC))
+    if not (len(TA) == len(TB) == len(TC) == len(lab) == len(lac)):
+        raise ValueError('split/merge: the triples\' arrays differ in length')
+    if len(TA) and (min(TA.min(), TB.min(), TC.min()) < 0 or max(TA.max(), TB.max(), TC.max()) >= T.n):
+        raise ValueError('split/merge: a triple names a column outside the problem')
+    if ((TA == TB) | (TA == TC) | (TB == TC)).any():
+        raise ValueError('split/merge: a triple with a column twice')
+    if not (nprop >= 1 and scale > 0 and smax > 0) or not np.isfinite(np.r_[lab, lac]).all():
+        raise ValueError('split/merge: give at least one proposal, a positive scale and cap, and finite ratios')
+    o = np.lexsort((TC, TB, TA))
+    TA, TB, TC, lab, lac = TA[o], TB[o], TC[o], np.asarray(lab, float)[o], np.asarray(lac, float)[o]
+    AP = np.zeros(T.n + 1, np.int64)
+    AP[1:] = np.cumsum(np.bincount(TA, minlength=T.n))
+    BL = np.argsort(TB, kind='stable')
+    BP = np.zeros(T.n + 1, np.int64)
+    BP[1:] = np.cumsum(np.bincount(TB, minlength=T.n))
+    INH = np.zeros(T.n, np.uint8)
+    INH[TA] = 1
+    INH[TB] = 1
+    T.sm = dict(TA=np.ascontiguousarray(TA, np.int32), TB=np.ascontiguousarray(TB, np.int32),
+                TC=np.ascontiguousarray(TC, np.int32), LAB=np.ascontiguousarray(lab), LAC=np.ascontiguousarray(lac),
+                AP=AP, BP=BP, BL=np.ascontiguousarray(BL, np.int32), INH=INH, nprop=int(nprop), scale=float(scale),
+                smax=float(smax))
+    return T.sm
+
+
+def splitmerge_c(lib, T, X, R, rng, stats, threads=1, LOD=None, KC=None, CNT=None):
+    """--split-merge: T.sm['nprop'] split/merge proposals per chain (splitmerge_run); stats (K x 4, int64): splits proposed
+    and accepted, merges proposed and accepted, added to. The rows the likelihood scores: those gibbs_run's passes do (rows
+    before n_fit with the column passes, every row without them)."""
+    sm = T.sm
+    K = X.shape[0]
+    SB = LOD.shape[1]
+    if '_sbin' not in sm:
+        sm['_sbin'] = np.ascontiguousarray(T.ss['bins'], np.int64)
+    sbin = sm['_sbin']
+    nlik = T.n_fit if getattr(T, 'pass_end', None) is not None else T.N
+    groups = np.array_split(np.arange(K), max(1, min(threads, K)))
+    shared = (*_lw_ptrs(T), _pm_ptr(T), *_sp_ptrs(T))   # built once, before the threads (see sweeps_c)
+
+    def work(ks):
+        if len(ks) == 0:
+            return
+        k0, k1 = int(ks[0]), int(ks[-1]) + 1
+        lib.splitmerge_run(T.N, T.n, k1 - k0, _ptr(T.indptr), _ptr(T.indices), _ptr(T.data), _ptr(T.csq), T.sigma, nlik,
+                           _ptr(sm['TA']), _ptr(sm['TB']), _ptr(sm['TC']), _ptr(sm['LAB']), _ptr(sm['LAC']), _ptr(sm['AP']),
+                           _ptr(sm['BP']), _ptr(sm['BL']), _ptr(sm['INH']), sm['nprop'], sm['scale'], sm['smax'],
+                           ctypes.c_void_p(X.ctypes.data + k0 * T.n * 8), ctypes.c_void_p(R.ctypes.data + k0 * T.N * 8),
+                           ctypes.c_void_p(rng.ctypes.data + k0 * 32), ctypes.c_void_p(stats.ctypes.data + k0 * 32),
+                           None if T.rlo is None else _ptr(T.rlo), None if T.rhi is None else _ptr(T.rhi), *shared,
+                           _ptr(sbin), SB, ctypes.c_void_p(LOD.ctypes.data + k0 * SB * 8),
+                           None if T.zlo_vec is None else _ptr(T.zlo_vec), None if T.ku_vec is None else _ptr(T.ku_vec),
+                           _ptr(KC[0]), _ptr(KC[1]), _ptr(KC[2]), T.zlo, T.zhi, T.gam,
+                           None if CNT is None else ctypes.c_void_p(CNT.ctypes.data + k0 * SB * 8))
     if len(groups) == 1:
         work(groups[0])
     else:
@@ -2839,8 +3104,10 @@ def seed_states(seed, K):
 
 
 def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=(), out=None, keep_samples=True, verbose=True,
-           swaps=False, transfers=False, hyper_every=None, stream=None, keep_draws=0):
+           swaps=False, transfers=False, hyper_every=None, stream=None, keep_draws=0, split_merge=False):
     """Run K = X0.shape[0] chains.  Records every `thin` sweeps; draws after `burn` sweeps are kept.
+    split_merge (with T.sm, set_split_merge): split/merge moves after each call of the sweeps (each sweep under
+    spike-and-slab), T.sm['nprop'] proposals per chain each time.
     Returns dict of traces; if out is given, writes <out>.npz and (if keep_samples) <out>_samples.npy.
     keep_draws > 0 also keeps that many whole draws (keep_draws / K per chain, evenly spaced over the recorded draws after
     burn-in, all of them if there are fewer) in <out>_kept.npy (float32, one row per draw, in the order recorded) with
@@ -2866,6 +3133,15 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         raise NotImplementedError('the split misfit (--cfm-sliprates) is implemented for spike-and-slab without transfer moves')
     if T.rlo is not None and (transfers or T.pkind == 2):
         raise NotImplementedError('the band is not implemented for transfer moves or the hierarchical prior')
+    split_merge = bool(split_merge and getattr(T, 'sm', None) is not None)
+    smstats = np.zeros((K, 4), np.int64)                 # --split-merge, per chain: splits tried, accepted; merges tried,
+    if split_merge and (backend != 'c' or T.pkind != 3 or T.ss is None or T.mstep is not None or transfers):   # accepted
+        raise NotImplementedError('split/merge moves (--split-merge) need spike-and-slab and the C kernel, without the MFD '
+                                  'steps\' term or transfer moves')
+    if split_merge and getattr(T, 'ss_fold', None) is not None and T.split is not None:
+        nb_, ne_ = int(T.ss_fold['NB']), int(T.ss_fold['NB']) + int(T.ss_fold['NSR'])   # the folded rows are Gaussian with
+        if not (np.all(T.split['L2'][nb_:ne_] == 1.0) and np.all(T.split['H2'][nb_:ne_] == 1.0)):   # weight 1 in the
+            raise NotImplementedError('split/merge moves: the folded summed slip rates\' rows have weights other than 1')   # passes
     H = T.hier
     MUZ, KZ = np.zeros((K, T.n)), np.zeros(K)
     if H is not None:
@@ -2898,6 +3174,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     collapse = SS is not None and bool(SS.get('collapse')) and SS.get('pi') is None   # --collapse: the fractions on
     if collapse and np.ndim(SS['a']) + np.ndim(SS['b']) > 0:                         # integrated out; drawn only to record
         raise NotImplementedError('--collapse takes one Beta(a, b) for every bin')
+    if collapse and split_merge:
+        raise NotImplementedError('split/merge moves (--split-merge) need the fractions on drawn (--fractions-on drawn)')
     if backend == 'c':
         nbf = np.ascontiguousarray(SS['nb'], np.float64) if collapse else None
         lib.ss_collapse(int(collapse), float(SS['a']) if collapse else 1.0, float(SS['b']) if collapse else 1.0,
@@ -3006,6 +3284,8 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             done += ns
             if SS is not None and not collapse:
                 update_pi(counted=backend == 'c')
+            if split_merge:                                  # --split-merge: given the fractions on just drawn (the
+                splitmerge_c(lib, T, X, R, rng, smstats, threads, LOD, KC, CNT)   # counts it changes, CNT, kept current)
             if T.mstep is not None and T.mstep.get('joint'):   # --mfd-gr-tau: each chain's b and level, given its bins
                 mjoint_update(T.mstep, R, g)
             if H is not None:
@@ -3181,6 +3461,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     tr['collapse'] = bool(collapse)
     tr['swap_rate'] = nacc / max(1, n_rec * (len(T.pairs[0]) if swaps else 1)) if swaps else np.zeros(K)
     tr['transfer_stats'] = tstats       # per chain: moves made, moves involving a rate above 1e-6
+    if split_merge:                     # per chain: splits tried (a triple to split into), accepted; merges tried, accepted;
+        tr['split_merge'] = smstats     # of nprop proposals per chain each sweep
+        tr['split_merge_nprop'], tr['split_merge_scale'] = int(T.sm['nprop']), float(T.sm['scale'])
     tr['monitor'] = monitor
     if out:
         extra = {}
@@ -4244,6 +4527,204 @@ def selftest_collapse(backends=('c', 'numpy')):
     return bool(ok)
 
 
+def _grid3_exact(loglik, lo10, sv, bins, nb, ng=301):
+    """Three spike-and-slab rates (Beta(1, 1) on each bin's fraction on, integrated out; each rate's slab log-uniform
+    from 10^lo10 with a soft top at 1, sd sv decades) under the log likelihood loglik(u0, u1, u2) (arrays; 0 for off), by
+    a grid in log10 u: each rate's P(on), E[log10 u | on], and each on/off pattern's probability."""
+    from scipy.special import betaln
+    g = []
+    for l, s in zip(lo10, sv):
+        u = np.linspace(l, min(8 * s, 1.0), ng)
+        ww = np.full(ng, u[1] - u[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(u > 0, np.exp(-u ** 2 / (2 * s ** 2)), 1.0) * ww
+        g.append((u, f / f.sum()))
+    pon, eu, pat = np.zeros(3), np.zeros(3), {}
+    for on in [(a, b, c) for a in (0, 1) for b in (0, 1) for c in (0, 1)]:
+        cnt = np.bincount(np.asarray(bins)[np.array(on, bool)], minlength=len(nb)).astype(float)
+        lp = sum(betaln(1 + cnt[j], 1 + nb[j] - cnt[j]) - betaln(1, 1) for j in range(len(nb)))
+        ax = [(g[i][0], g[i][1]) if on[i] else (np.array([-np.inf]), np.ones(1)) for i in range(3)]
+        m, mu = 0.0, np.zeros(3)
+        for a0 in range(len(ax[0][0])):          # in slices of the first rate's grid
+            U1, U2 = np.meshgrid(10.0 ** ax[1][0], 10.0 ** ax[2][0], indexing='ij')
+            W = ax[0][1][a0] * ax[1][1][:, None] * ax[2][1][None, :] * np.exp(lp)
+            L = np.exp(loglik(np.full(U1.shape, 10.0 ** ax[0][0][a0]), U1, U2)) * W
+            s_ = L.sum()
+            m += s_
+            mu += [s_ * ax[0][0][a0] if on[0] else 0.0, (L.sum(1) @ ax[1][0]) if on[1] else 0.0,
+                   (L.sum(0) @ ax[2][0]) if on[2] else 0.0]
+        pat[on] = m
+        for i in range(3):
+            if on[i]:
+                pon[i] += m
+                eu[i] += mu[i]
+    tot = sum(pat.values())
+    return pon / tot, eu / np.maximum(pon, 1e-300), {k: v / tot for k, v in pat.items()}
+
+
+def selftest_splitmerge(variant='gauss', nprop=4, seed=61, verbose=True, sw=40000):
+    """--split-merge: rupture A and the two ruptures B and C that together are A (B's subsection one of A's two, C's the
+    other; average slips 2, 1.5 and 1.2), spike-and-slab (A alone in its bin, B and C in another; Beta(1, 1) on each bin's
+    fraction on; slabs from 10^-2.5 to a soft top at 1), with the two slip-rate rows (unchanged when A's rate t goes to
+    alpha t on B and beta t on C), a paleo-like row (A and B seen, 1 and 0.7 of their events) and each bin's total, split
+    and merge moves after each sweep (nprop a sweep), against a grid integral: each rate's P(on), E[log10 u | on], and the
+    two arrangements' probabilities, A alone and B with C. variant 'curve': the slip-rate rows split normals (lopsided
+    weights) and the paleo-like row scored by a curve (the paleo tables, scaled out of the Gaussian) with positivity on
+    it, the machinery main() uses at 630k."""
+    print(f'split/merge moves (--split-merge, {variant}): A and B + C, spike-and-slab, vs a grid integral')
+    DA, DB, DC, t0 = 2.0, 1.5, 1.2, 0.3
+    al, be = DA / DB, DA / DC
+    pB, sd_s, sd_p, sd_b, tA, tBC, dp = 0.7, 0.15, 0.2, 0.4, 0.1, 0.9, 0.28
+    L2s, H2s = (0.5, 2.0) if variant == 'curve' else (1.0, 1.0)     # the slip-rate rows' weights below and above
+    G = np.array([[DA, DB, 0.0], [DA, 0.0, DC], [1.0, pB, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 1.0]])
+    d = np.array([DA * t0, DA * t0, dp, tA, tBC])
+    sd = np.array([sd_s, sd_s, sd_p, sd_b, sd_b])
+    lo10, sv = np.full(3, -2.5), np.full(3, 0.1)
+    if variant == 'curve':
+        from paleo_misfit import PALEO_EPS, curve_tables, fit_site, site_misfit
+        best = dp
+        th = fit_site(best, np.array([0.1, 0.17, 0.45, 0.8]), 'log')[0]
+        tab = curve_tables([th], [best], 'log')
+
+    def loglik(u0, u1, u2):
+        U = np.stack([u0, u1, u2])
+        out = np.zeros(u0.shape)
+        for j in range(5):
+            if variant == 'curve' and j == 2:
+                tot = G[2, 0] * u0 + G[2, 1] * u1
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    out -= 0.5 * np.where(tot > 0, site_misfit(th, best, np.log(np.maximum(tot, 1e-300)), 'log'), np.inf)
+                continue
+            e = (np.tensordot(G[j], U, 1) - d[j]) / sd[j]
+            w = np.where(e < 0, L2s, H2s) if j < 2 else 1.0
+            out -= 0.5 * w * e * e
+        return out
+    p_on, e_u, pat = _grid3_exact(loglik, lo10, sv, [1, 0, 0], [2.0, 1.0])
+    Gs, ds = G / sd[:, None], d / sd
+    if variant == 'curve':
+        eps = PALEO_EPS
+        Gs[2], ds[2] = G[2] * eps / sd_p, eps * best / sd_p
+    T = Target(sp.csc_matrix(Gs), ds, 1.0, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+    T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+    T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (sv * LN10) ** 2))
+    T.pkind = 3
+    T.ss = dict(bins=np.array([1, 0, 0], np.int64), B=2, nb=np.array([2.0, 1.0]), a=1.0, b=1.0)
+    if variant == 'curve':
+        T.split = dict(L2=np.ascontiguousarray([L2s, L2s, 1, 1, 1], float), H2=np.ascontiguousarray([H2s, H2s, 1, 1, 1], float))
+        T.set_groups(np.array([2]), np.zeros(0, np.int64), np.zeros(0))
+        pm = dict(I=np.array([-1, -1, 0, -1, -1], np.int32), V0=np.ascontiguousarray(tab['U0'] - np.log(sd_p / eps)),
+                  F=tab['F'], D=tab['DF'], K=tab['KAPPA'], H=tab['H'], NG=tab['NG'], rows=np.array([], np.int64), eps=1.0,
+                  d_data=d, mode='gaussian', b=0.0)
+        T.lw = dict(W=np.zeros(5), LD=np.zeros(5), DY=np.ascontiguousarray(ds), rows=np.array([], np.int64), tau=None, PM=pm)
+    set_split_merge(T, [0], [1], [2], [np.log(al)], [np.log(be)], nprop)
+    K = 8
+    X0 = np.tile([0.3, 0.0, 0.0], (K, 1))
+    X0[K // 2:] = [0.0, al * t0, be * t0]             # half the chains from each arrangement
+    tr = sample(T, X0, sw, sw // 10, 1, 'c', 1, seed, monitor=(0, 1, 2), verbose=False, keep_samples=False,
+                split_merge=True)
+    Mo = tr['mon'][:, sw // 10:, :]
+    ok = True
+    for i, nm in enumerate('ABC'):
+        on = (Mo[:, :, i] > 0).astype(float)
+        pr = on.mean()
+        zp = (pr - p_on[i]) / np.sqrt(max(p_on[i] * (1 - p_on[i]), 1e-12) / max(ess(on), 1.0)) if on.std() > 0 else np.inf
+        uu = np.log10(Mo[:, :, i][Mo[:, :, i] > 0])
+        zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(on) * pr)))
+        ok &= abs(zp) < 4 and abs(zu) < 4
+        if verbose:
+            print(f'   rate {nm}: P(on) {pr:.4f} (exact {p_on[i]:.4f}, z {zp:+.2f}); E[log10 u | on] {uu.mean():.4f} '
+                  f'(exact {e_u[i]:.4f}, z {zu:+.2f})')
+    for key, nm in (((1, 0, 0), 'A alone'), ((0, 1, 1), 'B with C')):
+        ind = np.all((Mo > 0) == np.array(key, bool), axis=2).astype(float)
+        z = (ind.mean() - pat[key]) / np.sqrt(max(pat[key] * (1 - pat[key]), 1e-12) / max(ess(ind), 1.0))
+        ok &= abs(z) < 4
+        if verbose:
+            print(f'   {nm}: {ind.mean():.4f} (exact {pat[key]:.4f}, z {z:+.2f})')
+    st = tr['split_merge'].sum(0)
+    tries = nprop * sw * K
+    if verbose:
+        print(f'   splits: {st[0]:,} tried, {st[1]:,} accepted; merges: {st[2]:,} tried, {st[3]:,} accepted '
+              f'(of {tries:,} proposals)')
+    ok &= bool(st[1] > 0.01 * tries / 2 and st[3] > 0.01 * tries / 2)   # the moves must take part
+    print(f'SELFTEST (split/merge moves, {variant})', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
+
+
+def selftest_splitmerge_counts(nprop=20, seed=67, verbose=True, sw=120000):
+    """--split-merge, the moves' choices: six ruptures on three subsections (1 2 3; 1; 2 3; 1 2; 3; 2) and the four ways
+    they split ((1 2 3) into (1) and (2 3) or into (1 2) and (3); (1 2) into (1) and (2); (2 3) into (2) and (3)), so that
+    the number of triples to choose from, and the number of ruptures to start from (those that are A or B in one, on),
+    change with the state; nearly no data (the prior alone), the ruptures in two bins (Beta(1, 1) on each fraction on) with
+    slabs of their own depths: the patterns on and off against the beta-binomials' exact probabilities, and each rupture's
+    P(on) and E[log10 u | on] against its slab's. A move that miscounted its choices would favour some patterns."""
+    from scipy.special import betaln
+    print('split/merge moves (--split-merge): the choices\' counts, six ruptures and four triples, the prior alone')
+    subs = [(1, 2, 3), (1,), (2, 3), (1, 2), (3,), (2,)]
+    Dv = np.array([2.0, 1.0, 1.6, 1.4, 0.9, 1.1])
+    trip = [(0, 1, 2), (0, 3, 4), (3, 1, 5), (2, 5, 4)]
+    G = np.zeros((3, 6))
+    for i, s in enumerate(subs):
+        G[np.array(s) - 1, i] = 1e-4 * Dv[i]         # slip-rate rows, nearly no weight
+    bins = np.array([0, 1, 1, 0, 1, 1])
+    nb = np.bincount(bins).astype(float)
+    lo10 = np.array([-2.0, -3.0, -2.5, -2.0, -3.0, -2.5])
+    sv = np.full(6, 0.1)
+    pats = np.array([[(m >> i) & 1 for i in range(6)] for m in range(64)], bool)
+    lpp = np.array([sum(betaln(1 + p[bins == b].sum(), 1 + nb[b] - p[bins == b].sum()) - betaln(1, 1) for b in range(2))
+                    for p in pats])
+    ppat = np.exp(lpp - lpp.max())
+    ppat /= ppat.sum()
+    e_u = []
+    for l, s in zip(lo10, sv):                       # each slab's mean log10 u (as _grid3_exact's slabs)
+        u = np.linspace(l, min(8 * s, 1.0), 4001)
+        ww = np.full(len(u), u[1] - u[0])
+        ww[[0, -1]] *= 0.5
+        f = np.where(u > 0, np.exp(-u ** 2 / (2 * s ** 2)), 1.0) * ww
+        e_u.append((f @ u) / f.sum())
+    T = Target(sp.csc_matrix(G), np.zeros(3), 1.0, 0.0, 10.0, logbox=(-3.0, 0.0, 0.0))
+    T.zlo_vec = np.ascontiguousarray(lo10 * LN10)
+    T.ku_vec = np.ascontiguousarray(1.0 / (2.0 * (sv * LN10) ** 2))
+    T.pkind = 3
+    T.ss = dict(bins=bins.astype(np.int64), B=2, nb=nb, a=1.0, b=1.0)
+    ta, tb, tc = (np.array([t[q] for t in trip]) for q in range(3))
+    set_split_merge(T, ta, tb, tc, np.log(Dv[ta] / Dv[tb]), np.log(Dv[ta] / Dv[tc]), nprop)
+    K = 8
+    X0 = np.tile([0.1, 0.0, 0.0, 0.0, 0.0, 0.0], (K, 1))
+    tr = sample(T, X0, sw, sw // 10, 1, 'c', 1, seed, monitor=tuple(range(6)), verbose=False, keep_samples=False,
+                split_merge=True)
+    Mo = tr['mon'][:, sw // 10:, :]
+    on = Mo > 0
+    code = (on * (1 << np.arange(6))).sum(-1)
+    ok, worst = True, (0.0, '')
+    for m in range(64):                               # each pattern's frequency
+        ind = (code == m).astype(float)
+        z = (ind.mean() - ppat[m]) / np.sqrt(ppat[m] * (1 - ppat[m]) / max(ess(ind), 1.0))
+        ok &= abs(z) < 5.0                            # 64 patterns, each rare and its effective draws estimated: 5 sd
+                                                      # (the correct moves' largest |z| 2.5-3.5 over three seeds; a reverse
+                                                      # merge counted in the current state, not the proposed one: 7.2)
+        if abs(z) > abs(worst[0]):
+            worst = (z, f'pattern {"".join("1" if (m >> i) & 1 else "0" for i in range(6))}: {ind.mean():.4f} '
+                        f'(exact {ppat[m]:.4f})')
+    line = []
+    for i in range(6):
+        pon = ppat[pats[:, i]].sum()
+        oi = on[:, :, i].astype(float)
+        zp = (oi.mean() - pon) / np.sqrt(pon * (1 - pon) / max(ess(oi), 1.0))
+        uu = np.log10(Mo[:, :, i][on[:, :, i]])
+        zu = (uu.mean() - e_u[i]) / (uu.std() / np.sqrt(max(1.0, ess(oi) * oi.mean())))
+        ok &= abs(zp) < 4 and abs(zu) < 4
+        line.append(f'{i}: {oi.mean():.3f} (z {zp:+.1f}), {uu.mean():.3f} (z {zu:+.1f})')
+    st = tr['split_merge'].sum(0)
+    if verbose:
+        print('   P(on), E[log10 u | on] (z against exact): ' + '; '.join(line))
+        print(f'   the 64 patterns: largest |z| {abs(worst[0]):.2f}, {worst[1]}')
+        print(f'   splits: {st[0]:,} tried, {st[1]:,} accepted; merges: {st[2]:,} tried, {st[3]:,} accepted '
+              f'(of {nprop * sw * K:,} proposals)')
+    ok &= bool(st[1] > 0.01 * nprop * sw * K / 2 and st[3] > 0.01 * nprop * sw * K / 2)
+    print('SELFTEST (split/merge moves, the choices\' counts)', 'PASSED' if ok else 'FAILED')
+    return bool(ok)
+
+
 def selftest_slipgeo(backends=('c', 'numpy'), b=0.5):
     """--slip-misfit split+log10, built as main() builds it (the rows and targets scaled by 1/sqrt 2, the log10 half through
     the soft band's arrays with sided weights, W = 1/(4 (s ln10)^2) above the target and WL below, s = log10(1 + sd / d) each
@@ -5292,6 +5773,14 @@ def main():
                     help='spike-and-slab: also swap ruptures in different magnitude bins whose columns have cosine above C '
                          '(the notebook: 0.95), with the prior\'s ratio (the bins\' fractions on and slabs) in the acceptance; '
                          'needs cleaning with preliminaries.py --dup-cross-cos for pairs below 0.99')
+    ap.add_argument('--split-merge', type=int, default=0, metavar='N',
+                    help='spike-and-slab: N split/merge proposals per chain after each sweep (0, the default: none), '
+                         'reversible-jump moves between a rupture and the two ruptures that together are it (split_merge.py), '
+                         'with the two\'s rates in proportion to keep every slip-rate row as it is: rate moved between '
+                         'magnitude bins in one step. Exact; needs --rupture-set and the fractions on drawn')
+    ap.add_argument('--split-merge-scale', type=float, default=1.0, metavar='C',
+                    help='--split-merge: the sd of a split\'s deviation from the exact proportion, in ln rate, '
+                         'C sigma / (u_A |G_A|) (about C in the slip-rate rows\' misfit), at most 1 (default C = 1)')
     ap.add_argument('--threads', type=int, default=os.cpu_count() or 1)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--out', default='gibbs_run')
@@ -5304,9 +5793,11 @@ def main():
                     'record numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
     ap.add_argument('--slip-block', default='S', help='row block of slip-rate rows (subsection totals in the running summaries)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
-                    help="exact tests: 'all' (the default) after any change to the sampler, twenty-one verdicts; 'current' only "
-                         "what the notebook's default uses (per-rupture lower edges, the soft top, spike-and-slab, the balance "
-                         "term, swap moves, the band, the column passes with the summed slip rates folded, and swaps across bins), eight verdicts")
+                    help="exact tests: 'all' (the default) after any change to the sampler, thirty verdicts (since 2026-11-24, with "
+                         "the split/merge moves' three); 'current' only what the notebook's default uses (per-rupture lower edges, "
+                         "the soft top, spike-and-slab, the balance term, swap moves, the band, the column passes with the summed "
+                         "slip rates folded, swaps across bins, the collapsed fractions on, the exact slip misfit and its summed "
+                         "densities), thirteen verdicts")
     a = ap.parse_args()
     # fixed since 2026-11-23 (their options removed, the user's request): the diagnostics beside the problem, the slab
     # log-uniform, no hierarchical prior, transfer moves, all-rows positivity (--all-positive, per group, remains) or MFD
@@ -5363,6 +5854,9 @@ def main():
         ok &= selftest_slipgeo()
         ok &= selftest_slipgeo(b=1.0)
         ok &= selftest_fold()
+        ok &= selftest_splitmerge('gauss')
+        ok &= selftest_splitmerge('curve')
+        ok &= selftest_splitmerge_counts()
         sys.exit(0 if ok else 1)
     kept = (a.sweeps - a.burn) // a.thin
     if kept < 4:
@@ -6108,6 +6602,35 @@ def main():
               + ', '.join(f'{np.log10(R_ms[b_] / R_ms[a_]):+.3f}' for a_, b_ in ms_['pairs'])
               + f' decades; the start\'s {s0[0]:.1f}'
               + ('' if np.allclose(s0, s0[0]) else f' (chain 1; {s0.min():.1f}-{s0.max():.1f} over the chains)'))
+    if a.split_merge:                              # --split-merge: the triples, from the rupture set
+        if a.split_merge < 0 or not a.split_merge_scale > 0:
+            raise SystemExit(f'--split-merge {a.split_merge} --split-merge-scale {a.split_merge_scale:g}: give a number of '
+                             'proposals and a positive scale')
+        if not spike_mode or a.fractions_on != 'drawn':
+            raise SystemExit('--split-merge needs spike-and-slab with the fractions on drawn (--fractions-on drawn)')
+        if not a.rupture_set:
+            raise SystemExit('--split-merge needs --rupture-set (the ruptures\' subsections and average slips)')
+        from cru_common import find_rupture_set
+        from split_merge import check_triples, describe, find_triples
+        rd_sm = find_rupture_set(a.rupture_set, search=False)
+        if rd_sm is None:
+            raise SystemExit(f'--rupture-set {a.rupture_set}: no OpenSHA rupture set there (indices.csv, or ruptures/indices.csv)')
+        t_sm = time.time()
+        TA_, TB_, TC_, al_, be_ = find_triples(rd_sm, P['keep_cols'])
+        if not len(TA_):
+            raise SystemExit('--split-merge: no rupture is two others laid end to end')
+        sr_ = np.flatnonzero(np.asarray(P['block']) == list(P['block_names']).index(a.slip_block))
+        q_ = np.sort(np.random.default_rng(0).choice(len(TA_), min(len(TA_), 100_000), replace=False))
+        rel_ = check_triples(P['G'], sr_, TA_[q_], TB_[q_], TC_[q_], al_[q_], be_[q_])   # a sample of them
+        sc_ = np.ones(T.n) if scale is None else np.asarray(scale, np.float64)
+        set_split_merge(T, TA_, TB_, TC_, np.log(al_ * sc_[TA_] / sc_[TB_]), np.log(be_ * sc_[TA_] / sc_[TC_]),
+                        a.split_merge, a.split_merge_scale)
+        print(f'split/merge moves: {a.split_merge} proposals per chain after each sweep (sd scale {a.split_merge_scale:g}); '
+              + describe(TA_, TB_, T.n, rel_, 1e-9).replace('unchanged by each', f'unchanged by each (a sample of {len(q_):,})')
+              + f'; {time.time() - t_sm:.0f} s')
+        if (rel_ > 1e-9).any():
+            print('   (the slip-rate rows are not unchanged by some: slip not uniform along the ruptures? The moves stay '
+                  'exact, but fewer are accepted)')
     mon = []
     if os.path.exists(fprelim):
         pr = np.load(fprelim)
@@ -6167,10 +6690,13 @@ def main():
     hyper_every = a.hyper_every if a.hyper_every is not None else (1 if spike_mode else None)   # fractions on: every sweep
     tr = sample(T, X0, a.sweeps, a.burn, a.thin, a.backend, a.threads, a.seed, mon, a.out, not a.no_samples,
                 swaps=pairs is not None, transfers=dirs is not None, hyper_every=hyper_every, stream=stream,
-                keep_draws=a.keep_draws)
+                keep_draws=a.keep_draws, split_merge=bool(a.split_merge))
+    smt_ = tr['split_merge'].sum(0) if 'split_merge' in tr else None
     print(f'done in {tr["seconds"]:.0f}s -> {a.out}.npz, {a.out}_stream.npz' + ('' if a.no_samples else f', {a.out}_samples.npy')
           + (f', {a.out}_kept.npy (and _kept_index.npy)' if a.keep_draws > 0 else '')
           + (f'; swap acceptance {tr["swap_rate"].mean():.3f}' if pairs is not None else '')
+          + (f'; split/merge: {smt_[1]:,} of {smt_[0]:,} splits and {smt_[3]:,} of {smt_[2]:,} merges tried accepted, '
+             f'of {a.split_merge * a.sweeps * a.chains:,} proposals' if smt_ is not None else '')
           + (f'; transfer moves {tr["transfer_stats"][:, 0].sum()}, of which involving a rate > 1e-6: '
              f'{tr["transfer_stats"][:, 1].sum()}' if dirs is not None else ''))
     report(tr, a.burn, a.thin)
