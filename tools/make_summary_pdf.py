@@ -648,10 +648,10 @@ def main():
          'paleo site with a symmetric sd about its best estimate, though its recurrence-interval PDF is lopsided (its '
          'one-sigma range a median 1.9 times longer below than above) and a Gaussian caps the cost of predicting no events '
          'there; each MFD bin with a set relative uncertainty. Here each is scored in the space its uncertainty was worked '
-         'out in: slip rates by split normals from the NZ Community Fault Model (Seebeck et al., 2023), corrected for their '
-         'timeframes (Coffey et al., accepted); paleo sites by \u22122 ln of their recurrence-interval PDFs in years; MFD '
-         'bins half in rate and half in log10, or, with MFD_GR, by their own PDFs from N and b. The sampler evaluates each '
-         'exactly.')
+         'out in: slip rates by ' + ('their exact' if exact_slip else 'split normals of their') + ' timeframe-corrected '
+         'densities from the NZ Community Fault Model (Seebeck et al., 2023; Coffey et al., accepted); paleo sites by their '
+         'recurrence-interval PDFs in years; MFD bins ' + ('by their own PDFs from N and b.' if mfdgr else
+                                                            'half in rate and half in log10.'))
 
     head('The Gibbs sampler, and why it suits this problem', new_page=True)
     para('A Markov chain Monte Carlo (MCMC) sampler draws a sequence of models whose distribution settles on the '
@@ -942,14 +942,15 @@ def main():
                   'within one and two uncertainties.'), FW * 0.8 if np_phys else FW * 0.6, max_h=15 * cm)
 
     head(f'{SN["model"]}. The model: prior, likelihood' + (' and constraints' if hard or tau or ssum else ''), new_page=True)
-    para(f'<b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
+    para(f'• <b>Prior.</b> Each rupture is either off, with a rate of exactly zero, or on, with a rate that is uniform in log '
          f'rate from 10<super>{floor:g}</super> per year up to its magnitude bin\u2019s target rate (spike-and-slab). The '
          'top is soft, a Gaussian shoulder as wide as the bin\u2019s own uncertainty, since no single rupture can carry more '
          'than its bin\u2019s total. The fraction of ruptures switched on is estimated separately in each bin (uniform prior '
          'on each fraction), so the data decide how many ruptures are active, and the prior puts no pressure on the bin '
-         'totals. <b>Likelihood.</b> Gaussian, exp(−χ²/2) with the stated uncertainties'
+         'totals.<br/>• <b>Likelihood.</b> Gaussian, exp(−χ²/2) with the stated uncertainties, except where the items below '
+         'score a group otherwise'
          + ('.' if not dtm else ', plus a balance term that penalizes a data type predicted all low or all high.')
-         + (f' <b>Band.</b> In addition, '
+         + (f'<br/>• <b>Band.</b> In addition, '
             + (rows_txt(band_g) + ' must lie' if grp else 'every prediction with a positive target (each subsection\u2019s '
                'slip rate, each MFD bin and each paleo rate) must lie')
             + f' within a factor {band:g} of its target, from <i>d</i>/{band:g} to {band:g} '
@@ -957,12 +958,12 @@ def main():
             'few ruptures with others: without it the posterior often leaves such faults with no events at all, since '
             'their weak slip-rate targets tolerate a prediction of zero; with it every subsection must slip at no less '
             f'than 1/{band:g} of its target rate. The factor is a modelling choice the data do not make.' if band else '')
-         + (' <b>Positivity.</b> In addition, '
+         + ('<br/>• <b>Positivity.</b> In addition, '
             + (rows_txt(pos_g) + ' must be above zero' + ('' if allpos else ' (the MFD bins have no such limit)') if grp else
                'every prediction with a positive target (each subsection\u2019s slip rate, each MFD bin and each paleo rate) '
                'must be above zero')
             + ', so at least one rupture is on in each, with no other limit: a hard constraint.' if positive else '')
-         + (f' <b>A soft band.</b> A penalty beside the misfit on each prediction\u2019s ratio to its target, '
+         + (f'<br/>• <b>A soft band.</b> A penalty beside the misfit on each prediction\u2019s ratio to its target, '
             f'\u00bd (log<sub>10</sub>(prediction / target) / {tau:g})\u00b2, so a prediction {dec(tau)} from its target costs as '
             'much as a one-uncertainty miss in \u03c7\u00b2, on '
             + (' and '.join(f'the {k} rows' + (f' ({dec(float(g_soft[k]))} at 1 sd)' if len(soft_g) > 1 else '') for k in soft_g)
@@ -973,19 +974,19 @@ def main():
             'prediction of zero would cost infinitely much, which is why it comes with positivity. It is recorded apart '
             'from \u03c7\u00b2, on \u03c7\u00b2\u2019s scale (twice its share of the negative log posterior), so the fit check stays over the '
             'data alone.' if tau else '')
-         + (' <b>The MFD bins in log10.</b> The bins leave the Gaussian likelihood: each bin\u2019s total is scored instead by '
+         + ('<br/>• <b>The MFD bins in log10.</b> The bins leave the Gaussian likelihood: each bin\u2019s total is scored instead by '
             '((log10 total \u2212 log10 R<sub>j</sub>) / s<sub>j</sub>)\u00b2, s<sub>j</sub> = log10(1 + \u03c3<sub>j</sub>/R<sub>j</sub>), '
             'centred on its target, so a bin 20% high costs a little less than one 20% low; each bin is kept above zero, and '
             'the term is kept exactly by the soft band\u2019s Metropolis steps and recorded apart; \u03c7\u00b2 still counts the '
             'bins\u2019 Gaussian, for comparison.' if mmis == 'log10' else '')
-         + (' <b>The paleo misfit.</b> The paleo rows leave the Gaussian likelihood: each is scored instead by its site\u2019s '
+         + ('<br/>• <b>The paleo misfit.</b> The paleo rows leave the Gaussian likelihood: each is scored instead by its site\u2019s '
             'recurrence-interval PDF from the paleoseismic analysis, \u22122 ln of its density in years, measured from its '
             'minimum, a curve through the site\u2019s 2.275, 15.865, 84.135 and 97.725% points with its mode at '
             '1/bestEstimate exactly (the rupture set\u2019s paleo_constraint_data.json)'
             + (f'; {pm_poor} site(s) fit their quantiles to worse than 0.05 decades' if pm_poor else '')
             + '. The ranges are lopsided, and the Gaussian caps a site’s misfit, so this penalizes paleo rates predicted '
             'well below their targets far more; it is kept exactly by Metropolis steps.' if pmis == 'years' else '')
-         + (' <b>Half linear, half log</b> (MISFIT \'half\'). Every data group is scored by half its linear misfit and half its '
+         + ('<br/>• <b>Half linear, half log</b> (MISFIT \'half\'). Every data group is scored by half its linear misfit and half its '
             'log misfit, the geometric mean of the two densities, so each measurement still counts once: the slip rates by '
             'half their split normals and half a Gaussian in log10(prediction / target), the MFD bins by half their Gaussians '
             'and half a Gaussian in log10, both with the same sds (log10(1 + sd / target) on each side, sd the effective one, '
@@ -994,7 +995,7 @@ def main():
             'decades off, so a prediction an order of magnitude off is unlikely, two far more so, and every prediction is kept '
             'above zero. Each log half is kept exactly by Metropolis steps, and \u03c7\u00b2 as fitted counts both halves.'
             if amis == 'half' else '')
-         + (f' <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
+         + (f'<br/>• <b>Misfit by data group</b> (MISFIT_SLIP {gmis["slip"]!r}, MISFIT_MFD {gmis["mfd"]!r}, MISFIT_PALEO '
             f'{gmis["paleo"]!r}). '
             + '; '.join(dict(zip(gnames[g_], (lin_, log_, half_))).get(gmis[g_], EXACT_TXT if gmis[g_] == 'exact' else str(gmis[g_]))
                         if not (g_ == 'mfd' and mfdgr) else 'the MFD bins by their own PDFs in log rate (MFD_GR, in place of MISFIT_MFD)'
@@ -1011,7 +1012,12 @@ def main():
                              'the paleo rows by half their Gaussians in rate and half their recurrence-interval PDFs in years')))
             + '. A half-and-half group’s score is the geometric mean of its two densities, so each measurement still '
             'counts once; each log part is kept exactly by Metropolis steps.' if mixed else '')
-         + (' <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
+         + ('<br/>• <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
+            'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr), corrected for its slip-rate timeframe '
+            '(CFM_TIMEFRAME; Coffey et al., accepted) and scaled as a whole by ' + f'{srf:g}' + ' (SLIP_RATE_FACTOR, the '
+            'assumed fraction of the slip rate the ruptures take up), and scored by its exact density (below, \u201cHow each '
+            'slip rate is scored\u201d).' if cfm and exact_slip else '')
+         + ('<br/>• <b>Slip rates from the CFM.</b> Each subsection\u2019s slip-rate row is rebuilt from its parent fault\u2019s '
             'line of the NZ Community Fault Model (SR_pref, SR_min, SR_max in mm/yr): a split normal in the slip rate itself, '
             f'scaled as a whole by {srf:g} (SLIP_RATE_FACTOR, the assumed fraction of the slip rate the ruptures take up): '
             + ('each fault’s numbers corrected for its slip-rate timeframe (CFM_TIMEFRAME; Coffey et al., accepted: the '
@@ -1028,8 +1034,8 @@ def main():
             f'(SR_min and SR_max at {cfm_ns:g} sd, times {cfm_fa:g}' + (', the inputs\u2019 doubling' if cfm_fa == 2 else '')
             + '; a side of zero width takes the other\u2019s)')
             + '. The inputs’ Gaussian has one sd for both sides; here each side has its own, and the misfit is '
-            'evaluated exactly in every update.' if cfm else '')
-         + (f' <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins are not scored against cru_D\u2019s '
+            'evaluated exactly in every update.' if cfm and not exact_slip else '')
+         + (f'<br/>• <b>The MFD from N(M\u22655) and b</b> (MFD_GR: {mgr_txt}). The MFD bins are not scored against cru_D\u2019s '
             'targets but by their own probability densities: the on-fault supra-seismogenic MFD that NZSHM22\u2019s OpenSHA code '
             'derives from N(M\u22655) and b (the total Gutenberg\u2013Richter MFD, less the truly off-fault MFD and the '
             'sub-seismogenic on-fault MFD, with the rupture set\u2019s sections, minimum magnitudes and seismicity shares from its '
@@ -1047,12 +1053,12 @@ def main():
             'independently, and the prior’s soft top on each bin takes its upper spread. Each bin’s share of the fit '
             'check is its own misfit’s mean and variance.'
             if mfdgr else '')
-         + (' <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
+         + ('<br/>• <b>A monotonic MFD.</b> Wherever a magnitude bin\u2019s target is not above the next lower bin\u2019s, its '
             'total rate may not be either, in every model'
             + (f'; where a target rises (from the M{rise_cap[0]}\u2013{float(rise_cap[0]) + 0.1:.2f} bin to the next), the upper bin\u2019s total may be at '
                f'most {rise_cap[1]:.3f} times the lower\u2019s, a cap {rise_cap[2]:g} sd above the targets\u2019 own difference, as far as the other pairs\u2019 '
                'limits sit above theirs (the median).' if rise_cap else '.') if mono else '')
-         + (f' <b>The bins jointly.</b> With MFD_GR_TAU the bins are not scored one by one: each chain draws a G-R curve, its b '
+         + (f'<br/>• <b>The bins jointly.</b> With MFD_GR_TAU the bins are not scored one by one: each chain draws a G-R curve, its b '
             'and its level (the N scaling times the magnitude-uncertainty factor) under the same priors MFD_GR\u2019s bin PDFs '
             'come from, drawn exactly given the bins each sweep, and the bins are scored about that curve (NZSHM22\u2019s '
             f'partitioning, its bends included): each pair of neighbouring bins\u2019 step within {mtau:g} decades of the '
@@ -1060,15 +1066,15 @@ def main():
             'and tilt are the curve\u2019s and only its shape is the tolerance\u2019s. The catalogue\u2019s information enters '
             'once, as the priors on b and the level, where independent bins would count a shift in level once per bin.'
             if mtau else '')
-         + (' <b>Tapered slip.</b> Each rupture’s slip on its subsections follows UCERF3’s sqrt-sine taper along '
+         + ('<br/>• <b>Tapered slip.</b> Each rupture’s slip on its subsections follows UCERF3’s sqrt-sine taper along '
             'it by area (SLIP_ALONG_RUPTURE), its average and moment unchanged: less slip near its ends, up to 1.31 times '
             'the average mid-rupture, in the slip-rate rows, the summed slip rates and the plate rate alike.'
             if dsr == 'tapered' else '')
-         + (f' <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
+         + (f'<br/>• <b>The plate rate.</b> In each 8.5-km strip of cross-sections perpendicular to the plate motion '
             f'{pxsec_txt}, the crustal faults must take up {plate_txt} of the Pacific\u2013Australia plate rate, each '
             'fault\u2019s slip vector projected on the local plate motion and averaged over the strip\u2019s '
             f'cross-sections ({tt("plate_rate.txt")}).' if plate else '')
-         + (' <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '
+         + ('<br/>• <b>Summed slip rates.</b> A soft term in the misfit: along every cross-section perpendicular to the plate '
             f'motion {xsec_txt}, the model\u2019s slip along the plate motion added up (each fault\u2019s slip vector projected on '
             'it) should match the targets\u2019 added up, within that sum\u2019s '
             'uncertainty, each subsection counting once in all; each ' + f'{cfg.get("slip_sum_l0", 8.5):g}' + ' km of the '
