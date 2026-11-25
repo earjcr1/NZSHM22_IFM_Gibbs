@@ -631,7 +631,7 @@ def main():
          + (f' (here <i>G</i> has rank {fmt(rank)} for {fmt(n_cols)} unknowns)' if rank and n_cols else '') + '. Each '
          'annealing run lands on a different model depending on its seed (Gerstenberger et al., 2022), but a branch keeps '
          'one. Here the whole set is sampled as a Bayesian posterior: every rate and derived quantity gets a mean and a '
-         'spread, and weighted representative models carry it into hazard.'
+         'spread, and representative draws carry it into hazard.'
          '<br/>• <b>Freedom from the annealing’s settings, weighting and nuances.</b> Combining slip rates, the MFD and paleo '
          'rates into one objective needs a weight on each, set subjectively for the subduction interfaces and, for the '
          'crustal faults, rebalanced as the inversion runs until each fits equally well relative to its uncertainties (by '
@@ -868,7 +868,7 @@ def main():
                  f'{fmt(bu)}, a draw kept every {th})' + (f', planned from a calibration ({plan["sweep_s"]:.3f} s per sweep) '
                  f'to take about {plan["expected_min"]:.0f} min in all' if plan.get('sweep_s') else '')],
                 ['TARGETS', repr(targets), 'the convergence verdict\u2019s targets (check_convergence.py)']]) + [
-           ['REPRESENTATIVES', str(reps), 'weighted representative models selected for hazard']],
+           ['REPRESENTATIVES', str(reps), 'representative draws for hazard, equally weighted, evenly spaced over the kept draws']],
           [3.7 * cm, 3.3 * cm, FW - 7.0 * cm])
 
     head(f'{SN["cleaning"]}. Cleaning and diagnostics', new_page=True)

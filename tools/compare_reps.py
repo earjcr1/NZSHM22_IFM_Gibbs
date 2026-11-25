@@ -91,10 +91,10 @@ class SubsetMarginals:
         self.V = V
         o = np.argsort(V, axis=0, kind='stable')
         self.Vs = np.take_along_axis(V, o, 0)
-        self.rank = np.empty((self.N, self.Q), np.int64)
+        self.rank = np.empty((self.N, self.Q), np.int32)
         np.put_along_axis(self.rank, o, np.arange(self.N)[:, None], 0)
-        self.le = np.empty((self.N, self.Q), np.int64)    # kept draws at or below each draw's value, and below it
-        self.lt = np.empty((self.N, self.Q), np.int64)
+        self.le = np.empty((self.N, self.Q), np.int32)    # kept draws at or below each draw's value, and below it
+        self.lt = np.empty((self.N, self.Q), np.int32)
         for q in range(self.Q):
             self.le[:, q] = np.searchsorted(self.Vs[:, q], V[:, q], 'right')
             self.lt[:, q] = np.searchsorted(self.Vs[:, q], V[:, q], 'left')
