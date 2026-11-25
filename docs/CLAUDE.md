@@ -269,7 +269,9 @@ gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-
 swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
 viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
 (n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
-Kept draws sparse (2026-11-25, the user's request): gibbs.py --keep-draws N|all writes <out>_kept.npz (scipy CSR,
+Rate tables (rate_vectors.csv, nnls_vectors.csv, best_fit_as_fitted's .csv) write exact zeros as '0'
+(cru_common.fmt_rate, 2026-11-25, the user's request; sparsify_kept.py rewrites older ones, checked row for row:
+480-min run 588 -> 104 MB; its dense kept copies removed, the run folder 26 -> 1.9 GB). Kept draws sparse (2026-11-25, the user's request): gibbs.py --keep-draws N|all writes <out>_kept.npz (scipy CSR,
 float32, only the rates on: ~1,500 of 615,700 per draw at 630k, 5,120 draws 61 MB in place of 12.6 GB); 'all' keeps
 every recorded draw after burn-in; the notebook's KEPT_DRAWS = 'all'. Readers go through cru_common.load_kept (either
 format; dense .npy of older runs read in blocks) and kept_draws(z, max_draws) (rate vectors' copy stored as

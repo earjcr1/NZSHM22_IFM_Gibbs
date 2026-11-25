@@ -50,7 +50,7 @@ import scipy.sparse as sp
 from scipy.linalg import qr, qr_delete, qr_insert, solve_triangular
 from scipy.sparse.csgraph import connected_components
 
-from cru_common import (load_colt_sparse, load_vector, save_problem, load_problem, column_norms, describe, detect_bin_rows,
+from cru_common import (fmt_rate, load_colt_sparse, load_vector, save_problem, load_problem, column_norms, describe, detect_bin_rows,
                         check_bin_rows, check_slip_rows, relabel_rows, slip_sections, chi2_expectation, mfd_uncertainty,
                         scale_rows, magnitude_bins)
 
@@ -1005,7 +1005,7 @@ def main():
         with open(f_csv, 'w', newline='') as fh:         # and as a table with the rows of make_tables.py's rate_vectors.csv
             wr = csv.writer(fh)
             wr.writerow(['rupture', 'penalised', 'best_fit'])
-            wr.writerows([i, pen[i], f'{m_orig[i]:.6e}'] for i in range(len(m_orig)))
+            wr.writerows([i, pen[i], fmt_rate(m_orig[i])] for i in range(len(m_orig)))
     for f in (old_vec, old_csv) + ((f_vec, f_csv) if m_nnls is None else ()):
         if os.path.exists(f):                            # an earlier cleaning's best fit would not match this problem
             os.remove(f)

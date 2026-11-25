@@ -35,7 +35,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.optimize import minimize
 
-from cru_common import as_dense, kept_arrays, load_kept, load_problem, load_stream
+from cru_common import as_dense, fmt_rate, kept_arrays, load_kept, load_problem, load_stream
 
 SIZES = (10, 20, 40)
 TOL_TOTAL, TOL_SUB, TOL_Q, SHARE = 0.02, 0.10, 0.15, 0.90      # proposed tolerances (specification; to revisit)
@@ -309,7 +309,7 @@ def main():
     cols = [f'rep_{j + 1:02d}' for j in range(a.k)]
     out = [','.join(head[:cut] + cols)]
     for i, line in enumerate(lines[1:]):
-        out.append(','.join(line.split(',')[:cut] + [f'{v:.6e}' for v in reps[:, i]]))
+        out.append(','.join(line.split(',')[:cut] + [fmt_rate(v) for v in reps[:, i]]))
     with open(vec + '.csv', 'w', newline='') as f:
         f.write(term.join(out) + term)
     with open(os.path.join(out_dir, 'representatives.csv'), 'w', newline='') as f:

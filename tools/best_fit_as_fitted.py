@@ -37,7 +37,7 @@ import time
 import numpy as np
 from scipy.optimize import minimize
 
-from cru_common import load_problem, misfit_log_weight, report_to, slip_log_sds, split_weights
+from cru_common import fmt_rate, load_problem, misfit_log_weight, report_to, slip_log_sds, split_weights
 
 LN10 = np.log(10.0)
 
@@ -512,7 +512,7 @@ def main():
     with open(out + '.csv', 'w') as fh:
         fh.write('rupture,penalised,best_fit_as_fitted\n')
         pen = z0['penalised'] if 'penalised' in z0.files else np.zeros(len(full), int)
-        fh.writelines(f'{i},{int(pen[i])},{full[i]:.6e}\n' for i in range(len(full)))
+        fh.writelines(f'{i},{int(pen[i])},{fmt_rate(full[i])}\n' for i in range(len(full)))
     print(f'   wrote {out}.npz, {out}.csv and {out}_report.txt')
 
 

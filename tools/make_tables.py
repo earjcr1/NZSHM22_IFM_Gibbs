@@ -29,7 +29,7 @@ import os
 
 import numpy as np
 
-from cru_common import load_problem, load_stream, stream_quantiles, to_original, prelim_path, report_to
+from cru_common import fmt_rate, load_problem, load_stream, stream_quantiles, to_original, prelim_path, report_to
 
 RATE_QS = (0.02275, 0.15865, 0.5, 0.84135, 0.97725)    # the -2, -1, 0, +1, +2 sigma points of a Gaussian
 
@@ -123,7 +123,7 @@ def write_rate_vectors(runs, prob, path):
         wr = csv.writer(f)
         wr.writerow(['rupture', 'penalised'] + list(cols))
         for i in range(len(pen)):
-            wr.writerow([i, pen[i]] + [f'{v[c][i]:.6e}' for c in cols])
+            wr.writerow([i, pen[i]] + [fmt_rate(v[c][i]) for c in cols])
     np.savez(path + '.npz', penalised=pen, **{c.replace('.', '_'): v[c] for c in cols})
     return path + '.csv'
 

@@ -1381,6 +1381,12 @@ def run_predictions(folder, rows, n_rows, scale, combine=None):
     return (np.concatenate(Y), used) if Y else (None, [])
 
 
+def fmt_rate(v):
+    """A rate as the rate tables write it (rate_vectors.csv, nnls_vectors.csv): '0' for an exact zero (since 2026-11-25,
+    the user's request: most entries are zeros, '0.000000e+00' before), otherwise six significant digits."""
+    return '0' if v == 0 else f'{v:.6e}'
+
+
 def dense_to_csr(D, block=256):
     """A dense draws x ruptures array (a memory map, say) as a CSR matrix of its nonzero rates (float32), in blocks."""
     import scipy.sparse as sp

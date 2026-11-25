@@ -11,6 +11,10 @@ with the draws as kept_data / kept_indices / kept_indptr / kept_shape (every oth
 way, and keeps the old file as rate_vectors_dense_backup.npz. The dense <stem>_kept.npy and the backup are removed only
 with --remove-dense; every script reads either format (cru_common.load_kept, kept_draws) and prefers the sparse one.
 At 630,000 ruptures 5,120 draws take about 60 MB in place of 12.6 GB (twice: the run's and the rate vectors' copies).
+
+It also rewrites rate_vectors.csv (and nnls/nnls_vectors.csv beside the folder) with every exact zero as '0' (as the
+writers do since 2026-11-25; '0.000000e+00' before), checked to hold the same values, row for row, before it replaces
+the file; at 630,000 ruptures with 64 representatives, 590 MB becomes a fraction of that.
 """
 import argparse
 import glob
@@ -55,6 +59,35 @@ def to_csr_checked(D):
             raise SystemExit(f'rows {a}-{a + len(blk)}: the sparse copy differs')
         parts.append(M)
     return sp.vstack(parts, format='csr')
+
+
+ZERO = '0.000000e+00'
+
+
+def rewrite_csv(path):
+    """Rewrite a rate table with its exact zeros as '0', checked; returns (old size, new size) or None if unchanged."""
+    tmp = path + '.tmp'
+    changed = False
+    with open(path, newline='') as fi, open(tmp, 'w', newline='') as fo:
+        for n_, line in enumerate(fi):
+            if n_ == 0:
+                fo.write(line)
+                continue
+            end = '\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
+            old = line[:len(line) - len(end)].split(',')
+            new = ['0' if (v == ZERO or v == '-' + ZERO) else v for v in old]
+            if new != old:
+                changed = True
+                if [float(x) for x in new[2:]] != [float(x) for x in old[2:]] or new[:2] != old[:2]:
+                    os.remove(tmp)
+                    raise SystemExit(f'{path}, line {n_ + 1}: the rewritten values differ')
+            fo.write(','.join(new) + end)
+    if not changed:
+        os.remove(tmp)
+        return None
+    old_size = os.path.getsize(path)
+    os.replace(tmp, path)
+    return old_size, os.path.getsize(path)
 
 
 def main():
@@ -105,6 +138,15 @@ def main():
         freed += os.path.getsize(backup)
         os.remove(backup)
         print(f'removed {backup}')
+    for csv_ in (os.path.join(a.folder, 'rate_vectors.csv'),
+                 os.path.join(os.path.dirname(os.path.abspath(a.folder)), 'nnls', 'nnls_vectors.csv')):
+        if os.path.exists(csv_):
+            r_ = rewrite_csv(csv_)
+            if r_ is None:
+                print(f'{csv_}: no zeros written in full')
+            else:
+                freed += r_[0] - r_[1]
+                print(f'rewrote {csv_} with its zeros as 0: {r_[0] / 1e6:,.0f} MB -> {r_[1] / 1e6:,.0f} MB, checked row for row')
     if freed:
         print(f'freed {freed / 1e9:.1f} GB')
 
