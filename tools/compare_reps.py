@@ -5,7 +5,8 @@
                            [--outdir DIR] [--n-null 400] [--seed 0] [--slip-block S] [--bins-block MFD]
 
 RUN: the replicate runs select_draws.py pooled, in the same order (each <RUN>_kept.npy and _kept_index.npy). The
-representatives and their weights come from representatives.csv beside the rate vectors (select_draws.py's output).
+representatives and their weights come from representatives.csv beside the rate vectors (select_draws.py's output), or
+from --reps (the same columns: run, chain, record, weight), to judge other weights or choices.
 Each representative is itself one of the kept draws, so alone it is a genuine posterior draw; the question is whether
 the set, with its weights, reproduces the posterior's distribution, not just its means.
 
@@ -76,6 +77,89 @@ class Marginals:
         return np.cumsum(w[self.order[:, q]])
 
 
+class SubsetMarginals:
+    """Each quantity's kept draws sorted once; the KS and Wasserstein distances of a weighted subset of them (idx,
+    weights w) against all of them, from the subset's K draws alone: between two of its values the subset's cumulative
+    distribution is flat and the kept draws' rises, so the largest gap lies at the subset's values (each tie group's
+    end, against the share of kept draws at or below it, and its start, against the share below), and the area
+    between them follows from the kept draws' integrated cumulative distribution G. The same values as Marginals.stats
+    (to rounding), in K log K per quantity rather than N: every recorded draw can be kept since 2026-11-25. V: draws x
+    quantities."""
+
+    def __init__(self, V):
+        self.N, self.Q = V.shape
+        self.V = V
+        o = np.argsort(V, axis=0, kind='stable')
+        self.Vs = np.take_along_axis(V, o, 0)
+        self.rank = np.empty((self.N, self.Q), np.int64)
+        np.put_along_axis(self.rank, o, np.arange(self.N)[:, None], 0)
+        self.le = np.empty((self.N, self.Q), np.int64)    # kept draws at or below each draw's value, and below it
+        self.lt = np.empty((self.N, self.Q), np.int64)
+        for q in range(self.Q):
+            self.le[:, q] = np.searchsorted(self.Vs[:, q], V[:, q], 'right')
+            self.lt[:, q] = np.searchsorted(self.Vs[:, q], V[:, q], 'left')
+        self.G = np.zeros_like(self.Vs)                   # the integral of the kept draws' cumulative distribution
+        self.G[1:] = np.cumsum(np.arange(1, self.N)[:, None] / self.N * np.diff(self.Vs, axis=0), axis=0)
+        sd = V.std(0)
+        self.sd = np.where(sd > 0, sd, np.inf)
+
+    def stats(self, idx, w):
+        N, Q = self.N, self.Q
+        cq = np.arange(Q)
+        vals = self.V[idx]
+        o = np.argsort(vals, axis=0, kind='stable')
+        sv = np.take_along_axis(vals, o, 0)
+        sw = np.asarray(w, float)[o]
+        cw = np.cumsum(sw, 0)
+        cwp = cw - sw
+        le = np.take_along_axis(self.le[idx], o, 0) / N
+        lt = np.take_along_axis(self.lt[idx], o, 0) / N
+        last = np.ones_like(sv, bool)
+        last[:-1] = sv[1:] != sv[:-1]
+        first = np.ones_like(sv, bool)
+        first[1:] = sv[1:] != sv[:-1]
+        ks = np.maximum(np.where(last, np.abs(cw - le), 0.0), np.where(first, np.abs(cwp - lt), 0.0)).max(0)
+        Gs = self.G[np.take_along_axis(self.rank[idx], o, 0), cq]
+        area = Gs[0].copy()                                # below the subset's least value: its distribution is 0
+        area += (self.Vs[-1] - sv[-1]) - (self.G[-1] - Gs[-1])   # above its greatest: 1
+        if len(sv) > 1:
+            a_, b_, Ga, Gb, c = sv[:-1], sv[1:], Gs[:-1], Gs[1:], cw[:-1]
+            j = np.clip(np.ceil(c * N - 1e-9).astype(np.int64) - 1, 0, N - 1)   # the first kept value where theirs >= c
+            xs_ = self.Vs[j, cq]
+            Gx = self.G[j, cq]
+            lo_, hi_ = xs_ < a_, xs_ > b_
+            xs_ = np.where(lo_, a_, np.where(hi_, b_, xs_))
+            Gx = np.where(lo_, Ga, np.where(hi_, Gb, Gx))
+            area += (c * (xs_ - a_) - (Gx - Ga) + (Gb - Gx) - c * (b_ - xs_)).sum(0)
+        return ks, area / self.sd
+
+
+class Energy:
+    """Energy distance between a weighted subset of the kept draws and all of them, in Z (draws x features): with all
+    the draws' distances when there are at most EN_MAX, else against a fixed random EN_MAX of them (every recorded draw
+    can be kept since 2026-11-25; the draws x draws distances would not fit)."""
+
+    def __init__(self, Z, seed):
+        self.Z = Z
+        N = len(Z)
+        self.ref = np.arange(N) if N <= EN_MAX else np.sort(np.random.default_rng(seed + 7).choice(N, EN_MAX, replace=False))
+        D = distances(Z[self.ref])
+        self.rr = D.mean()
+        self.full = D if N <= EN_MAX else None
+        self.rowmean = D.mean(1) if N <= EN_MAX else None
+
+    def __call__(self, idx, w):
+        if self.full is not None:
+            return 2.0 * (w @ self.rowmean[idx]) - w @ self.full[np.ix_(idx, idx)] @ w - self.rr
+        Zi = self.Z[idx]
+        g_i, g_r = (Zi ** 2).sum(1), (self.Z[self.ref] ** 2).sum(1)
+        Dxr = np.sqrt(np.maximum(g_i[:, None] + g_r[None, :] - 2.0 * Zi @ self.Z[self.ref].T, 0.0))
+        return 2.0 * (w @ Dxr.mean(1)) - w @ distances(Zi) @ w - self.rr
+
+
+EN_MAX = 6000                 # kept draws beyond which the energy distance takes a random reference set of this many
+
+
 def energy(D, rowsum, total, idx, w):
     """Energy distance between the weighted points idx (weights w) and all N points (equal weights), from their
     distance matrix D: 2 E|X - Y| - E|X - X'| - E|Y - Y'|."""
@@ -113,6 +197,8 @@ def main():
     ap.add_argument('--vectors', default=None, help='rate vectors, path without extension (default: <folder of the '
                     'first run>/rate_vectors); representatives.csv is read from its folder')
     ap.add_argument('--outdir', default=None)
+    ap.add_argument('--reps', default=None, help='the representatives to judge, a CSV with representatives.csv\'s run, chain, '
+                    'record and weight columns (default: representatives.csv beside the rate vectors)')
     ap.add_argument('--n-null', type=int, default=400, help='random sets of K draws for the baseline (default 400)')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--slip-block', default='S')
@@ -142,10 +228,12 @@ def main():
         bnames = [f'bin {j + 1}' for j in range(B)]
 
     # ---- the kept draws, pooled as select_draws.py pools them, and the representatives among them
+    from cru_common import as_dense, load_kept
     src, Xs = [], []
     for r_i, run in enumerate(a.runs):
-        X = np.load(run + '_kept.npy', mmap_mode='r')
-        idx = np.load(run + '_kept_index.npy')
+        X, idx = load_kept(run)                          # sparse (CSR), one row per draw
+        if X is None:
+            raise SystemExit(f'{run}: no kept draws (gibbs.py --keep-draws)')
         src.append(np.column_stack([np.full(len(idx), r_i), idx]))
         Xs.append(X)
     src = np.concatenate(src)
@@ -155,16 +243,17 @@ def main():
     tot = np.empty(N)
     c = 0
     for X in Xs:
-        for c0 in range(0, len(X), 256):
-            Xc = np.asarray(X[c0:c0 + 256], np.float64)
-            k = len(Xc)
-            RS[c:c + k], RB[c:c + k], tot[c:c + k] = (inc_s @ Xc.T).T, (inc_b @ Xc.T).T, Xc.sum(1)
+        for c0 in range(0, X.shape[0], 1000):
+            Xc = X[c0:c0 + 1000].T.astype(np.float64)
+            k = Xc.shape[1]
+            RS[c:c + k], RB[c:c + k] = as_dense(inc_s @ Xc).T, as_dense(inc_b @ Xc).T
+            tot[c:c + k] = np.asarray(Xc.sum(0)).ravel()
             if Bf is not None:
-                RF[c:c + k] = (Bf @ Xc.T).T
+                RF[c:c + k] = as_dense(Bf @ Xc).T
             c += k
     runs_n = [os.path.normpath(r) for r in a.runs]
     rep_idx, w = [], []
-    with open(os.path.join(vdir, 'representatives.csv')) as f:
+    with open(a.reps or os.path.join(vdir, 'representatives.csv')) as f:
         for row in csv.DictReader(f):
             r_i = runs_n.index(os.path.normpath(row['run'])) if os.path.normpath(row['run']) in runs_n else None
             if r_i is None:
@@ -180,11 +269,11 @@ def main():
     K = len(rep_idx)
     ess = 1.0 / np.sum(w ** 2)
     rv = np.load(vec + '.npz', mmap_mode='r')
-    if 'rep' in rv.files:                                # the stored representatives must be these kept draws
+    if 'rep' in rv.files and not a.reps:                                # the stored representatives must be these kept draws
         keep_c = np.asarray(P['keep_cols'])
         r0 = np.asarray(rv['rep'][0], np.float64)[keep_c]
         r_i = int(src[rep_idx[0], 0])
-        x0 = np.asarray(Xs[r_i][rep_idx[0] - int(np.flatnonzero(src[:, 0] == r_i)[0])], np.float64)
+        x0 = as_dense(Xs[r_i][rep_idx[0] - int(np.flatnonzero(src[:, 0] == r_i)[0])]).astype(np.float64).ravel()
         if not np.allclose(r0, x0, rtol=1e-6, atol=0):
             raise SystemExit('the stored first representative is not the kept draw representatives.csv names')
     print(f'{N} kept draws, {K} representatives (effective {ess:.1f}); loaded in {time.time() - t0:.0f} s', flush=True)
@@ -193,7 +282,8 @@ def main():
     groups = [('total rate', tot[:, None], None), ('magnitude bins', RB, None), ('subsections', RS, None)]
     if RF is not None:
         groups.append(('named faults', RF, None))
-    M = {name: Marginals(V) for name, V, _ in groups}
+    M = {name: SubsetMarginals(V) for name, V, _ in groups}
+    Mfig = {'named faults': Marginals(RF)} if RF is not None else {}      # the figure's cumulative distributions
     rate_w = {name: V.mean(0) / max(V.mean(0).sum(), 1e-300) for name, V, _ in groups}
     live = {name: V.std(0) > 0 for name, V, _ in groups}
 
@@ -206,7 +296,7 @@ def main():
         out = {}
         v = wvec(idx, ww)
         for name, V, _ in groups:
-            ks, w1 = M[name].stats(v)
+            ks, w1 = M[name].stats(idx, ww)
             L = live[name]
             rw = rate_w[name][L] / rate_w[name][L].sum()
             out[name] = dict(ks=ks, w1=w1, ks_med=float(np.median(ks[L])), ks_rw=float(rw @ ks[L]),
@@ -219,15 +309,13 @@ def main():
         s = Z.std(0)
         Z = (Z[:, s > 0] - Z[:, s > 0].mean(0)) / s[s > 0]
         return Z / np.sqrt(Z.shape[1])                   # per dimension, so the two groups' sizes compare
-    D_s, D_b = distances(stdlog(RS)), distances(stdlog(RB))
-    rs_s, rs_b = D_s.sum(1), D_b.sum(1)
-    tt_s, tt_b = rs_s.sum(), rs_b.sum()
+    E_s, E_b = Energy(stdlog(RS), a.seed), Energy(stdlog(RB), a.seed)
     eq = np.full(N, 1.0 / N)
     C_f = wcorr(RF, eq) if RF is not None else None
     C_b = wcorr(RB, eq)
 
     def joint(idx, ww):
-        out = dict(energy_s=energy(D_s, rs_s, tt_s, idx, ww), energy_b=energy(D_b, rs_b, tt_b, idx, ww),
+        out = dict(energy_s=E_s(idx, ww), energy_b=E_b(idx, ww),
                    corr_b=offdiag_rms(wcorr(RB[idx], ww), C_b))
         if RF is not None:
             out['corr_f'] = offdiag_rms(wcorr(RF[idx], ww), C_f)
@@ -256,7 +344,7 @@ def main():
         if env_q is not None:
             v = wvec(idx, ww)
             for q in fault_pick:
-                env_q[q].append(M['named faults'].cdf(v, q))
+                env_q[q].append(Mfig['named faults'].cdf(v, q))
         if (t + 1) % 100 == 0:
             print(f'  baseline: {t + 1} random sets of {K} ({time.time() - t0:.0f} s)', flush=True)
 
@@ -362,7 +450,7 @@ def main():
         ax.set_xlabel('lower = closer to the kept draws', color=MUTED, fontsize=8)
     if RF is not None:
         vw = wvec(rep_idx, w)
-        Mf = M['named faults']
+        Mf = Mfig['named faults']
         for i, q in enumerate(fault_pick):
             ax = fig.add_subplot(gs[1 + i // 3, 4 * (i % 3):4 * (i % 3) + 4])
             xs = np.take_along_axis(RF[:, q][:, None], Mf.order[:, q][:, None], 0).ravel()

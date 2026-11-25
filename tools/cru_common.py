@@ -1381,16 +1381,72 @@ def run_predictions(folder, rows, n_rows, scale, combine=None):
     return (np.concatenate(Y), used) if Y else (None, [])
 
 
-def kept_draws(z):
-    """The kept draws that select_draws.py adds to the rate vectors (z, the loaded .npz): `kept`, one row per draw over
-    the original ruptures (float32), and `kept_index`, each one's run (its position among the runs select_draws.py was
-    given), chain and record. (None, None) without them: REPRESENTATIVES = 0, or a single model's rate vectors. The
-    figures draw them one by one, as x's (draw_xs)."""
-    if 'kept' not in z.files or 'kept_index' not in z.files:
+def dense_to_csr(D, block=256):
+    """A dense draws x ruptures array (a memory map, say) as a CSR matrix of its nonzero rates (float32), in blocks."""
+    import scipy.sparse as sp
+    parts = [sp.csr_matrix(np.asarray(D[a_:a_ + block], np.float32)) for a_ in range(0, D.shape[0], block)]
+    return sp.vstack(parts, format='csr') if parts else sp.csr_matrix(tuple(D.shape), dtype=np.float32)
+
+
+def as_dense(M):
+    """A sparse matrix's or an array's values as a dense array."""
+    return M.toarray() if hasattr(M, 'toarray') else np.asarray(M)
+
+
+def load_kept(stem):
+    """A run's kept draws (gibbs.py --keep-draws): (X, index), X one row per draw over the cleaned problem's ruptures, a
+    CSR matrix (float32), index each draw's chain and record. From <stem>_kept.npz, sparse (since 2026-11-25: at 630,000
+    ruptures a draw has about 1,500 rates on, 0.24%, so 5,120 draws take about 60 MB rather than 12.6 GB), or, for older
+    runs, <stem>_kept.npy, dense, read in blocks (tools/sparsify_kept.py converts them). (None, None) without them."""
+    import scipy.sparse as sp
+    if not os.path.exists(stem + '_kept_index.npy'):
+        return None, None
+    idx = np.load(stem + '_kept_index.npy')
+    if os.path.exists(stem + '_kept.npz'):
+        X = sp.load_npz(stem + '_kept.npz').tocsr()
+    elif os.path.exists(stem + '_kept.npy'):
+        X = dense_to_csr(np.load(stem + '_kept.npy', mmap_mode='r'))
+    else:
+        return None, None
+    if X.shape[0] != len(idx):
+        raise ValueError(f'{stem}: {X.shape[0]} kept draws but {len(idx)} in its index')
+    return X, idx
+
+
+def kept_arrays(K, index):
+    """The kept draws (K, a CSR matrix over the original ruptures) and their index as select_draws.py stores them in the
+    rate vectors' .npz (sparse since 2026-11-25; a dense `kept` before)."""
+    K = K.tocsr()
+    return dict(kept_data=K.data.astype(np.float32), kept_indices=K.indices.astype(np.int32),
+                kept_indptr=K.indptr.astype(np.int64), kept_shape=np.array(K.shape, np.int64), kept_index=np.asarray(index))
+
+
+FIG_MAX_DRAWS = 5120          # the fit figures draw at most this many kept draws, evenly spaced (2026-11-25: every
+                              # recorded draw may be kept now; the x's opacity was tuned with up to 5,120)
+
+
+def kept_draws(z, max_draws=None):
+    """The kept draws that select_draws.py adds to the rate vectors (z, the loaded .npz): one row per draw over the
+    original ruptures, a CSR matrix (float32; stored sparse as kept_data / kept_indices / kept_indptr / kept_shape since
+    2026-11-25, a dense `kept` before), and `kept_index`, each one's run (its position among the runs select_draws.py was
+    given), chain and record. max_draws: at most this many, evenly spaced (the figures pass FIG_MAX_DRAWS). (None, None)
+    without them: REPRESENTATIVES = 0, or a single model's rate vectors. The figures draw them one by one, as x's
+    (draw_xs)."""
+    import scipy.sparse as sp
+    if 'kept_index' not in z.files:
         return None, None
     idx = np.asarray(z['kept_index'])
+    if 'kept_data' in z.files:
+        K = sp.csr_matrix((z['kept_data'], z['kept_indices'], z['kept_indptr']), shape=tuple(int(v) for v in z['kept_shape']))
+    elif 'kept' in z.files:
+        K = dense_to_csr(z['kept'])
+    else:
+        return None, None
+    if max_draws and len(idx) > max_draws:
+        sel = np.unique(np.linspace(0, len(idx) - 1, max_draws).round().astype(int))
+        K, idx = K[sel], idx[sel]
     _X_KEPT[0] = len(idx)                                # draw_xs fades each x by 1 / this many (X_REF_DRAWS: as set)
-    return z['kept'], idx
+    return K, idx
 
 
 def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=None):
@@ -1417,7 +1473,7 @@ def kept_predictions(folder, index, rows, n_rows, scale, combine=None, check=Non
         del y
         if check is not None:                            # the first of the run's kept draws, recomputed
             Gr, K, kc = check
-            yc = Gr @ np.asarray(K[sel[0]], np.float64)[kc]
+            yc = Gr @ as_dense(K[sel[0]]).astype(np.float64).ravel()[kc]
             if not np.allclose(yc, yk[0], rtol=2e-3, atol=1e-5 * max(1.0, float(np.abs(yc).max()))):
                 return None
         yk /= scale

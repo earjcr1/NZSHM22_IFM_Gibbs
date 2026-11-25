@@ -484,7 +484,7 @@ def main():
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--out', default=None, help='report file (default: plate_rate.txt in --run, or beside --problem)')
     a = ap.parse_args()
-    from cru_common import find_rupture_set, load_problem, report_to, kept_draws
+    from cru_common import as_dense, find_rupture_set, load_problem, report_to, kept_draws
     rd = find_rupture_set(a.ruptures, search=False)
     if rd is None:
         raise SystemExit(f'{a.ruptures}: no OpenSHA rupture set (indices.csv, or ruptures/indices.csv)')
@@ -508,7 +508,7 @@ def main():
         with np.load(os.path.join(a.run, 'rate_vectors.npz')) as z:
             vecs['posterior mean'] = np.asarray(z['mean'], float)
             Kd, _ = kept_draws(z)
-    chunks = lambda f: np.vstack([f(np.asarray(Kd[c:c + 250], np.float64)[:, kc]) for c in range(0, len(Kd), 250)])
+    chunks = lambda f: np.vstack([f(as_dense(Kd[c:c + 250][:, kc]).astype(np.float64)) for c in range(0, Kd.shape[0], 250)])
 
     # the plate rate
     cs_p = cs if a.cross_sections == 'all' else cross_sections(rd, P, 'all', a.slip_block)   # the cap: every strip, whatever

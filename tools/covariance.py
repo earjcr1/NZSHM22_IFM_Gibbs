@@ -3,7 +3,8 @@
 
     python covariance.py RUN [RUN ...] --problem cru_clean.npz --ruptures DIR [--outdir DIR]
 
-RUN: a gibbs.py run's output stem (its <RUN>_kept.npy, the whole draws --keep-draws stores; replicates pooled).
+RUN: a gibbs.py run's output stem (its <RUN>_kept.npz, the whole draws --keep-draws stores, or an older run's dense
+<RUN>_kept.npy; replicates pooled).
 
 (1) Over the kept draws: the correlation between the named faults' event rates (each the summed rate of the ruptures
 crossing any of its subsections; the rupture set's named_faults.json, as plot_slip_sections.py has them) and between the
@@ -78,8 +79,9 @@ def main():
 
     P = load_problem(a.problem)
     G = sp.csr_matrix(P['G'])
-    kept = [r + '_kept.npy' for r in a.runs]
-    missing = [k for k in kept if not os.path.exists(k)]
+    from cru_common import load_kept
+    kept = [load_kept(r)[0] for r in a.runs]
+    missing = [r for r, k in zip(a.runs, kept) if k is None]
     if missing:
         raise SystemExit(f'no kept draws: {", ".join(missing)} (gibbs.py --keep-draws)')
     fnames, B = fault_incidence(P, G, a.ruptures, a.slip_block) if a.ruptures else (None, None)
@@ -89,13 +91,12 @@ def main():
 
     # ---- (1) the kept draws: each fault's event rate and each bin's total, draw by draw
     F, Mb = [], []
-    for k in kept:
-        X = np.load(k, mmap_mode='r')
-        for a0 in range(0, X.shape[0], 100):
-            xs = np.asarray(X[a0:a0 + 100], np.float64)
-            Mb.append((Gb @ xs.T).T)
+    for X in kept:                                       # sparse (CSR), one row per draw
+        for a0 in range(0, X.shape[0], 1000):
+            xs = X[a0:a0 + 1000].T.astype(np.float64)
+            Mb.append((Gb @ xs).toarray().T)
             if B is not None:
-                F.append((B @ xs.T).T)
+                F.append((B @ xs).toarray().T)
     Mb = np.vstack(Mb)
     nd = len(Mb)
     say(f'covariance of the posterior\'s rates: {nd:,} kept draws from {len(kept)} run(s); {G.shape[1]:,} ruptures; '

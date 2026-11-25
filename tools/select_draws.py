@@ -4,7 +4,8 @@
     python select_draws.py RUN [RUN ...] [--problem cru_clean.npz] [--vectors DIR/rate_vectors] [--k 20]
                            [--eps 1e-6] [--mu 1] [--seed 0] [--slip-block S] [--bins-block MFD]
 
-Each RUN (a replicate) needs <RUN>_kept.npy and <RUN>_kept_index.npy (gibbs.py --keep-draws), <RUN>.npz (its traces)
+Each RUN (a replicate) needs <RUN>_kept.npz (sparse; or an older run's dense <RUN>_kept.npy) and <RUN>_kept_index.npy
+(gibbs.py --keep-draws), <RUN>.npz (its traces)
 and <RUN>_stream.npz (its running summaries). The rate vectors (<vectors>.csv and .npz, written by the notebook) give
 the exact posterior mean of every rupture's rate; by default they are <folder of the first run>/rate_vectors.
 
@@ -12,13 +13,15 @@ the exact posterior mean of every rupture's rate; by default they are <folder of
 2. Features: each subsection's participation rate in each magnitude bin, P_sb = the sum of m_i over the ruptures in
    bin b that cross subsection s (the slip-rate rows say which subsections a rupture crosses, the bin rows its bin);
    features that are zero in every draw are dropped.
-3. Transform: log10(P + eps), centred; the principal components covering 95% of the variance, at most 50.
+3. Transform: log10(P + eps), centred; the principal components covering 95% of the variance, at most 50 (exact up
+   to 8,000 kept draws, by a randomized SVD beyond: every recorded draw can be kept since 2026-11-25).
 4. Cluster: k-means on the component scores (k-means++ starts, 10 restarts, fixed seed). Each representative is the
    kept draw nearest its cluster centre; its initial weight is its cluster's share of the draws.
 5. Calibrate the weights: stay close to the cluster shares while bringing the weighted mean participation rates to
    the exact posterior means (SLSQP; weights >= 0 summing to 1; mu weighs the pull towards the cluster shares).
 6. Select K = 10, 20 and 40 (and --k if different); write --k: columns rep_01... appended to <vectors>.csv (a rerun
-   replaces them), representatives.csv, kept / kept_index / rep / rep_weight added to <vectors>.npz, and
+   replaces them), representatives.csv, the kept draws (sparse: kept_data, kept_indices, kept_indptr, kept_shape;
+   a dense `kept` before 2026-11-25), kept_index, rep and rep_weight added to <vectors>.npz, and
    select_report.txt with the checks for every size.
 
 The weights are quadrature weights for the posterior as a whole, not probabilities of individual draws; the rate
@@ -32,11 +35,27 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.optimize import minimize
 
-from cru_common import load_problem, load_stream
+from cru_common import as_dense, kept_arrays, load_kept, load_problem, load_stream
 
 SIZES = (10, 20, 40)
 TOL_TOTAL, TOL_SUB, TOL_Q, SHARE = 0.02, 0.10, 0.15, 0.90      # proposed tolerances (specification; to revisit)
 QS = (0.05, 0.16, 0.5, 0.84, 0.95)                           # 16/50/84% judged; 5/95% shown only
+
+
+EXACT_PCA_MAX = 8000          # up to this many kept draws, the exact components (as before 2026-11-25); beyond, randomized
+
+
+def randomized_pcs(Z, k, seed, power=4, over=20):
+    """The leading k left singular vectors and singular values of Z (draws x features, centred), by a randomized SVD
+    (Halko, Martinsson and Tropp, 2011: a Gaussian sketch, `power` subspace iterations, re-orthonormalized each time)."""
+    g = np.random.default_rng(seed)
+    Y = Z @ g.standard_normal((Z.shape[1], k + over)).astype(Z.dtype)
+    Q, _ = np.linalg.qr(Y)
+    for _ in range(power):
+        Q, _ = np.linalg.qr(Z.T @ Q)
+        Q, _ = np.linalg.qr(Z @ Q)
+    Ub, sv, _ = np.linalg.svd(Q.T @ Z, full_matrices=False)
+    return (Q @ Ub)[:, :k], sv[:k]
 
 
 def kmeans(Z, k, seed, restarts=10, iters=300):
@@ -119,6 +138,8 @@ def main():
     ap.add_argument('--seed', type=int, default=0, help='k-means seed (default 0)')
     ap.add_argument('--slip-block', default='S')
     ap.add_argument('--bins-block', default='MFD')
+    ap.add_argument('--exact-pca-max', type=int, default=EXACT_PCA_MAX,
+                    help=f'kept draws up to which the principal components are exact (default {EXACT_PCA_MAX}); randomized beyond')
     a = ap.parse_args()
     vec = a.vectors or os.path.join(os.path.dirname(a.runs[0]), 'rate_vectors')
     out_dir = os.path.dirname(vec) or '.'
@@ -140,28 +161,34 @@ def main():
     F = F[np.flatnonzero(np.diff(F.indptr) > 0)]
 
     # exact posterior means (the rate vectors' mean column) and the pooled kept draws
-    rv = dict(np.load(vec + '.npz'))
+    with np.load(vec + '.npz') as z_:                   # every array but the kept draws, which are replaced below
+        rv = {k_: z_[k_] for k_ in z_.files if not k_.startswith('kept')}
     mean = np.asarray(rv['mean'], np.float64)[keep_c]
     Pbar = F @ mean
     X, src, counts = [], [], []
     for r_i, run in enumerate(a.runs):
-        if not os.path.exists(run + '_kept.npy'):
-            raise SystemExit(f'{run}_kept.npy not found: run gibbs.py with --keep-draws (the notebook: REPRESENTATIVES > 0)')
-        X.append(np.load(run + '_kept.npy'))
-        idx = np.load(run + '_kept_index.npy')
+        Xr, idx = load_kept(run)
+        if Xr is None:
+            raise SystemExit(f'{run}_kept.npz (or .npy) not found: run gibbs.py with --keep-draws (the notebook: REPRESENTATIVES > 0)')
+        X.append(Xr)
         src.append(np.column_stack([np.full(len(idx), r_i), idx]))
         counts.append(len(idx))
-    X, src = np.concatenate(X), np.concatenate(src)
-    N = len(X)
+    X, src = sp.vstack(X, format='csr'), np.concatenate(src)
+    N = X.shape[0]
     Pk = np.empty((N, F.shape[0]))
     for c0 in range(0, N, 256):
-        Pk[c0:c0 + 256] = (F @ X[c0:c0 + 256].astype(np.float64).T).T
+        Pk[c0:c0 + 256] = as_dense(F @ X[c0:c0 + 256].T.astype(np.float64)).T
     live = (Pk > 0).any(0)
     Z = np.log10(Pk[:, live] + a.eps)
     Z -= Z.mean(0)
-    ev, U = np.linalg.eigh(Z @ Z.T)                      # principal components through the draws' Gram matrix
-    ev, U = np.clip(ev[::-1], 0.0, None), U[:, ::-1]
-    frac = np.cumsum(ev) / ev.sum()
+    if N <= a.exact_pca_max:
+        ev, U = np.linalg.eigh(Z @ Z.T)                  # principal components through the draws' Gram matrix
+        ev, U = np.clip(ev[::-1], 0.0, None), U[:, ::-1]
+        frac = np.cumsum(ev) / ev.sum()
+    else:                                                # many draws (every recorded one, since 2026-11-25): the leading
+        U, sv = randomized_pcs(Z, 80, a.seed)            # components by a randomized SVD; the total variance exactly
+        ev = sv ** 2
+        frac = np.cumsum(ev) / float(np.sum(Z.astype(np.float64) ** 2))
     nc = int(min(50, np.searchsorted(frac, 0.95) + 1))
     scores = U[:, :nc] * np.sqrt(ev[:nc])
     del Z
@@ -195,7 +222,7 @@ def main():
         w0 = np.bincount(lab, minlength=K) / N
         A = Pk[rep][:, cal].T / Pbar[cal][:, None]
         w, f0, f1, opt = calibrate(A, w0, a.mu)
-        R = X[rep].astype(np.float64)
+        R = as_dense(X[rep]).astype(np.float64)
         rs, rb, rt = (inc_s @ R.T).T, (inc_b @ R.T).T, R.sum(1)
         e_t = (w @ rt - exact_t) / exact_t
         e_b = (w @ rb - exact_b) / exact_b
@@ -269,7 +296,7 @@ def main():
         raise SystemExit(f'no representatives written: K = {a.k} needs at least {a.k} kept draws')
     r = res[a.k]
     reps = np.zeros((a.k, n_orig), np.float32)
-    reps[:, keep_c] = X[r['rep']]
+    reps[:, keep_c] = as_dense(X[r['rep']])
     raw = open(vec + '.csv', newline='').read()
     term = '\r\n' if '\r\n' in raw else '\n'
     lines = raw.split(term)
@@ -292,9 +319,8 @@ def main():
             s_ = src[r['rep'][j]]
             wr.writerow([cols[j], f'{r["w"][j]:.6f}', f'{r["w0"][j]:.6f}', a.runs[s_[0]], int(s_[1]), int(s_[2]),
                          f'{r["rc"][j]:.2f}', f'{r["rtt"][j]:.6e}'])
-    kept = np.zeros((N, n_orig), np.float32)
-    kept[:, keep_c] = X
-    rv.update(kept=kept, kept_index=src, rep=reps, rep_weight=r['w'])
+    Xo = sp.csr_matrix((X.data, keep_c[X.indices], X.indptr), shape=(N, n_orig))    # the original numbering
+    rv.update(**kept_arrays(Xo, src), rep=reps, rep_weight=r['w'])
     np.savez(vec + '.npz', **rv)
     print(f'wrote {vec}.csv (columns {cols[0]} to {cols[-1]}), {os.path.join(out_dir, "representatives.csv")}, '
           f'{os.path.join(out_dir, "select_report.txt")}; added kept, kept_index, rep and rep_weight to {vec}.npz')

@@ -3103,6 +3103,17 @@ def seed_states(seed, K):
     return np.ascontiguousarray(st)
 
 
+def kept_csr(KD, n):
+    """The kept draws' rows (sample's KD['rows']: indices and float32 rates of the rates on) as a CSR matrix, draws x n;
+    a row never filled (a run stopped early) is empty."""
+    rows = [r if r is not None else (np.zeros(0, np.int32), np.zeros(0, np.float32)) for r in KD['rows']]
+    indptr = np.zeros(len(rows) + 1, np.int64)
+    indptr[1:] = np.cumsum([len(r[0]) for r in rows])
+    ind = np.concatenate([r[0] for r in rows]) if rows else np.zeros(0, np.int32)
+    dat = np.concatenate([r[1] for r in rows]) if rows else np.zeros(0, np.float32)
+    return sp.csr_matrix((dat, ind, indptr), shape=(len(rows), n))
+
+
 def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=(), out=None, keep_samples=True, verbose=True,
            swaps=False, transfers=False, hyper_every=None, stream=None, keep_draws=0, split_merge=False):
     """Run K = X0.shape[0] chains.  Records every `thin` sweeps; draws after `burn` sweeps are kept.
@@ -3110,9 +3121,11 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
     spike-and-slab), T.sm['nprop'] proposals per chain each time.
     Returns dict of traces; if out is given, writes <out>.npz and (if keep_samples) <out>_samples.npy.
     keep_draws > 0 also keeps that many whole draws (keep_draws / K per chain, evenly spaced over the recorded draws after
-    burn-in, all of them if there are fewer) in <out>_kept.npy (float32, one row per draw, in the order recorded) with
-    their chain and record numbers in <out>_kept_index.npy; the record number indexes the traces (chi2, sum_m), and
-    record - burn // thin indexes the stored draws.  It only records: the chains are the same with or without it."""
+    burn-in, all of them if there are fewer), keep_draws < 0 every recorded draw after burn-in, in <out>_kept.npz (a
+    scipy CSR matrix, float32 rates, one row per draw in the order recorded, only the rates on stored: since 2026-11-25;
+    a dense <out>_kept.npy before) with their chain and record numbers in <out>_kept_index.npy; the record number indexes
+    the traces (chi2, sum_m), and record - burn // thin indexes the stored draws.  It only records: the chains are the
+    same with or without it."""
     lib = build_kernel() if backend == 'c' else None
     if backend == 'c' and lib is None:
         backend = 'numpy'
@@ -3255,17 +3268,17 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
         samp = (np.lib.format.open_memmap(f'{out}_samples.npy', 'w+', np.float32, (K, n_keep, T.n)) if out
                 else np.zeros((K, n_keep, T.n), np.float32))
     KD = None                                            # kept draws: a thinned set of whole draws (recording only)
-    if keep_draws and keep_draws > 0 and n_keep > 0:
-        per = [min(n_keep, keep_draws // K + (1 if k < keep_draws % K else 0)) for k in range(K)]
-        if keep_draws // K + (1 if keep_draws % K else 0) > n_keep and verbose:
+    if keep_draws and n_keep > 0:
+        per = ([n_keep] * K if keep_draws < 0 else
+               [min(n_keep, keep_draws // K + (1 if k < keep_draws % K else 0)) for k in range(K)])
+        if keep_draws > 0 and keep_draws // K + (1 if keep_draws % K else 0) > n_keep and verbose:
             print(f'keep-draws: only {n_keep} recorded draws per chain after burn-in, so all of them are kept '
                   f'({sum(per)} of the {keep_draws} asked for)')
         order = sorted((int((j + 0.5) * n_keep / c), k) for k, c in enumerate(per) for j in range(c))   # (draw, chain)
         KD = dict(at={}, index=np.array([(k, n_burn + t) for t, k in order], np.int64).reshape(-1, 2))
         for row, (t, k) in enumerate(order):
             KD['at'].setdefault(t, []).append((k, row))
-        KD['X'] = (np.lib.format.open_memmap(f'{out}_kept.npy', 'w+', np.float32, (len(order), T.n)) if out
-                   else np.zeros((len(order), T.n), np.float32))
+        KD['rows'] = [None] * len(order)                 # each kept draw's rates on (indices, float32 values)
     KC = kernel_consts(lib, T) if backend == 'c' else None   # the kernel's per-rupture constants, once per run
     if backend == 'c':
         _off_bounds_qi(T)                                # --off-bounds' sums and column order (~15 s at 630k): set-up,
@@ -3406,7 +3419,9 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
                 samp[:, rec - n_burn] = Xm
             if KD is not None:
                 for k, row in KD['at'].get(rec - n_burn, ()):
-                    KD['X'][row] = Xm[k]
+                    x32 = Xm[k].astype(np.float32)
+                    nz = np.flatnonzero(x32)
+                    KD['rows'][row] = (nz.astype(np.int32), x32[nz])
             if ST is not None:                           # running summaries of this draw
                 t = rec - n_burn
                 L = np.log10(np.maximum(Xm, stream['clip']))           # clipped log rate, for R-hat and effective draws
@@ -3477,10 +3492,12 @@ def sample(T, X0, sweeps, burn, thin, backend='c', threads=1, seed=0, monitor=()
             np.savez_compressed(f'{out}_stream.npz', **ST, clip=stream['clip'], hist_lo=stream['hist_lo'], hist_w=stream['hist_w'],
                      det=stream['det'], n_keep=n_keep, chains=K)
         if KD is not None:
-            KD['X'].flush()
+            sp.save_npz(f'{out}_kept.npz', kept_csr(KD, T.n), compressed=False)
             np.save(f'{out}_kept_index.npy', KD['index'])
+            if os.path.exists(f'{out}_kept.npy'):          # an earlier run's dense draws under this name: replaced
+                os.remove(f'{out}_kept.npy')
     elif KD is not None:
-        tr['kept'], tr['kept_index'] = KD['X'], KD['index']
+        tr['kept'], tr['kept_index'] = kept_csr(KD, T.n), KD['index']
     return tr
 
 
@@ -5788,9 +5805,11 @@ def main():
                     'summaries in <out>_stream.npz are written either way')
     ap.add_argument('--diag-floor', type=float, default=-10.0, help='log10 rate below which rates count as equal in the running '
                     'R-hat and effective-draw summaries (default -10; the notebook passes its FLOOR)')
-    ap.add_argument('--keep-draws', type=int, default=0, help='keep this many whole draws per run (divided evenly among the chains, '
-                    'evenly spaced over the recorded draws after burn-in) in <out>_kept.npy, float32, with their chain and '
-                    'record numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
+    ap.add_argument('--keep-draws', type=lambda v: -1 if str(v).lower() == 'all' else int(v), default=0,
+                    help='keep this many whole draws per run (divided evenly among the chains, evenly spaced over the recorded '
+                         'draws after burn-in), or every recorded draw after burn-in (all), in <out>_kept.npz, a sparse matrix of '
+                         'the rates on (float32; since 2026-11-25, a dense <out>_kept.npy before), with their chain and record '
+                         'numbers in <out>_kept_index.npy; recording only, the chains are unchanged (select_draws.py uses them)')
     ap.add_argument('--slip-block', default='S', help='row block of slip-rate rows (subsection totals in the running summaries)')
     ap.add_argument('--selftest', nargs='?', const='all', choices=['all', 'current'],
                     help="exact tests: 'all' (the default) after any change to the sampler, thirty verdicts (since 2026-11-24, with "
@@ -6693,7 +6712,7 @@ def main():
                 keep_draws=a.keep_draws, split_merge=bool(a.split_merge))
     smt_ = tr['split_merge'].sum(0) if 'split_merge' in tr else None
     print(f'done in {tr["seconds"]:.0f}s -> {a.out}.npz, {a.out}_stream.npz' + ('' if a.no_samples else f', {a.out}_samples.npy')
-          + (f', {a.out}_kept.npy (and _kept_index.npy)' if a.keep_draws > 0 else '')
+          + (f', {a.out}_kept.npz (and _kept_index.npy)' if a.keep_draws else '')
           + (f'; swap acceptance {tr["swap_rate"].mean():.3f}' if pairs is not None else '')
           + (f'; split/merge: {smt_[1]:,} of {smt_[0]:,} splits and {smt_[3]:,} of {smt_[2]:,} merges tried accepted, '
              f'of {a.split_merge * a.sweeps * a.chains:,} proposals' if smt_ is not None else '')

@@ -7,7 +7,7 @@ panels, and with the magnitudes of the ruptures in their place).
                                 [--outdir DIR] [--faults NAME,NAME,...] [--reference RATES[:LABEL]] (up to twice)
 
 VECTORS: the run's rate vectors (<prior folder>/rate_vectors.npz): the posterior mean's rate of every rupture of the
-rupture set; the kept draws (<prior folder>/main_rep*_kept.npy, select_draws.py's) give each value's distribution.
+rupture set; the kept draws (<prior folder>/main_rep*_kept.npz, or an older run's .npy) give each value's distribution.
 --ruptures: the OpenSHA rupture set (fault_sections.geojson, indices.csv, properties.csv, average_slips.csv,
 named_faults.json); --named: another named-faults file (fault name -> its parent fault sections' IDs).
 
@@ -171,21 +171,21 @@ def main():
     MBm = np.array([B @ mean for B in MB])                  # bins x subsections
     # the kept draws' 2.275-97.725%
     lohi = {}
-    kept_files = sorted(glob.glob(os.path.join(prior, 'main_rep*_kept.npy')))
+    from cru_common import load_kept
+    kept_files = sorted(f[:-len('_kept_index.npy')] for f in glob.glob(os.path.join(prior, 'main_rep*_kept_index.npy')))
     kc = np.asarray(P['keep_cols'])
     if kept_files:
         acc = {k: [] for k in ('part', 'vis', 'slip')}
         for kf in kept_files:
-            K = np.load(kf, mmap_mode='r')
-            if K.shape[1] != len(kc):
+            K, _ = load_kept(kf)                            # sparse, one row per draw over the kept ruptures
+            if K is None or K.shape[1] != len(kc):
                 kept_files = []
                 break
-            for c0 in range(0, K.shape[0], 50):
-                blk = np.zeros((n, min(50, K.shape[0] - c0)))
-                blk[kc] = np.asarray(K[c0:c0 + 50], float).T
-                v_ = values(blk)
+            Ko = sp.csr_matrix((K.data, kc[K.indices], K.indptr), shape=(K.shape[0], n))   # the rupture set's numbering
+            for c0 in range(0, K.shape[0], 1000):
+                v_ = values(Ko[c0:c0 + 1000].T.astype(float))
                 for k_ in acc:
-                    acc[k_].append(np.asarray(v_[k_]))
+                    acc[k_].append(np.asarray(v_[k_].toarray() if hasattr(v_[k_], 'toarray') else v_[k_]))
         if kept_files:
             for k_, v_ in acc.items():
                 v_ = np.concatenate(v_, axis=1)

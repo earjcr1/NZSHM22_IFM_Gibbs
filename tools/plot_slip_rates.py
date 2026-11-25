@@ -71,7 +71,7 @@ import textwrap
 import numpy as np
 
 from cru_common import geo_parts, misfit_log_weight, misfit_parts, misfit_text, split_weights
-from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, axis_span, best_fit_rates, darker, draw_xs, kept_draws, kept_predictions,
+from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, axis_span, best_fit_rates, darker, draw_xs, FIG_MAX_DRAWS, kept_draws, kept_predictions,
                         legend_above, legend_height, load_problem, neighbour_colours, reference_list, run_predictions,
                         run_config, figure_settings, settings_lines, slip_sections)
 
@@ -200,7 +200,7 @@ def main():
         model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
         Y, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, P['G'].shape[0], sc, avg)
         q = np.percentile(Y, [16, 50, 84], axis=0) if Y is not None else None   # each section mean's posterior points
-        K, kidx = (None, None) if model else kept_draws(z)
+        K, kidx = (None, None) if model else kept_draws(z, FIG_MAX_DRAWS)
         Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, P['G'].shape[0], sc,
                                                       avg, check=(Gs, K, keep_c))   # the kept draws' section means
         del K

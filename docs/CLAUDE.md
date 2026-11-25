@@ -269,7 +269,17 @@ gibbs_run's own per-rupture work 29%, table lookups 23% (83% of them in the off-
 swaps 5%, slab draws ~5%, RNG 3%, logs 3%, curve terms ~6%. Thinning without a slab draw (geometric skipping) is not
 viable: a bound over the whole slab up to the bin's top is near 1. Steady-state s/sweep: scratchpad bench/steady.py
 (n2 r2 - n1 r1)/(n2 - n1) from the progress lines' 3-decimal rates; identical runs vary about +-2-3%.
-compare_reps.py (2026-11-25, the user's request; command line only, not in the notebook): the representatives'
+Kept draws sparse (2026-11-25, the user's request): gibbs.py --keep-draws N|all writes <out>_kept.npz (scipy CSR,
+float32, only the rates on: ~1,500 of 615,700 per draw at 630k, 5,120 draws 61 MB in place of 12.6 GB); 'all' keeps
+every recorded draw after burn-in; the notebook's KEPT_DRAWS = 'all'. Readers go through cru_common.load_kept (either
+format; dense .npy of older runs read in blocks) and kept_draws(z, max_draws) (rate vectors' copy stored as
+kept_data/indices/indptr/shape by select_draws.py via kept_arrays; a dense `kept` before); the fit figures draw at
+most FIG_MAX_DRAWS = 5120, evenly spaced (opacity tuned for that). select_draws.py: exact components up to
+--exact-pca-max 8000 draws, a randomized SVD beyond. compare_reps.py: SubsetMarginals (exact KS/W1 from the K draws
+alone) and Energy (random 6,000-draw reference set beyond EN_MAX). tools/sparsify_kept.py FOLDER converts old runs
+losslessly (checked value for value), keeping rate_vectors_dense_backup.npz and the .npy until --remove-dense.
+Tested: old vs new gibbs on a small problem (same seed: dense == sparse, chains unchanged); every 480-min figure,
+table and report redrawn from the sparse files identical (PNGs byte for byte). compare_reps.py (2026-11-25, the user's request; command line only, not in the notebook): the representatives'
 weighted distributions against the kept draws' (KS and W1/sd per total, bin, subsection and named fault; energy
 distance in standardized log10 for subsections and bins; the faults' and bins' correlation matrices), each against
 --n-null random sets of K kept draws, with equal weights and with the representatives' weights shuffled; writes

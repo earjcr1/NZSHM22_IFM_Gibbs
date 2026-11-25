@@ -82,8 +82,9 @@ def setup(g):
     rep = g['REPRESENTATIVES']
     _check(isinstance(rep, int) and not isinstance(rep, bool) and rep >= 0, 'REPRESENTATIVES', rep, 'give a number of draws, 0 or more')
     kd = g['KEPT_DRAWS']
-    _check(isinstance(kd, int) and not isinstance(kd, bool) and kd >= max(rep, 1), 'KEPT_DRAWS', kd,
-           f'give the whole draws kept for the representatives, at least REPRESENTATIVES ({rep}) and 1')
+    _check(kd == 'all' or (isinstance(kd, int) and not isinstance(kd, bool) and kd >= max(rep, 1)), 'KEPT_DRAWS', kd,
+           f"give 'all' (every recorded draw after burn-in, stored sparse) or the whole draws kept for the representatives, "
+           f"at least REPRESENTATIVES ({rep}) and 1")
     th = g['THREADS']
     _check(isinstance(th, int) and not isinstance(th, bool) and th >= 1, 'THREADS', th, 'give a number of threads, 1 or more')
     mu = g['MFD_UNCERTAINTY']
@@ -370,7 +371,8 @@ def gibbs_args(out, seed, plan, keep=True, init=None):
          '--init', init, '--out', os.path.join(results_dir(), out), f"--diag-floor={g['FLOOR']}",
          '--slip-block', g['SLIP_BLOCK'], '--bins-block', g['BIN_BLOCK'], '--no-samples']
     if g['REPRESENTATIVES'] > 0 and keep:
-        a += ['--keep-draws', g['KEPT_DRAWS']]        # whole draws kept for the representatives (KEPT_DRAWS, 1000)
+        a += ['--keep-draws', g['KEPT_DRAWS']]        # whole draws kept for the representatives (KEPT_DRAWS: 'all' since
+                                                      # 2026-11-25, sparse; 1000 before)
     a += ['--swap-cos', 0.99, '--swap-cos-cross', 0.99,   # swaps between near-duplicates, one threshold within a bin and across
           '--hyper-every', plan.get('hyper_every', 1), '--all-positive']
     return a + _terms(gibbs=True)

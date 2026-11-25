@@ -67,7 +67,7 @@ import textwrap
 import numpy as np
 from scipy.stats import spearmanr
 
-from cru_common import (best_fit_rates, darker, draw_xs, kept_draws, kept_predictions, legend_above, legend_height,
+from cru_common import (best_fit_rates, darker, draw_xs, FIG_MAX_DRAWS, kept_draws, kept_predictions, legend_above, legend_height,
                         load_problem, magnitude_bins, reference_list, REF_OFFSETS, run_predictions, run_config, figure_settings, settings_lines,
                         gr_curves, gr_joint_misfit, gr_run_draws)
 
@@ -231,7 +231,7 @@ def main():
         model = str(z['model']) if 'model' in z.files else ''          # a single model (a best fit): no spread
         T, used = (None, []) if model else run_predictions(os.path.dirname(path) or '.', rows, Gr.shape[0], coef)
         q = np.percentile(np.c_[T, T.sum(1)], [16, 50, 84], axis=0) if T is not None else None   # bin totals, then all
-        K, kidx = (None, None) if model else kept_draws(z)
+        K, kidx = (None, None) if model else kept_draws(z, FIG_MAX_DRAWS)
         Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, Gr.shape[0], coef,
                                                       check=(Gr[rows], K, keep_c))   # the kept draws' bin totals
         del K

@@ -90,7 +90,7 @@ import textwrap
 import numpy as np
 import scipy.sparse as sp
 
-from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, darker, draw_xs, figure_legend, kept_draws, kept_predictions, legend_above,
+from cru_common import (MARK_BLUES, MARK_BLUES_CYCLE, darker, draw_xs, figure_legend, FIG_MAX_DRAWS, as_dense, kept_draws, kept_predictions, legend_above,
                         legend_height, load_problem, magnitude_bins, neighbour_colours, reference_list,
                         run_predictions, run_settings, settings_lines, slip_sections)
 
@@ -324,10 +324,10 @@ def main():
     p0 = np.mean(Y <= 0, axis=0) if Y is not None else None
     ndraws = 0 if Y is None else len(Y)
     del Y
-    K, kidx = (None, None) if model else kept_draws(z)
+    K, kidx = (None, None) if model else kept_draws(z, FIG_MAX_DRAWS)
     Xk = None if K is None else kept_predictions(os.path.dirname(path) or '.', kidx, rows, G.shape[0], scale, avg,
                                                   check=(Gs, K, keep_c))   # the kept draws' column means
-    nK, ons = (0, None) if Xk is None else (len(K), [])
+    nK, ons = (0, None) if Xk is None else (K.shape[0], [])
     refs = reference_list(a.reference, P)                # other models' column means, beside the posterior's (up to two)
     for ref in refs:
         ref['ys'] = ((Gs @ ref['m']) / scale) @ avg
@@ -527,7 +527,7 @@ def main():
         for i in idx:
             got = []
             for c0 in range(0, nK, 500):
-                V = K[c0:c0 + 500][:, keep_c[i]]
+                V = as_dense(K[c0:c0 + 500][:, keep_c[i]])
                 r_, j_ = np.nonzero(V > 0)
                 got.append((r_.astype(np.int32) + c0, j_.astype(np.int32), V[r_, j_].astype(np.float64)))
             ons.append(tuple(np.concatenate(v) for v in zip(*got)))

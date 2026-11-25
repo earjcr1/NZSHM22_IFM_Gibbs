@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py', 'split_merge.py', 'compare_reps.py']
+SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py', 'split_merge.py', 'compare_reps.py', 'sparsify_kept.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
 fails = []
@@ -312,11 +312,14 @@ check(all("plate_rows(rd, P, 'all', a.slip_block, cs=cs_p)" in src[f_] for f_ in
       and "plate_rate_strips='all'" in STEPS and '_platemax{S[\'SLIP_RATE_FACTOR\']:g}all' in src['run_config.py'],
       "PLATE_RATE's cap on every strip whatever CROSS_SECTIONS (2026-11-24, the user's request), in gibbs.py, "
       "best_fit_as_fitted.py and plate_rate.py's report; CROSS_SECTIONS chooses the summed slip rates' strips only")
-check(re.findall(r'^KEPT_DRAWS = (\S+)', cells[0][1], re.M) == ['1000'] and "'--keep-draws', g['KEPT_DRAWS']" in STEPS
-      and "kept_draws=g['KEPT_DRAWS'] if g['REPRESENTATIVES'] > 0 else 0" in STEPS and "_check(isinstance(kd, int)" in STEPS,
-      "notebook KEPT_DRAWS = 1000 (2026-11-24, the user's request): the whole draws kept for the representatives (gibbs.py "
-      "--keep-draws, with REPRESENTATIVES > 0), at least REPRESENTATIVES; about 10 x the largest number of representatives "
-      "to be tried; recorded (kept_draws)")
+check(re.findall(r'^KEPT_DRAWS = (\S+)', cells[0][1], re.M) == ["'all'"] and "'--keep-draws', g['KEPT_DRAWS']" in STEPS
+      and "kept_draws=g['KEPT_DRAWS'] if g['REPRESENTATIVES'] > 0 else 0" in STEPS and "_check(kd == 'all' or" in STEPS
+      and "sp.save_npz(f'{out}_kept.npz'" in src['gibbs.py'] and '\ndef load_kept(' in src['cru_common.py']
+      and '\ndef kept_arrays(' in src['cru_common.py'] and 'FIG_MAX_DRAWS = 5120' in src['cru_common.py'],
+      "notebook KEPT_DRAWS = 'all' (2026-11-25, the user's request; 1000 from 2026-11-24): every recorded draw after burn-in "
+      "kept (gibbs.py --keep-draws all, with REPRESENTATIVES > 0), stored sparse (<run>_kept.npz, cru_common.load_kept; "
+      "the rate vectors' copy as kept_data/indices/indptr/shape, kept_arrays); the fit figures draw at most FIG_MAX_DRAWS "
+      "(5,120); recorded (kept_draws)")
 check('void splitmerge_run(' in src['gibbs.py'] and "ap.add_argument('--split-merge', type=int, default=0" in src['gibbs.py']
       and "ok &= selftest_splitmerge('gauss')" in src['gibbs.py'] and "ok &= selftest_splitmerge('curve')" in src['gibbs.py']
       and 'ok &= selftest_splitmerge_counts()' in src['gibbs.py'] and 'def find_triples(' in src['split_merge.py']
