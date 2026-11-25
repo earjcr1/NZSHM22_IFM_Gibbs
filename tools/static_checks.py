@@ -3,8 +3,9 @@
 
     python tools/static_checks.py [ROOT]
 
-ROOT is the repository's folder, holding the notebook, docs/ (with CLAUDE.md) and tools/ (default: the folder above this
-script's). Update SCRIPTS, the inventory and the default checks below whenever the code set or a default changes."""
+ROOT is the repository's folder, holding the notebook and tools/ (default: the folder above this script's); the docs
+(CLAUDE.md, REPORT.md, ...) are in ROOT/docs/ or, since 2026-11-25 (the user moved them out of the repository, for
+privacy), in docs/ beside it. Update SCRIPTS, the inventory and the default checks below whenever the code set or a default changes."""
 import ast
 import json
 import os
@@ -16,6 +17,7 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.
 SCRIPTS = ['notebook_steps.py', 'styron_factor.py', 'plot_along_strike.py', 'gibbs.py', 'cru_common.py', 'preliminaries.py', 'block_fit.py', 'summarize_runs.py', 'compare_runs.py', 'compare_priors.py', 'select_draws.py', 'plot_rate_magnitude.py', 'plot_slip_rates.py', 'plot_paleo_rates.py', 'plot_slip_sections.py', 'check_convergence.py', 'make_tables.py', 'make_solution.py', 'plate_rate.py', 'paleo_misfit.py', 'cfm_sliprates.py', 'best_fit_as_fitted.py', 'timeframe_sliprates.py', 'mfd_gr.py', 'run_config.py', 'run_plan.py', 'plot_targets.py', 'dispersed_starts.py', 'covariance.py', 'rupture_set_inputs.py', 'fault_polygons.py', 'trace_slip_rows.py', 'split_merge.py', 'compare_reps.py', 'sparsify_kept.py']
 TOOLS = ['run_nb.py', 'run_quick_checks.sh', 'static_checks.py', 'compare_mfd.py', 'psis.py']
 DOCS = ['docs/CLAUDE.md', 'docs/REPORT.md', 'docs/TESTING.md', 'docs/sampler-design.md']
+DROOT = ROOT if os.path.isdir(os.path.join(ROOT, 'docs')) else os.path.dirname(os.path.abspath(ROOT))   # where docs/ is
 fails = []
 
 
@@ -34,11 +36,11 @@ NBALL = '\n'.join(c for _, c in cells) + '\n' + STEPS    # paths, log, scripts' 
                                                          # and it, as one text, for the checks of what the run does
 
 print('1. Inventory')
-expected = sorted(['tools/' + s for s in SCRIPTS + TOOLS] + ['cru_workflow.ipynb'] + DOCS)
-missing = [f for f in expected if not os.path.isfile(f'{ROOT}/{f}')]
+expected = sorted(['tools/' + s for s in SCRIPTS + TOOLS] + ['cru_workflow.ipynb'] + (DOCS if DROOT == ROOT else []))
+missing = [f for f in expected if not os.path.isfile(f'{ROOT}/{f}')] + [d for d in DOCS if not os.path.isfile(f'{DROOT}/{d}')]
 stray = sorted(f for f in os.listdir(ROOT) if f.endswith('.py'))      # scripts outside tools/, where the notebook looks
-check(not missing and not stray, f'{len(expected)} files in place: the scripts and tools in tools/, the notebook, and docs/ '
-      '(CLAUDE.md among them)' + (f'; missing {missing}' if missing else '') + (f'; scripts outside tools/: {stray}' if stray else ''))
+check(not missing and not stray, f'{len(expected)} files in place: the scripts and tools in tools/ and the notebook, and docs/ '
+      f'(CLAUDE.md among them; {"in the repository" if DROOT == ROOT else "beside the repository"})' + (f'; missing {missing}' if missing else '') + (f'; scripts outside tools/: {stray}' if stray else ''))
 try:                                           # for information: anything else under git
     tracked = subprocess.run(['git', '-C', ROOT, 'ls-files'], capture_output=True, text=True, check=True).stdout.splitlines()
     print(f'     also under git: {", ".join(sorted(set(tracked) - set(expected))) or "nothing"}')
@@ -63,7 +65,7 @@ check(not bad, f'all {len(cells)} notebook code cells parse ({len(md)} markdown 
 
 print('3. Leftovers (every hit, to judge its context)')
 texts = {s: src[s] for s in SCRIPTS}
-texts.update({d: open(f'{ROOT}/{d}').read() for d in DOCS if os.path.isfile(f'{ROOT}/{d}')})
+texts.update({d: open(f'{DROOT}/{d}').read() for d in DOCS if os.path.isfile(f'{DROOT}/{d}')})
 texts.update({f'notebook cell {i}': c for i, c in cells + md})
 pat = re.compile(r'SLAB_FLOOR|DIAG_FLOOR|1e-12 by default|FLOOR = -12|default -12|-12 by default|−12 by default|\(1e-12\)')   # a default before -10
 nhits = 0
@@ -215,7 +217,7 @@ check(re.findall(r'^MFD_GR = (\S+)', cells[0][1], re.M) == ['True']
       and re.findall(r'^RECONSIDER_MAGUNCERT = (\S+)', cells[0][1], re.M) == ['False']
       and 'MAGUNCERT = (1.0, _MAGRATIO, 1.0 + 2.0 * (_MAGRATIO - 1.0))' in src['mfd_gr.py'] and '_MAGRATIO = 3.92 / 3.40' in src['mfd_gr.py']
       and '+ tuple(mag))' in STEPS and "S['RECONSIDER_MAGUNCERT']" in src['run_config.py']
-      and "rm = g['RECONSIDER_MAGUNCERT']" in STEPS and 'RECONSIDER_MAGUNCERT' in open(f'{ROOT}/docs/REPORT.md').read()
+      and "rm = g['RECONSIDER_MAGUNCERT']" in STEPS and 'RECONSIDER_MAGUNCERT' in open(f'{DROOT}/docs/REPORT.md').read()
       and '\ndef parse_knobs(' in src['mfd_gr.py'] and '\ndef n_of_b(' in src['mfd_gr.py'] and "q84=q84" in src['mfd_gr.py']
       and 'mfd_pdf_q84=' in src['preliminaries.py'] and "P.get('mfd_pdf_q84')" in src['gibbs.py']
       and 'MFD_GR_SPREAD' not in cells[0][1] and "out['MFD_MISFIT'], out['MISFIT'] = 'pdf', 'mixed'" in src['run_config.py']
@@ -526,7 +528,7 @@ _cfgmap = dict((v, k) for k, v in re.findall(r"(\w+)=g\['([A-Z][A-Z0-9_]+)'\]",
 _runname = src['run_config.py'][src['run_config.py'].index('\ndef run_name('):]
 _figset = re.findall(r"\('([A-Z_0-9]+)', '\w+'\)", src['cru_common.py'])
 _md = '\n'.join(''.join(c['source']) for c in nb['cells'] if c['cell_type'] == 'markdown')
-_docs = {d_: open(f'{ROOT}/{d_}').read() for d_ in ('docs/REPORT.md', 'docs/CLAUDE.md')}
+_docs = {d_: open(f'{DROOT}/{d_}').read() for d_ in ('docs/REPORT.md', 'docs/CLAUDE.md')}
 _pdf = open(f'{ROOT}/tools/make_summary_pdf.py').read()
 _gaps = []
 for s_ in MODEL_SETTINGS:
